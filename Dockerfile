@@ -31,6 +31,7 @@ USER app
 ENV HTTP_ADDR=:3000 \
     SMTP_ADDR=:2525 \
     FRONTEND_DIST=/app/web/dist \
+    HLOOLMAIL_DEPLOYMENT=docker \
     DATABASE_DRIVER=sqlite \
     DATABASE_URL=/app/storage/gptmail.db
 EXPOSE 3000 2525

@@ -23,6 +23,7 @@ func (h *Handler) installStatus(c *gin.Context) {
 	h.DB.Model(&models.APIUsageLog{}).Where("created_at >= ?", startOfDay(time.Now())).Count(&apiUsageToday)
 	h.DB.Model(&models.User{}).Count(&registeredUsers)
 	h.DB.Model(&models.Domain{}).Count(&hostedDomains)
+	configLocked := h.installRuntimeConfigLocked()
 
 	ok(c, gin.H{
 		"installed":            h.isInstalled(),
@@ -37,6 +38,12 @@ func (h *Handler) installStatus(c *gin.Context) {
 			"expected_mx":     h.Config.ExpectedMX,
 			"database_driver": h.Config.DatabaseDriver,
 			"database_url":    maskDSN(h.Config.DatabaseURL),
+		},
+		"deployment": gin.H{
+			"kind":               deploymentKind(),
+			"container":          isContainerRuntime(),
+			"config_locked":      configLocked,
+			"config_lock_reason": configLockReason(configLocked),
 		},
 	})
 }
@@ -54,6 +61,10 @@ func (h *Handler) install(c *gin.Context) {
 	if err := input.applyDefaults(h.Config); err != nil {
 		fail(c, http.StatusInternalServerError, err.Error())
 		return
+	}
+	input.preserveMaskedDatabaseURL(h.Config)
+	if h.installRuntimeConfigLocked() {
+		input.preserveRuntimeConfig(h.Config)
 	}
 	if err := input.validate(); err != nil {
 		fail(c, http.StatusBadRequest, err.Error())
@@ -320,6 +331,25 @@ func (i installInput) applyToConfig(cfg *config.Config) {
 	cfg.DevMode = i.DevMode
 }
 
+func (i *installInput) preserveRuntimeConfig(cfg config.Config) {
+	i.HTTPAddr = cfg.HTTPAddr
+	i.SMTPAddr = cfg.SMTPAddr
+	i.PublicBaseURL = cfg.PublicBaseURL
+	i.MailHostname = cfg.MailHostname
+	i.ExpectedMX = cfg.ExpectedMX
+	i.DatabaseDriver = cfg.DatabaseDriver
+	i.DatabaseURL = cfg.DatabaseURL
+	i.FrontendDist = cfg.FrontendDist
+	i.DevMode = cfg.DevMode
+}
+
+func (i *installInput) preserveMaskedDatabaseURL(cfg config.Config) {
+	masked := maskDSN(cfg.DatabaseURL)
+	if masked != "" && masked != cfg.DatabaseURL && i.DatabaseURL == masked {
+		i.DatabaseURL = cfg.DatabaseURL
+	}
+}
+
 func writeEnvFile(path string, input installInput) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil && filepath.Dir(path) != "." {
 		return err
@@ -370,4 +400,60 @@ func randomInstallSecret() (string, error) {
 		return "", fmt.Errorf("generate install secret: %w", err)
 	}
 	return secret, nil
+}
+
+func (h *Handler) installRuntimeConfigLocked() bool {
+	if value := strings.TrimSpace(os.Getenv("HLOOLMAIL_CONFIG_LOCKED")); value != "" {
+		return envFlagEnabled(value)
+	}
+	return isContainerRuntime()
+}
+
+func configLockReason(locked bool) string {
+	if !locked {
+		return ""
+	}
+	return "container_environment"
+}
+
+func deploymentKind() string {
+	if value := strings.TrimSpace(os.Getenv("HLOOLMAIL_DEPLOYMENT")); value != "" {
+		return strings.ToLower(value)
+	}
+	if isContainerRuntime() {
+		return "container"
+	}
+	return "native"
+}
+
+func isContainerRuntime() bool {
+	if value := strings.TrimSpace(os.Getenv("HLOOLMAIL_DEPLOYMENT")); strings.EqualFold(value, "docker") || strings.EqualFold(value, "container") {
+		return true
+	}
+	if value := strings.TrimSpace(os.Getenv("HLOOLMAIL_CONTAINER")); envFlagEnabled(value) {
+		return true
+	}
+	if _, err := os.Stat("/.dockerenv"); err == nil {
+		return true
+	}
+	for _, path := range []string{"/proc/1/cgroup", "/proc/self/cgroup"} {
+		content, err := os.ReadFile(path)
+		if err != nil {
+			continue
+		}
+		text := strings.ToLower(string(content))
+		if strings.Contains(text, "docker") || strings.Contains(text, "kubepods") || strings.Contains(text, "containerd") {
+			return true
+		}
+	}
+	return false
+}
+
+func envFlagEnabled(value string) bool {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "1", "true", "yes", "on", "docker", "container":
+		return true
+	default:
+		return false
+	}
 }

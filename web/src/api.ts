@@ -134,6 +134,12 @@ export type InstallStatus = {
     database_driver: string;
     database_url: string;
   };
+  deployment?: {
+    kind: string;
+    container: boolean;
+    config_locked: boolean;
+    config_lock_reason?: string;
+  };
 };
 
 type RequestOptions = RequestInit & {

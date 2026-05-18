@@ -81,6 +81,9 @@ const enUS: typeof zhCN = {
   install: {
     title: 'Initial Setup',
     desc: 'Fill in the database, site/API URL, and the hostname this server uses to receive mail. The app writes them to .env.',
+    dockerManagedTitle: 'Docker deployment detected',
+    dockerManagedDesc: 'Runtime settings are managed by Docker Compose / .env. This setup page only creates the admin account; change the database, domains, ports, and secrets in Docker .env, then restart the container.',
+    dockerManagedFieldHint: 'This value is managed by external environment variables in Docker deployments.',
     adminEmail: 'Admin email',
     adminPassword: 'Admin password',
     databaseType: 'Database type',

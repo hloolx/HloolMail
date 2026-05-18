@@ -17,18 +17,28 @@ jobs:
         include:
           - goos: linux
             goarch: amd64
+            suffix: linux-amd64
             ext: ""
             archive: tar.gz
           - goos: linux
             goarch: arm64
+            suffix: linux-arm64
+            ext: ""
+            archive: tar.gz
+          - goos: linux
+            goarch: arm
+            goarm: "7"
+            suffix: linux-armv7
             ext: ""
             archive: tar.gz
           - goos: darwin
             goarch: arm64
+            suffix: darwin-arm64
             ext: ""
             archive: tar.gz
           - goos: windows
             goarch: amd64
+            suffix: windows-amd64
             ext: ".exe"
             archive: zip
 
@@ -61,14 +71,15 @@ jobs:
         env:
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
+          GOARM: ${{ matrix.goarm }}
           CGO_ENABLED: "0"
         run: |
-          name="hloolmail-${GOOS}-${GOARCH}"
+          name="hloolmail-${{ matrix.suffix }}"
           package_dir="dist/${name}"
           mkdir -p "${package_dir}/web"
           go build -trimpath -ldflags="-s -w" -o "${package_dir}/hloolmail${{ matrix.ext }}" ./cmd/server
           cp -R web/dist "${package_dir}/web/dist"
-          cp README.md .env.example "${package_dir}/"
+          cp README.md .env.example .env.compose.example "${package_dir}/"
           if [ "${{ matrix.archive }}" = "zip" ]; then
             (cd dist && zip -qr "${name}.zip" "${name}")
           else
@@ -78,8 +89,8 @@ jobs:
       - name: Upload binary artifact
         uses: actions/upload-artifact@v4
         with:
-          name: hloolmail-${{ matrix.goos }}-${{ matrix.goarch }}
-          path: dist/hloolmail-${{ matrix.goos }}-${{ matrix.goarch }}.${{ matrix.archive }}
+          name: hloolmail-${{ matrix.suffix }}
+          path: dist/hloolmail-${{ matrix.suffix }}.${{ matrix.archive }}
           if-no-files-found: error
 
   release:

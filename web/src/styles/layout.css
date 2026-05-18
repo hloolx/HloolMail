@@ -1024,6 +1024,47 @@
   box-shadow: 0 0 0 3px var(--focus-soft);
 }
 
+.input:disabled {
+  cursor: not-allowed;
+  background: color-mix(in srgb, var(--soft) 76%, var(--panel));
+  color: color-mix(in srgb, var(--muted) 86%, var(--foreground));
+}
+
+.install-lock-notice {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: start;
+  gap: 0.65rem;
+  margin-bottom: 0.9rem;
+  border: 1px solid color-mix(in srgb, var(--focus) 28%, var(--border));
+  border-radius: 0.7rem;
+  background: var(--focus-soft);
+  color: var(--foreground);
+  padding: 0.75rem 0.85rem;
+}
+
+.install-lock-notice svg {
+  color: var(--focus);
+  margin-top: 0.1rem;
+}
+
+.install-lock-notice strong,
+.install-lock-notice small {
+  display: block;
+}
+
+.install-lock-notice strong {
+  font-size: 0.86rem;
+  font-weight: 760;
+}
+
+.install-lock-notice small {
+  margin-top: 0.15rem;
+  color: var(--muted);
+  font-size: 0.78rem;
+  line-height: 1.6;
+}
+
 .btn-primary,
 .btn-secondary,
 .btn-ghost,

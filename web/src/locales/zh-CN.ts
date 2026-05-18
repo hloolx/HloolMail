@@ -79,6 +79,9 @@ const zhCN = {
   install: {
     title: '首次安装',
     desc: '填写数据库、网站/API 访问地址和这台服务器用于收邮件的主机名，程序会写入 .env。',
+    dockerManagedTitle: '已检测到 Docker 部署',
+    dockerManagedDesc: '当前运行配置由 Docker Compose / .env 管理。安装页只创建管理员账号；数据库、域名、端口和密钥请在 Docker 的 .env 中修改后重启容器。',
+    dockerManagedFieldHint: 'Docker 部署中此项由外部环境变量管理。',
     adminEmail: '管理员邮箱',
     adminPassword: '管理员密码',
     databaseType: '数据库类型',

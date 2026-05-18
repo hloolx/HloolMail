@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
@@ -1052,6 +1054,101 @@ func TestInstallLoginAndAdminGate(t *testing.T) {
 	router.ServeHTTP(userAdminResponse, userAdminRequest)
 	if userAdminResponse.Code != http.StatusForbidden {
 		t.Fatalf("user admin stats = %d: %s", userAdminResponse.Code, userAdminResponse.Body.String())
+	}
+}
+
+func TestInstallStatusReportsContainerConfigLock(t *testing.T) {
+	t.Setenv("HLOOLMAIL_DEPLOYMENT", "docker")
+	t.Setenv("HLOOLMAIL_CONFIG_LOCKED", "true")
+	db := httpTestDB(t)
+	router := testRouter(t, db)
+
+	status := perform(router, http.MethodGet, "/api/install/status", nil, nil)
+	if status.Code != http.StatusOK {
+		t.Fatalf("status = %d: %s", status.Code, status.Body.String())
+	}
+	var body struct {
+		Success bool `json:"success"`
+		Data    struct {
+			Deployment struct {
+				Kind             string `json:"kind"`
+				Container        bool   `json:"container"`
+				ConfigLocked     bool   `json:"config_locked"`
+				ConfigLockReason string `json:"config_lock_reason"`
+			} `json:"deployment"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(status.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if !body.Success || body.Data.Deployment.Kind != "docker" || !body.Data.Deployment.Container || !body.Data.Deployment.ConfigLocked {
+		t.Fatalf("unexpected deployment status: %+v", body.Data.Deployment)
+	}
+	if body.Data.Deployment.ConfigLockReason != "container_environment" {
+		t.Fatalf("config lock reason = %q", body.Data.Deployment.ConfigLockReason)
+	}
+}
+
+func TestInstallPreservesRuntimeConfigWhenLocked(t *testing.T) {
+	t.Setenv("HLOOLMAIL_CONFIG_LOCKED", "true")
+	db := httpTestDB(t)
+	envPath := filepath.Join(t.TempDir(), ".env")
+	router := testRouterWithConfig(t, db, func(cfg *config.Config) {
+		cfg.HTTPAddr = ":3000"
+		cfg.SMTPAddr = ":2525"
+		cfg.PublicBaseURL = "https://mail.example.com"
+		cfg.MailHostname = "mail.example.com"
+		cfg.ExpectedMX = "mail.example.com"
+		cfg.DatabaseDriver = "postgres"
+		cfg.DatabaseURL = "postgres://user:pass@postgres:5432/hloolmail?sslmode=disable"
+		cfg.DevMode = false
+		cfg.EnvPath = envPath
+	})
+
+	install := perform(router, http.MethodPost, "/api/install", map[string]any{
+		"admin_email":     "admin@example.com",
+		"admin_password":  "password123",
+		"database_driver": "sqlite",
+		"database_url":    "postgres://***:***@postgres:5432/hloolmail?sslmode=disable",
+		"public_base_url": "https://changed.example.com",
+		"mail_hostname":   "changed.example.com",
+		"expected_mx":     "changed.example.com",
+		"http_addr":       ":8080",
+		"smtp_addr":       ":25",
+		"dev_mode":        true,
+	}, nil)
+	if install.Code != http.StatusOK {
+		t.Fatalf("install = %d: %s", install.Code, install.Body.String())
+	}
+	var body struct {
+		Data struct {
+			RestartRequired bool `json:"restart_required"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(install.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if body.Data.RestartRequired {
+		t.Fatal("locked container install should not request a database restart from submitted runtime fields")
+	}
+	content, err := os.ReadFile(envPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	env := string(content)
+	for _, want := range []string{
+		`PUBLIC_BASE_URL="https://mail.example.com"`,
+		`MAIL_HOSTNAME="mail.example.com"`,
+		`DATABASE_DRIVER="postgres"`,
+		`DATABASE_URL="postgres://user:pass@postgres:5432/hloolmail?sslmode=disable"`,
+		`DEV_MODE="false"`,
+	} {
+		if !strings.Contains(env, want) {
+			t.Fatalf("written env missing %s:\n%s", want, env)
+		}
+	}
+	if strings.Contains(env, "changed.example.com") {
+		t.Fatalf("locked install wrote submitted runtime config:\n%s", env)
 	}
 }
 

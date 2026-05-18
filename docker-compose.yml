@@ -14,6 +14,8 @@ services:
     environment:
       HTTP_ADDR: ":3000"
       SMTP_ADDR: ":2525"
+      HLOOLMAIL_DEPLOYMENT: "docker"
+      HLOOLMAIL_CONFIG_LOCKED: "true"
       PUBLIC_BASE_URL: "${PUBLIC_BASE_URL:-http://localhost:3000}"
       MAIL_HOSTNAME: "${MAIL_HOSTNAME:-mail.example.com}"
       EXPECTED_MX: "${EXPECTED_MX:-mail.example.com}"
