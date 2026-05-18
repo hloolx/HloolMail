@@ -1,0 +1,179 @@
+.settings-menu {
+  --settings-control-width: 7.05rem;
+  display: grid;
+  grid-template-columns: max-content var(--settings-control-width);
+  align-items: center;
+  column-gap: 0.85rem;
+  row-gap: 0.45rem;
+}
+
+.settings-row {
+  display: contents;
+}
+
+.settings-label {
+  align-self: center;
+  color: var(--foreground);
+  font-size: 0.86rem;
+  font-weight: 620;
+}
+
+.theme-toggle-group {
+  display: grid;
+  grid-template-columns: repeat(3, 2.25rem);
+  width: var(--settings-control-width);
+  justify-content: start;
+  border: 1px solid var(--border);
+  border-radius: 0.65rem;
+  background: color-mix(in srgb, var(--panel) 82%, var(--soft));
+  padding: 0.12rem;
+}
+
+.theme-choice {
+  display: grid;
+  width: 2rem;
+  height: 2rem;
+  justify-self: center;
+  align-self: center;
+  place-items: center;
+  border: 1px solid transparent;
+  border-radius: 0.5rem;
+  background: transparent;
+  color: var(--muted);
+  transition: background-color 180ms ease, border-color 180ms ease, color 180ms ease, box-shadow 180ms ease;
+}
+
+.theme-choice:hover,
+.theme-choice-active {
+  border-color: color-mix(in srgb, var(--focus) 35%, var(--border));
+  background: color-mix(in srgb, var(--focus) 12%, var(--panel));
+  color: var(--foreground);
+}
+
+.theme-choice-active {
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--focus) 18%, transparent);
+}
+
+.settings-select-shell {
+  position: relative;
+  display: flex;
+  width: var(--settings-control-width);
+  min-width: 0;
+  justify-self: start;
+  align-items: center;
+  border: 1px solid var(--border);
+  border-radius: 0.65rem;
+  background: color-mix(in srgb, var(--panel) 82%, var(--soft));
+}
+
+.settings-select {
+  width: 100%;
+  height: 2.25rem;
+  min-width: 0;
+  appearance: none;
+  border: 0;
+  background: transparent;
+  color: var(--foreground);
+  outline: none;
+  padding: 0 2rem 0 0.75rem;
+  font-size: 0.86rem;
+}
+
+.settings-select-icon {
+  position: absolute;
+  right: 0.68rem;
+  color: var(--muted);
+  pointer-events: none;
+}
+
+.settings-select-shell:focus-within {
+  border-color: var(--focus);
+  box-shadow: 0 0 0 3px var(--focus-soft);
+}
+
+.settings-popover {
+  position: absolute;
+  top: calc(100% + 0.8rem);
+  right: 0;
+  z-index: 40;
+  width: min(22rem, calc(100vw - 2rem));
+  border: 1px solid var(--border);
+  border-radius: 0.75rem;
+  background: color-mix(in srgb, var(--panel) 96%, transparent);
+  padding: 0.85rem;
+  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.18);
+  backdrop-filter: blur(18px);
+  animation: popover-in 180ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.settings-popover-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 0.8rem;
+}
+
+.settings-popover-header h2 {
+  margin: 0;
+  font-size: 0.95rem;
+}
+
+.settings-popover-header p {
+  margin: 0.2rem 0 0;
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
+.settings-close {
+  display: grid;
+  width: 1.8rem;
+  height: 1.8rem;
+  place-items: center;
+  border: 1px solid var(--border);
+  border-radius: 0.5rem;
+  background: var(--soft);
+  color: var(--foreground);
+}
+
+.settings-field {
+  display: grid;
+  gap: 0.35rem;
+  margin-bottom: 0.7rem;
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 650;
+}
+
+.settings-field input {
+  height: 2.25rem;
+  min-width: 0;
+  border: 1px solid var(--border);
+  border-radius: 0.55rem;
+  background: var(--soft);
+  color: var(--foreground);
+  padding: 0 0.7rem;
+  outline: none;
+}
+
+.settings-field input:focus {
+  border-color: var(--focus);
+  box-shadow: 0 0 0 3px var(--focus-soft);
+}
+
+.settings-action {
+  display: flex;
+  width: 100%;
+  height: 2.35rem;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  border: 1px solid var(--border);
+  border-radius: 0.55rem;
+  background: var(--accent);
+  color: var(--accent-foreground);
+  font-size: 0.86rem;
+  font-weight: 700;
+}
+
+.icon-btn:disabled,

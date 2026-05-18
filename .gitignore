@@ -1,0 +1,55 @@
+storage/
+
+# Local environment and secrets
+.env
+.env.*
+!.env.example
+!.env.compose.example
+
+# Frontend dependencies and build output
+web/dist/
+web/node_modules/
+web/bun.lock
+*.tsbuildinfo
+web/vite.config.js
+web/vite.config.d.ts
+
+# Build, release, and test artifacts
+build/
+release/
+test-results/
+.playwright-cli/
+.claude/
+coverage/
+
+# Local databases and logs
+*.db
+*.db-*
+*.sqlite
+*.sqlite-*
+*.log
+
+# Local binaries and archives
+*.exe
+*.dll
+*.so
+*.dylib
+*.zip
+*.tar
+*.tar.gz
+
+# OS/editor noise
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+
+# Internal planning drafts that should not be published by default
+gptmail-go-implementation-prompt.md
+sso-implementation-prompt.md
+sso-research.md
+docs/API_REVIEW_PLAN.md
+docs/COMPREHENSIVE_INSPECTION_REPORT.md
+docs/DNS_HEALTH_MONITOR_EXECUTION_PLAN.md
+docs/REMAINING_ISSUES.md
+docs/frontend-design-spec.md

@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" role="img" aria-label="HLOOL Mail logo">
+  <rect width="1024" height="1024" rx="128" fill="#fff"/>
+  <path
+    d="M280 690V342c0-18 13-31 31-31 13 0 24 5 34 14l167 154 167-154c10-9 21-14 34-14 18 0 31 13 31 31v348c0 22-18 40-40 40H590V613c0-16-13-29-29-29h-98c-16 0-29 13-29 29v117H320c-22 0-40-18-40-40Z"
+    fill="none"
+    stroke="#000"
+    stroke-width="56"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+  />
+</svg>

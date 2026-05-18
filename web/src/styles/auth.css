@@ -1,0 +1,117 @@
+.auth-panel {
+  border: 1px solid color-mix(in srgb, var(--border) 82%, transparent);
+  border-radius: 0.95rem;
+  background: color-mix(in srgb, var(--background) 92%, transparent);
+  padding: 0.85rem;
+  box-shadow: 0 24px 90px rgba(15, 15, 15, 0.1);
+  backdrop-filter: blur(18px);
+}
+
+.auth-tabs {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  border: 1px solid var(--border);
+  border-radius: 0.7rem;
+  background: color-mix(in srgb, var(--soft) 72%, transparent);
+  padding: 0.16rem;
+}
+
+.auth-tabs button {
+  height: 2.15rem;
+  border: 0;
+  border-radius: 0.55rem;
+  background: transparent;
+  color: var(--muted);
+  font-size: 0.86rem;
+  font-weight: 720;
+  transition: background-color 180ms ease, color 180ms ease, box-shadow 180ms ease;
+}
+
+.auth-tabs .auth-tab-active {
+  background: var(--background);
+  color: var(--foreground);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.06);
+}
+
+.auth-heading {
+  padding: 1.05rem 0.25rem 0.8rem;
+}
+
+.auth-heading h2 {
+  margin: 0;
+  font-size: 1.2rem;
+  font-weight: 780;
+}
+
+.auth-heading p {
+  margin: 0.35rem 0 0;
+  color: var(--muted);
+  font-size: 0.84rem;
+  line-height: 1.65;
+}
+
+.auth-form {
+  display: grid;
+  gap: 0.65rem;
+}
+
+.auth-submit {
+  width: 100%;
+}
+
+.oauth-login-box {
+  display: grid;
+  gap: 0.65rem;
+  margin-top: 0.8rem;
+}
+
+.oauth-login-divider {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  align-items: center;
+  gap: 0.65rem;
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 760;
+}
+
+.oauth-login-divider::before,
+.oauth-login-divider::after {
+  height: 1px;
+  background: var(--border);
+  content: "";
+}
+
+.oauth-login-actions {
+  display: grid;
+  gap: 0.5rem;
+}
+
+@media (min-width: 460px) {
+  .oauth-login-actions {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+.oauth-login-button {
+  display: inline-flex;
+  min-height: 2.45rem;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  border: 1px solid var(--border);
+  border-radius: 0.65rem;
+  background: var(--background);
+  color: var(--foreground);
+  padding: 0.55rem 0.7rem;
+  font-size: 0.84rem;
+  font-weight: 720;
+  line-height: 1.25;
+  transition: border-color 180ms ease, background-color 180ms ease, transform 180ms ease;
+}
+
+.oauth-login-button:hover {
+  border-color: color-mix(in srgb, var(--focus) 38%, var(--border));
+  background: color-mix(in srgb, var(--focus) 8%, var(--background));
+  transform: translateY(-1px);
+}

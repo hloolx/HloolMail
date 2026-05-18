@@ -1,0 +1,230 @@
+export type Int64String = `${number}`;
+
+export type ApiEnvelope<T> = {
+  success: boolean;
+  data: T;
+  error?: unknown;
+  usage?: Record<string, Int64String>;
+};
+
+export type Domain = {
+  id: number;
+  domain: string;
+  mode: 'public' | 'private';
+  owner_id?: number;
+  active: boolean;
+  mx_verified: boolean;
+  wildcard_enabled: boolean;
+  wildcard_requested?: boolean;
+  mx_auto_retry_enabled?: boolean;
+  mx_auto_retry_started_at?: string;
+  mx_auto_retry_until?: string;
+  mx_auto_retry_next_at?: string;
+  mx_auto_retry_last_at?: string;
+  mx_auto_retry_count?: number;
+  pending_delete_at?: string;
+  last_mx_check_at?: string;
+  last_mx_records?: string;
+  last_check_message?: string;
+  domain_expires_at?: string;
+  health_failure_count?: number;
+  health_recovery_count?: number;
+  last_health_status?: string;
+  last_health_run_id?: number;
+  last_healthy_at?: string;
+  last_unhealthy_at?: string;
+  message_count?: number;
+  created_at: string;
+  updated_at: string;
+};
+
+export type DomainAvailability = {
+  public_domains: Domain[];
+  private_domains: Domain[];
+};
+
+export type MessageSummary = {
+  id: string;
+  recipient: string;
+  from_address: string;
+  from_name?: string;
+  subject: string;
+  seen: boolean;
+  preview: string;
+  created_at: string;
+  expires_at: string;
+};
+
+export type MessageDetail = {
+  id: string;
+  recipient: string;
+  from_address: string;
+  from_name?: string;
+  subject: string;
+  seen: boolean;
+  text_content?: string;
+  html_content?: string;
+  headers_json?: string;
+  created_at: string;
+  expires_at: string;
+};
+
+export type APIKey = {
+  id: number;
+  name: string;
+  key_prefix: string;
+  enabled: boolean;
+  daily_limit: number;
+  total_limit: number;
+  used_today: number;
+  total_used: number;
+  last_used_at?: string;
+  expires_at?: string;
+  created_at: string;
+};
+
+export type User = {
+  id: number;
+  email: string;
+  avatar_url?: string;
+  email_verified?: boolean;
+  role: 'user' | 'admin';
+  enabled: boolean;
+  daily_limit: number;
+  total_limit: number;
+  used_today: number;
+  total_used: number;
+  last_used_at?: string;
+  created_at: string;
+};
+
+export type MailboxInfo = {
+  id: number;
+  owner_id: number;
+  email: string;
+  local_part: string;
+  host: string;
+  domain_id: number;
+  message_count: number;
+  last_message_at?: string;
+  created_at: string;
+};
+
+export type AppNotification = {
+  id: number;
+  user_id?: number;
+  domain_id?: number;
+  type: 'MX_FAILED' | 'MX_RECOVERED' | 'DOMAIN_EXPIRING' | 'DOMAIN_EXPIRED' | string;
+  message: string;
+  read: boolean;
+  created_at: string;
+};
+
+export type InstallStatus = {
+  installed: boolean;
+  site_api_calls_today?: number;
+  registered_users?: number;
+  hosted_domains?: number;
+  config: {
+    http_addr: string;
+    smtp_addr: string;
+    public_base_url: string;
+    mail_hostname: string;
+    expected_mx: string;
+    database_driver: string;
+    database_url: string;
+  };
+};
+
+type RequestOptions = RequestInit & {
+  apiKey?: string;
+  timeout?: number;
+  retries?: number;
+  retryDelay?: number;
+};
+
+export class ApiError extends Error {
+  status: number;
+
+  constructor(message: string, status: number) {
+    super(message);
+    this.name = 'ApiError';
+    this.status = status;
+  }
+}
+
+const DEFAULT_TIMEOUT = 30000;
+
+export async function api<T>(path: string, options: RequestOptions = {}): Promise<T> {
+  const {
+    apiKey,
+    timeout = DEFAULT_TIMEOUT,
+    retries = 0,
+    retryDelay = 1000,
+    ...fetchOptions
+  } = options;
+  let lastError = new Error('request failed');
+
+  for (let attempt = 0; attempt <= retries; attempt += 1) {
+    const headers = new Headers(fetchOptions.headers);
+    if (!headers.has('Content-Type') && fetchOptions.body) {
+      headers.set('Content-Type', 'application/json');
+    }
+    if (apiKey) headers.set('X-API-Key', apiKey);
+
+    let timedOut = false;
+    const controller = new AbortController();
+    const timeoutId = timeout > 0 ? window.setTimeout(() => { timedOut = true; controller.abort(); }, timeout) : undefined;
+    const abortFromCaller = () => controller.abort();
+    if (fetchOptions.signal?.aborted) {
+      controller.abort();
+    } else {
+      fetchOptions.signal?.addEventListener('abort', abortFromCaller, { once: true });
+    }
+
+    try {
+      const response = await fetch(path, {
+        ...fetchOptions,
+        headers,
+        signal: controller.signal,
+        credentials: 'same-origin'
+      });
+      const raw = await response.text();
+      let envelope: ApiEnvelope<T>;
+      try {
+        envelope = JSON.parse(raw) as ApiEnvelope<T>;
+      } catch (parseErr) {
+        if (parseErr instanceof SyntaxError) throw parseErr;
+        const fallback = raw.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
+        const details = fallback ? `：${fallback.slice(0, 120)}` : '';
+        throw new ApiError(response.ok ? `接口 ${path} 返回了非 JSON 内容，请确认后端路由已生效${details}` : (response.statusText || `HTTP ${response.status}`), response.status);
+      }
+      if (!response.ok || !envelope.success) {
+        throw new ApiError(String(envelope.error || response.statusText || `HTTP ${response.status}`), response.status);
+      }
+      return envelope.data;
+    } catch (err) {
+      lastError = err instanceof Error ? err : new Error(String(err));
+      const retryable = err instanceof TypeError || err instanceof SyntaxError || ((err as { name?: string })?.name === 'AbortError' && timedOut);
+      if (attempt < retries && retryable) {
+        const delay = retryDelay * Math.pow(2, attempt) * (0.5 + Math.random() * 0.5);
+        await new Promise((resolve) => window.setTimeout(resolve, delay));
+        continue;
+      }
+      throw lastError;
+    } finally {
+      if (timeoutId !== undefined) window.clearTimeout(timeoutId);
+      fetchOptions.signal?.removeEventListener('abort', abortFromCaller);
+    }
+  }
+
+  throw lastError;
+}
+
+export function postJSON<T>(path: string, body: unknown, options?: RequestOptions) {
+  return api<T>(path, { ...options, method: 'POST', body: JSON.stringify(body) });
+}
+
+export function patchJSON<T>(path: string, body: unknown, options?: RequestOptions) {
+  return api<T>(path, { ...options, method: 'PATCH', body: JSON.stringify(body) });
+}

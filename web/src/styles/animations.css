@@ -1,0 +1,178 @@
+::view-transition-old(root),
+::view-transition-new(root) {
+  animation-duration: 680ms;
+  animation-timing-function: cubic-bezier(0.22, 1, 0.36, 1);
+  mix-blend-mode: normal;
+}
+
+html.theme-switching::view-transition-old(root) {
+  animation: none;
+}
+
+html.theme-switching::view-transition-new(root) {
+  animation-name: theme-reveal;
+  clip-path: circle(0 at var(--theme-x) var(--theme-y));
+}
+
+.theme-ripple {
+  position: fixed;
+  z-index: 9999;
+  left: var(--theme-x);
+  top: var(--theme-y);
+  width: calc(var(--theme-radius) * 2);
+  height: calc(var(--theme-radius) * 2);
+  border-radius: 999px;
+  pointer-events: none;
+  transform: translate(-50%, -50%) scale(0);
+  transition: transform 680ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.theme-ripple-active {
+  transform: translate(-50%, -50%) scale(1);
+}
+
+@keyframes theme-reveal {
+  to {
+    clip-path: circle(var(--theme-radius) at var(--theme-x) var(--theme-y));
+  }
+}
+
+@keyframes popover-in {
+  from {
+    opacity: 0;
+    transform: translateY(-0.35rem) scale(0.98);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes success-burst-label {
+  0% {
+    opacity: 0;
+    transform: translate(-50%, 1.1rem) scale(0.9);
+  }
+
+  18%,
+  72% {
+    opacity: 1;
+    transform: translate(-50%, 1.75rem) scale(1);
+  }
+
+  100% {
+    opacity: 0;
+    transform: translate(-50%, 1.25rem) scale(0.96);
+  }
+}
+
+@keyframes domain-success-callout {
+  from {
+    opacity: 0;
+    transform: translateY(0.35rem) scale(0.96);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+/* Button active feedback */
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+/* Metric value */
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 1ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 1ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+@media (max-width: 640px) {
+  .landing-header {
+    padding: 0 0.85rem;
+  }
+
+  .landing-main {
+    width: min(100% - 1rem, 1260px);
+    padding-top: 1.35rem;
+  }
+
+  .landing-hero h1 {
+    font-size: 2.25rem;
+    line-height: 1.12;
+  }
+
+  .landing-hero p {
+    font-size: 0.93rem;
+  }
+
+  .auth-panel {
+    padding: 0.7rem;
+  }
+
+  .landing-feature-grid {
+    width: min(100% - 1rem, 1260px);
+  }
+
+  .app-header-inner {
+    gap: 0.35rem;
+    padding-right: 0.55rem;
+  }
+
+  .app-header-left {
+    width: auto;
+    flex: 0 0 auto;
+  }
+
+  .app-header-brand-name {
+    display: none;
+  }
+
+  .main-inset {
+    margin-right: 0;
+    margin-left: 0;
+    border-radius: 0.9rem 0.9rem 0 0;
+  }
+
+  .panel {
+    padding: 0.75rem;
+  }
+
+  th,
+  td {
+    white-space: nowrap;
+  }
+
+  .api-key-panel-header {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .api-key-panel-header .btn-primary {
+    width: 100%;
+  }
+
+  .api-key-limit-grid {
+    grid-template-columns: 1fr;
+    gap: 0.35rem;
+  }
+
+  .check-row {
+    height: auto;
+  }
+
+  .quota-thermo {
+    width: 8.5rem;
+  }
+}

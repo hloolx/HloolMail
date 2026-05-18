@@ -1,0 +1,4 @@
+interface:
+  display_name: "HLOOL Mail API"
+  short_description: "Create inboxes and read HLOOL Mail messages"
+  default_prompt: "Use HLOOL Mail API to create a mailbox, guide private-domain setup, and read verification emails."

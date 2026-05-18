@@ -1,0 +1,96 @@
+@import "tailwindcss";
+@import "./landing.css";
+@import "./auth.css";
+@import "./layout.css";
+@import "./components.css";
+@import "./settings.css";
+@import "./dashboard.css";
+@import "./domains.css";
+@import "./inbox.css";
+@import "./api-docs.css";
+@import "./animations.css";
+
+:root {
+  color-scheme: light;
+  --shell: #f3f3f2;
+  --background: #ffffff;
+  --foreground: #101010;
+  --panel: #ffffff;
+  --soft: #f6f6f5;
+  --sidebar: #fbfbfa;
+  --border: #e7e5e1;
+  --muted: #6f6f6c;
+  --accent: #111111;
+  --accent-foreground: #ffffff;
+  --focus: #d5673f;
+  --focus-soft: rgba(213, 103, 63, 0.14);
+  --primary: #2563eb;
+  --warn: #a16207;
+  --app-header-height: 3.05rem;
+  --app-brand-width: 13rem;
+  --sidebar-width: 13rem;
+  --sidebar-width-icon: 3.35rem;
+  --good: #177245;
+  --bad: #b42318;
+}
+
+.dark {
+  color-scheme: dark;
+  --shell: #090909;
+  --background: #0f0f0f;
+  --foreground: #f4f4f2;
+  --panel: #151515;
+  --soft: #1d1d1b;
+  --sidebar: #121212;
+  --border: #2a2a27;
+  --muted: #aaa7a0;
+  --accent: #f3f3f0;
+  --accent-foreground: #111111;
+  --focus: #f08a62;
+  --focus-soft: rgba(240, 138, 98, 0.16);
+  --primary: #60a5fa;
+  --warn: #f0b35a;
+  --good: #4fb477;
+  --bad: #ff7b72;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: "Public Sans", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  letter-spacing: 0;
+  background: var(--shell);
+}
+
+button,
+input,
+select {
+  font: inherit;
+}
+
+button {
+  cursor: pointer;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.875rem;
+}
+
+th {
+  height: 2.25rem;
+  color: var(--muted);
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-align: left;
+}
+
+td {
+  height: 2.5rem;
+  border-top: 1px solid var(--border);
+  vertical-align: middle;
+}

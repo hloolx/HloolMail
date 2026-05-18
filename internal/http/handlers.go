@@ -1,0 +1,1375 @@
+package httpapi
+
+import (
+	"crypto/rand"
+	"encoding/hex"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"math/big"
+	"net/http"
+	"strconv"
+	"strings"
+	"time"
+
+	domaindb "gptmail/internal/domain"
+	"gptmail/internal/models"
+
+	"github.com/gin-gonic/gin"
+	"github.com/microcosm-cc/bluemonday"
+	"gorm.io/gorm"
+)
+
+var htmlPolicy = bluemonday.UGCPolicy()
+
+const publicReadyDomainSQL = "mode = ? AND active = ? AND mx_verified = ? AND (wildcard_requested = ? OR wildcard_enabled = ?)"
+
+func publicReadyDomainArgs() []interface{} {
+	return []interface{}{models.DomainModePublic, true, true, false, true}
+}
+
+func publicReadyDomainQuery(query *gorm.DB) *gorm.DB {
+	return query.Where(publicReadyDomainSQL, publicReadyDomainArgs()...)
+}
+
+func visibleDomainsForOwner(query *gorm.DB, ownerID uint) *gorm.DB {
+	args := append([]interface{}{ownerID}, publicReadyDomainArgs()...)
+	return query.Where("owner_id = ? OR ("+publicReadyDomainSQL+")", args...)
+}
+
+type requestActor struct {
+	User   *models.User
+	APIKey *models.APIKey
+	Global bool
+}
+
+func (h *Handler) currentActor(c *gin.Context) *requestActor {
+	if key := currentAPIKey(c); key != nil {
+		return &requestActor{
+			User:   currentAPIKeyUser(c),
+			APIKey: key,
+			Global: key.OwnerID == nil,
+		}
+	}
+	if user := currentUser(c); user != nil {
+		return &requestActor{User: user}
+	}
+	return nil
+}
+
+func (h *Handler) requireActor(c *gin.Context) (*requestActor, bool) {
+	actor := h.currentActor(c)
+	if actor == nil {
+		fail(c, http.StatusUnauthorized, "login or api key required")
+		return nil, false
+	}
+	return actor, true
+}
+
+func (a *requestActor) isAdmin() bool {
+	return a != nil && (a.Global || (a.User != nil && a.User.Role == models.UserRoleAdmin))
+}
+
+func (a *requestActor) ownerID() (uint, bool) {
+	if a == nil || a.User == nil {
+		return 0, false
+	}
+	return a.User.ID, true
+}
+
+func (a *requestActor) name() string {
+	if a == nil {
+		return "system"
+	}
+	if a.User != nil {
+		return a.User.Email
+	}
+	if a.APIKey != nil {
+		return a.APIKey.KeyPrefix
+	}
+	return "system"
+}
+
+func (h *Handler) health(c *gin.Context) {
+	ok(c, gin.H{"status": "ok", "time": time.Now().Format(time.RFC3339)})
+}
+
+func (h *Handler) stats(c *gin.Context) {
+	actor, allowed := h.requireActor(c)
+	if !allowed {
+		return
+	}
+	scope := h.scopeMessages(actor)
+	domainScope := h.scopeDomains(actor)
+	var messages, domains, apiKeys, mailboxes, publicDomains, apiUsageToday int64
+	scope.Count(&messages)
+	domainScope.Count(&domains)
+	publicReadyDomainQuery(domainScope.Session(&gorm.Session{})).Count(&publicDomains)
+	h.scopeAPIKeys(actor).Count(&apiKeys)
+	scope.Session(&gorm.Session{}).Distinct("recipient").Count(&mailboxes)
+	h.scopeAPIUsage(actor).Where("created_at >= ?", startOfDay(time.Now())).Count(&apiUsageToday)
+	ok(c, gin.H{
+		"messages":        messages,
+		"domains":         domains,
+		"api_keys":        apiKeys,
+		"mailboxes":       mailboxes,
+		"public_domains":  publicDomains,
+		"api_calls_today": apiUsageToday,
+	})
+}
+
+func (h *Handler) statsTimeseries(c *gin.Context) {
+	actor, allowed := h.requireActor(c)
+	if !allowed {
+		return
+	}
+	days := parseLimit(c.Query("days"), 7, 30)
+	if days < 2 {
+		days = 7
+	}
+	now := time.Now()
+	today := startOfDay(now)
+	labels := make([]string, days)
+	messages := make([]int64, days)
+	apiCalls := make([]int64, days)
+	domains := make([]int64, days)
+	earliest := today.AddDate(0, 0, -(days - 1))
+
+	messageScope := h.scopeMessages(actor)
+	apiScope := h.scopeAPIUsage(actor)
+	domainScope := h.scopeDomains(actor)
+
+	var totalDomainsBeforeWindow int64
+	domainScope.Session(&gorm.Session{}).Where("created_at < ?", earliest).Count(&totalDomainsBeforeWindow)
+	runningDomains := totalDomainsBeforeWindow
+
+	for i := 0; i < days; i++ {
+		dayStart := earliest.AddDate(0, 0, i)
+		dayEnd := dayStart.AddDate(0, 0, 1)
+		labels[i] = dayStart.Format("2006-01-02")
+		var msgCount, apiCount, domainAdded int64
+		messageScope.Session(&gorm.Session{}).Where("created_at >= ? AND created_at < ?", dayStart, dayEnd).Count(&msgCount)
+		apiScope.Session(&gorm.Session{}).Where("created_at >= ? AND created_at < ?", dayStart, dayEnd).Count(&apiCount)
+		domainScope.Session(&gorm.Session{}).Where("created_at >= ? AND created_at < ?", dayStart, dayEnd).Count(&domainAdded)
+		runningDomains += domainAdded
+		messages[i] = msgCount
+		apiCalls[i] = apiCount
+		domains[i] = runningDomains
+	}
+	ok(c, gin.H{
+		"days":      labels,
+		"messages":  messages,
+		"domains":   domains,
+		"api_calls": apiCalls,
+	})
+}
+
+func (h *Handler) scopeMessages(actor *requestActor) *gorm.DB {
+	query := h.DB.Model(&models.Message{})
+	if actor == nil || actor.isAdmin() {
+		return query
+	}
+	ownerID, ok := actor.ownerID()
+	if !ok {
+		return query.Where("1 = 0")
+	}
+	var domains []string
+	h.DB.Model(&models.Domain{}).Where("owner_id = ?", ownerID).Pluck("domain", &domains)
+	var mailboxes []string
+	h.DB.Model(&models.Mailbox{}).Where("owner_id = ?", ownerID).Pluck("email", &mailboxes)
+	if len(domains) == 0 && len(mailboxes) == 0 {
+		return query.Where("1 = 0")
+	}
+	if len(domains) == 0 {
+		return query.Where("recipient IN ?", mailboxes)
+	}
+	if len(mailboxes) == 0 {
+		return query.Where("root_domain IN ?", domains)
+	}
+	return query.Where("root_domain IN ? OR recipient IN ?", domains, mailboxes)
+}
+
+func (h *Handler) scopeDomains(actor *requestActor) *gorm.DB {
+	query := h.DB.Model(&models.Domain{})
+	if actor == nil || actor.isAdmin() {
+		return query
+	}
+	ownerID, ok := actor.ownerID()
+	if !ok {
+		return publicReadyDomainQuery(query)
+	}
+	return visibleDomainsForOwner(query, ownerID)
+}
+
+func (h *Handler) scopeAPIKeys(actor *requestActor) *gorm.DB {
+	query := h.DB.Model(&models.APIKey{})
+	if actor == nil || actor.isAdmin() {
+		return query
+	}
+	ownerID, ok := actor.ownerID()
+	if !ok {
+		return query.Where("1 = 0")
+	}
+	return query.Where("owner_id = ?", ownerID)
+}
+
+func (h *Handler) scopeAPIUsage(actor *requestActor) *gorm.DB {
+	query := h.DB.Model(&models.APIUsageLog{})
+	if actor == nil || actor.isAdmin() {
+		return query
+	}
+	if actor.APIKey != nil {
+		return query.Where("api_key_id = ?", actor.APIKey.ID)
+	}
+	ownerID, ok := actor.ownerID()
+	if !ok {
+		return query.Where("1 = 0")
+	}
+	return query.Where("user_id = ?", ownerID)
+}
+
+func (h *Handler) adminStats(c *gin.Context) {
+	if !h.requireAdmin(c) {
+		return
+	}
+	var totalMessages, activeDomains, failedDomains, pendingDomains, totalDomains, usageToday int64
+	var users, enabledUsers, disabledUsers, apiKeys, activeAPIKeys, disabledAPIKeys, staleDomains int64
+	h.DB.Model(&models.Message{}).Count(&totalMessages)
+	h.DB.Model(&models.Domain{}).Count(&totalDomains)
+	h.DB.Model(&models.Domain{}).Where("active = ?", true).Count(&activeDomains)
+	h.DB.Model(&models.Domain{}).Where("active = ? AND mx_verified = ?", true, false).Count(&failedDomains)
+	h.DB.Model(&models.Domain{}).Where("active = ? AND mx_verified = ?", false, false).Count(&pendingDomains)
+	h.DB.Model(&models.Domain{}).Where("last_mx_check_at IS NULL OR last_mx_check_at < ?", time.Now().Add(-24*time.Hour)).Count(&staleDomains)
+	h.DB.Model(&models.User{}).Count(&users)
+	h.DB.Model(&models.User{}).Where("enabled = ?", true).Count(&enabledUsers)
+	h.DB.Model(&models.User{}).Where("enabled = ?", false).Count(&disabledUsers)
+	h.DB.Model(&models.APIKey{}).Count(&apiKeys)
+	h.DB.Model(&models.APIKey{}).Where("enabled = ?", true).Count(&activeAPIKeys)
+	h.DB.Model(&models.APIKey{}).Where("enabled = ?", false).Count(&disabledAPIKeys)
+	h.DB.Model(&models.APIUsageLog{}).Where("created_at >= ?", startOfDay(time.Now())).Count(&usageToday)
+	ok(c, gin.H{
+		"messages":                totalMessages,
+		"total_domains":           totalDomains,
+		"active_domains":          activeDomains,
+		"failed_domains":          failedDomains,
+		"pending_domains":         pendingDomains,
+		"stale_domains":           staleDomains,
+		"users":                   users,
+		"enabled_users":           enabledUsers,
+		"disabled_users":          disabledUsers,
+		"api_keys":                apiKeys,
+		"active_api_keys":         activeAPIKeys,
+		"disabled_api_keys":       disabledAPIKeys,
+		"api_usage_today":         usageToday,
+		"dev_mode":                h.Config.DevMode,
+		"admin_token_enabled":     h.Config.AdminToken != "",
+		"admin_token_is_default":  h.Config.AdminToken == "dev-admin-token",
+		"expected_mx":             h.Config.ExpectedMX,
+		"message_retention_hours": int64(h.Config.MessageRetention / time.Hour),
+	})
+}
+
+func (h *Handler) generateEmail(c *gin.Context) {
+	actor, allowed := h.requireActor(c)
+	if !allowed {
+		return
+	}
+	if currentAPIKey(c) == nil && !h.consumeUserQuota(c) {
+		return
+	}
+	var input struct {
+		Prefix string `json:"prefix"`
+		Domain string `json:"domain"`
+	}
+	if err := c.ShouldBindJSON(&input); err != nil && !errors.Is(err, io.EOF) {
+		fail(c, http.StatusBadRequest, "invalid json")
+		return
+	}
+	d, err := h.selectDomainForActor(input.Domain, actor)
+	if err != nil {
+		fail(c, http.StatusBadRequest, err.Error())
+		return
+	}
+	ownerID, err := h.mailboxOwnerID(actor)
+	if err != nil {
+		fail(c, http.StatusForbidden, err.Error())
+		return
+	}
+	local := sanitizeLocal(input.Prefix)
+	maxRetries := 10
+	if local == "" {
+		maxRetries = 10
+	}
+	attempt := 0
+	for {
+		if local == "" {
+			local = randomLocal()
+		}
+		email := local + "@" + d.Domain
+		host := d.Domain
+		var existing models.Mailbox
+		err := h.DB.Where("email = ?", email).First(&existing).Error
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			mailbox := models.Mailbox{
+				OwnerID:   ownerID,
+				Email:     email,
+				LocalPart: local,
+				Host:      host,
+				DomainID:  d.ID,
+			}
+			if err := h.DB.Create(&mailbox).Error; err != nil {
+				if isUniqueConstraintError(err) {
+					attempt++
+					if attempt >= maxRetries {
+						fail(c, http.StatusConflict, "email address already in use; change the prefix or generate a random address")
+						return
+					}
+					local = ""
+					continue
+				}
+				fail(c, http.StatusInternalServerError, err.Error())
+				return
+			}
+			h.audit("mailbox.create", actor.name(), email, "")
+			created(c, gin.H{"email": email, "domain_id": d.ID, "domain": d})
+			return
+		}
+		if !errors.Is(err, gorm.ErrRecordNotFound) && err != nil {
+			fail(c, http.StatusInternalServerError, err.Error())
+			return
+		}
+		if existing.OwnerID == ownerID || actor.isAdmin() {
+			h.audit("mailbox.reuse", actor.name(), email, "")
+			ok(c, gin.H{"email": email, "domain_id": d.ID, "domain": d, "reuse": true})
+			return
+		}
+		attempt++
+		if attempt >= maxRetries {
+			fail(c, http.StatusConflict, "邮箱地址已被占用，请更换前缀或先随机生成")
+			return
+		}
+		local = ""
+	}
+}
+
+func (h *Handler) listEmails(c *gin.Context) {
+	parts, d, allowed := h.authorizeInbox(c, c.Query("email"))
+	if !allowed {
+		return
+	}
+	_ = d
+	if currentAPIKey(c) == nil && !h.consumeUserQuota(c) {
+		return
+	}
+	limit := parseLimit(c.Query("limit"), 50, 200)
+	var messages []models.Message
+	if err := h.DB.Where("recipient = ?", parts.Recipient).
+		Order("created_at desc").
+		Limit(limit).
+		Find(&messages).Error; err != nil {
+		fail(c, http.StatusInternalServerError, err.Error())
+		return
+	}
+	ok(c, messageSummaries(messages))
+}
+
+func (h *Handler) nextEmail(c *gin.Context) {
+	parts, _, allowed := h.authorizeInbox(c, c.Query("email"))
+	if !allowed {
+		return
+	}
+	if currentAPIKey(c) == nil && !h.consumeUserQuota(c) {
+		return
+	}
+	for attempt := 0; attempt < 5; attempt++ {
+		var msg models.Message
+		err := h.DB.Where("recipient = ? AND seen = ?", parts.Recipient, false).
+			Order("created_at desc").
+			First(&msg).Error
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			ok(c, gin.H{"has_email": false, "message": nil})
+			return
+		}
+		if err != nil {
+			fail(c, http.StatusInternalServerError, err.Error())
+			return
+		}
+		result := h.DB.Model(&models.Message{}).
+			Where("id = ? AND seen = ?", msg.ID, false).
+			Update("seen", true)
+		if result.Error != nil {
+			fail(c, http.StatusInternalServerError, result.Error.Error())
+			return
+		}
+		if result.RowsAffected == 0 {
+			continue
+		}
+		msg.Seen = true
+		msg.HTMLContent = htmlPolicy.Sanitize(msg.HTMLContent)
+		ok(c, gin.H{"has_email": true, "message": msg})
+		return
+	}
+	ok(c, gin.H{"has_email": false, "message": nil})
+}
+
+func (h *Handler) getEmail(c *gin.Context) {
+	var msg models.Message
+	if err := h.DB.First(&msg, "id = ?", c.Param("id")).Error; err != nil {
+		fail(c, http.StatusNotFound, "message not found")
+		return
+	}
+	if _, _, allowed := h.authorizeInbox(c, msg.Recipient); !allowed {
+		return
+	}
+	msg.HTMLContent = htmlPolicy.Sanitize(msg.HTMLContent)
+	ok(c, msg)
+}
+
+func (h *Handler) markEmailRead(c *gin.Context) {
+	var msg models.Message
+	if err := h.DB.First(&msg, "id = ?", c.Param("id")).Error; err != nil {
+		fail(c, http.StatusNotFound, "message not found")
+		return
+	}
+	if _, _, allowed := h.authorizeInbox(c, msg.Recipient); !allowed {
+		return
+	}
+	if err := h.DB.Model(&msg).Update("seen", true).Error; err != nil {
+		fail(c, http.StatusInternalServerError, err.Error())
+		return
+	}
+	ok(c, gin.H{"id": msg.ID, "seen": true})
+}
+
+func (h *Handler) deleteEmail(c *gin.Context) {
+	var msg models.Message
+	if err := h.DB.First(&msg, "id = ?", c.Param("id")).Error; err != nil {
+		fail(c, http.StatusNotFound, "message not found")
+		return
+	}
+	if _, _, allowed := h.authorizeInbox(c, msg.Recipient); !allowed {
+		return
+	}
+	if err := h.DB.Unscoped().Delete(&msg).Error; err != nil {
+		fail(c, http.StatusInternalServerError, err.Error())
+		return
+	}
+	ok(c, gin.H{"deleted": true})
+}
+
+func (h *Handler) clearEmails(c *gin.Context) {
+	parts, _, allowed := h.authorizeInbox(c, c.Query("email"))
+	if !allowed {
+		return
+	}
+	if err := h.DB.Unscoped().Where("recipient = ?", parts.Recipient).Delete(&models.Message{}).Error; err != nil {
+		fail(c, http.StatusInternalServerError, err.Error())
+		return
+	}
+	ok(c, gin.H{"cleared": true})
+}
+
+func (h *Handler) inboxStream(c *gin.Context) {
+	parts, _, allowed := h.authorizeInbox(c, c.Query("email"))
+	if !allowed {
+		return
+	}
+	ch, cancel := h.Hub.Subscribe(parts.Recipient)
+	defer cancel()
+	c.Writer.Header().Set("Content-Type", "text/event-stream")
+	c.Writer.Header().Set("Cache-Control", "no-cache")
+	c.Writer.Header().Set("Connection", "keep-alive")
+	flusher, ok := c.Writer.(http.Flusher)
+	if !ok {
+		fail(c, http.StatusInternalServerError, "streaming unsupported")
+		return
+	}
+	ticker := time.NewTicker(25 * time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-c.Request.Context().Done():
+			return
+		case <-ticker.C:
+			fmt.Fprint(c.Writer, ": heartbeat\n\n")
+			flusher.Flush()
+		case event := <-ch:
+			payload, _ := json.Marshal(event)
+			fmt.Fprintf(c.Writer, "event: message\ndata: %s\n\n", payload)
+			flusher.Flush()
+		}
+	}
+}
+
+func (h *Handler) requestDomain(c *gin.Context) {
+	user, loggedIn := h.requireLogin(c)
+	if !loggedIn {
+		return
+	}
+	var input struct {
+		Domain          string `json:"domain"`
+		Mode            string `json:"mode"`
+		WildcardEnabled *bool  `json:"wildcard_enabled"`
+	}
+	if err := c.ShouldBindJSON(&input); err != nil {
+		fail(c, http.StatusBadRequest, "invalid json")
+		return
+	}
+	mode := input.Mode
+	if mode != models.DomainModePublic && mode != models.DomainModePrivate {
+		mode = models.DomainModePrivate
+	}
+	wildcard := true
+	if input.WildcardEnabled != nil {
+		wildcard = *input.WildcardEnabled
+	}
+	d, dns, err := h.upsertDomain(input.Domain, mode, wildcard, &user.ID, user.Email)
+	if err != nil {
+		if errors.Is(err, domaindb.ErrVerificationToken) {
+			fail(c, http.StatusInternalServerError, err.Error())
+			return
+		}
+		fail(c, http.StatusBadRequest, err.Error())
+		return
+	}
+	created(c, gin.H{"domain": domainWithCount(h.DB, *d), "dns": dns})
+}
+
+func (h *Handler) checkMX(c *gin.Context) {
+	if _, loggedIn := h.requireLogin(c); !loggedIn {
+		return
+	}
+	var input struct {
+		Domain string `json:"domain"`
+	}
+	if err := c.ShouldBindJSON(&input); err != nil {
+		fail(c, http.StatusBadRequest, "invalid json")
+		return
+	}
+	var d models.Domain
+	if err := h.DB.Where("domain = ?", domaindb.NormalizeDomain(input.Domain)).First(&d).Error; err != nil {
+		fail(c, http.StatusNotFound, "domain not found")
+		return
+	}
+	if !h.canManageDomain(c, d) && !(d.Mode == models.DomainModePublic && d.IsReady()) {
+		fail(c, http.StatusForbidden, "domain access denied")
+		return
+	}
+	result, err := h.DNSChecker.Check(c.Request.Context(), d.Domain)
+	if err != nil {
+		fail(c, http.StatusBadRequest, err.Error())
+		return
+	}
+	ok(c, result)
+}
+
+func (h *Handler) listDomains(c *gin.Context) {
+	user, loggedIn := h.requireLogin(c)
+	if !loggedIn {
+		return
+	}
+	var domains []models.Domain
+	query := h.DB.Order("domain asc")
+	if user.Role != models.UserRoleAdmin {
+		query = visibleDomainsForOwner(query, user.ID)
+	}
+	if err := query.Find(&domains).Error; err != nil {
+		fail(c, http.StatusInternalServerError, err.Error())
+		return
+	}
+	ok(c, domainsWithCounts(h.DB, domains))
+}
+
+type availableDomainsResponse struct {
+	PublicDomains  []domainDTO `json:"public_domains"`
+	PrivateDomains []domainDTO `json:"private_domains"`
+}
+
+func (h *Handler) availableDomains(c *gin.Context) {
+	actor, allowed := h.requireActor(c)
+	if !allowed {
+		return
+	}
+	var publicDomains []models.Domain
+	if err := publicReadyDomainQuery(h.DB.Order("domain asc")).Find(&publicDomains).Error; err != nil {
+		fail(c, http.StatusInternalServerError, err.Error())
+		return
+	}
+	privateQuery := h.DB.Order("domain asc").
+		Where("mode = ? AND active = ? AND mx_verified = ? AND (wildcard_requested = ? OR wildcard_enabled = ?)",
+			models.DomainModePrivate, true, true, false, true)
+	if !actor.isAdmin() {
+		ownerID, hasOwner := actor.ownerID()
+		if !hasOwner {
+			ok(c, availableDomainsResponse{
+				PublicDomains:  domainsWithCountsOrEmpty(h.DB, publicDomains),
+				PrivateDomains: []domainDTO{},
+			})
+			return
+		}
+		privateQuery = privateQuery.Where("owner_id = ?", ownerID)
+	}
+	var privateDomains []models.Domain
+	if err := privateQuery.Find(&privateDomains).Error; err != nil {
+		fail(c, http.StatusInternalServerError, err.Error())
+		return
+	}
+	ok(c, availableDomainsResponse{
+		PublicDomains:  domainsWithCountsOrEmpty(h.DB, publicDomains),
+		PrivateDomains: domainsWithCountsOrEmpty(h.DB, privateDomains),
+	})
+}
+
+func (h *Handler) getDomain(c *gin.Context) {
+	id, err := strconv.ParseUint(c.Param("id"), 10, 64)
+	if err != nil || id == 0 {
+		fail(c, http.StatusNotFound, "domain not found")
+		return
+	}
+	actor, allowed := h.requireActor(c)
+	if !allowed {
+		return
+	}
+	var d models.Domain
+	if err := h.DB.First(&d, "id = ?", id).Error; err != nil {
+		fail(c, http.StatusNotFound, "domain not found")
+		return
+	}
+	if !h.canViewDomain(actor, d) {
+		fail(c, http.StatusForbidden, "domain access denied")
+		return
+	}
+	ok(c, domainWithCount(h.DB, d))
+}
+
+func (h *Handler) patchDomain(c *gin.Context) {
+	user := currentUser(c)
+	adminByToken := user == nil && h.Config.AdminToken != "" && c.GetHeader("X-Admin-Token") == h.Config.AdminToken
+	if user == nil && !adminByToken {
+		fail(c, http.StatusUnauthorized, "login required")
+		return
+	}
+	var d models.Domain
+	if err := h.DB.First(&d, "id = ?", c.Param("id")).Error; err != nil {
+		fail(c, http.StatusNotFound, "domain not found")
+		return
+	}
+	isAdmin := adminByToken || (user != nil && user.Role == models.UserRoleAdmin)
+	isOwner := user != nil && d.OwnerID != nil && *d.OwnerID == user.ID
+	if !isAdmin && !isOwner {
+		fail(c, http.StatusForbidden, "domain access denied")
+		return
+	}
+	var input struct {
+		Active          *bool  `json:"active"`
+		MXVerified      *bool  `json:"mx_verified"`
+		WildcardEnabled *bool  `json:"wildcard_enabled"`
+		Mode            string `json:"mode"`
+	}
+	if err := c.ShouldBindJSON(&input); err != nil {
+		fail(c, http.StatusBadRequest, "invalid json")
+		return
+	}
+	if isAdmin && input.Active != nil {
+		d.Active = *input.Active
+	}
+	if isAdmin && input.MXVerified != nil {
+		d.MXVerified = *input.MXVerified
+	}
+	if input.WildcardEnabled != nil {
+		d.WildcardRequested = *input.WildcardEnabled
+		if !*input.WildcardEnabled {
+			d.WildcardEnabled = false
+		}
+	}
+	if input.Mode == models.DomainModePublic || input.Mode == models.DomainModePrivate {
+		d.Mode = input.Mode
+	}
+	if err := h.DB.Save(&d).Error; err != nil {
+		fail(c, http.StatusInternalServerError, err.Error())
+		return
+	}
+	h.audit("domain.patch", actor(c), d.Domain, "")
+	ok(c, d)
+}
+
+func (h *Handler) setDomainMXAutoRetry(c *gin.Context) {
+	var d models.Domain
+	if err := h.DB.First(&d, "id = ?", c.Param("id")).Error; err != nil {
+		fail(c, http.StatusNotFound, "domain not found")
+		return
+	}
+	if !h.canManageDomain(c, d) {
+		fail(c, http.StatusForbidden, "domain access denied")
+		return
+	}
+	var input struct {
+		Enabled bool `json:"enabled"`
+	}
+	if err := c.ShouldBindJSON(&input); err != nil {
+		fail(c, http.StatusBadRequest, "invalid json")
+		return
+	}
+	now := time.Now()
+	if input.Enabled {
+		if d.MXVerified && (!d.WildcardRequested || d.WildcardEnabled) {
+			fail(c, http.StatusBadRequest, "domain is already verified")
+			return
+		}
+		until := d.PendingDeleteAt()
+		if !until.After(now) {
+			if err := h.DB.Delete(&d).Error; err != nil {
+				fail(c, http.StatusInternalServerError, err.Error())
+				return
+			}
+			ok(c, gin.H{"deleted": true})
+			return
+		}
+		next := now.Add(10 * time.Minute)
+		if next.After(until) {
+			next = until
+		}
+		d.MXAutoRetryEnabled = true
+		d.MXAutoRetryStartedAt = &now
+		d.MXAutoRetryUntil = &until
+		d.MXAutoRetryNextAt = &next
+		d.MXAutoRetryLastAt = nil
+		d.MXAutoRetryCount = 0
+		d.LastCheckMessage = "已开启后台等待验证，系统会每 10 分钟自动检测一次，最多等待 2 小时"
+	} else {
+		d.MXAutoRetryEnabled = false
+		d.MXAutoRetryNextAt = nil
+		d.LastCheckMessage = "已停止后台等待验证"
+	}
+	if err := h.DB.Save(&d).Error; err != nil {
+		fail(c, http.StatusInternalServerError, err.Error())
+		return
+	}
+	ok(c, domainWithCount(h.DB, d))
+}
+
+func (h *Handler) deleteDomain(c *gin.Context) {
+	user := currentUser(c)
+	adminByToken := user == nil && h.Config.AdminToken != "" && c.GetHeader("X-Admin-Token") == h.Config.AdminToken
+	if user == nil && !adminByToken {
+		fail(c, http.StatusUnauthorized, "login required")
+		return
+	}
+	var d models.Domain
+	if err := h.DB.First(&d, "id = ?", c.Param("id")).Error; err != nil {
+		fail(c, http.StatusNotFound, "domain not found")
+		return
+	}
+	isAdmin := adminByToken || (user != nil && user.Role == models.UserRoleAdmin)
+	isOwner := user != nil && d.OwnerID != nil && *d.OwnerID == user.ID
+	if !isAdmin && (!isOwner || !d.IsWaitingVerification()) {
+		fail(c, http.StatusForbidden, "domain access denied")
+		return
+	}
+	if err := h.DB.Delete(&d).Error; err != nil {
+		fail(c, http.StatusInternalServerError, err.Error())
+		return
+	}
+	h.audit("domain.delete", actor(c), d.Domain, "")
+	ok(c, gin.H{"deleted": true})
+}
+
+func (h *Handler) listAPIKeys(c *gin.Context) {
+	user, loggedIn := h.requireLogin(c)
+	if !loggedIn {
+		return
+	}
+	var keys []models.APIKey
+	query := h.DB.Order("created_at desc")
+	if user.Role != models.UserRoleAdmin {
+		query = query.Where("owner_id = ?", user.ID)
+	}
+	if err := query.Find(&keys).Error; err != nil {
+		fail(c, http.StatusInternalServerError, err.Error())
+		return
+	}
+	ok(c, keys)
+}
+
+func (h *Handler) createAPIKey(c *gin.Context) {
+	user, loggedIn := h.requireLogin(c)
+	if !loggedIn {
+		return
+	}
+	var input struct {
+		Name       string `json:"name"`
+		DailyLimit *int64 `json:"daily_limit"`
+		TotalLimit *int64 `json:"total_limit"`
+		ExpiresAt  string `json:"expires_at"`
+	}
+	if err := c.ShouldBindJSON(&input); err != nil {
+		fail(c, http.StatusBadRequest, "invalid json")
+		return
+	}
+	dailyLimit := h.Config.APIKeyDefaultDailyCap
+	if input.DailyLimit != nil {
+		dailyLimit = *input.DailyLimit
+	}
+	totalLimit := int64(0)
+	if input.TotalLimit != nil {
+		totalLimit = *input.TotalLimit
+	}
+	if dailyLimit < 0 || totalLimit < 0 {
+		fail(c, http.StatusBadRequest, "quota limits must be zero or greater")
+		return
+	}
+	expiresAt, err := parseAPIKeyExpiresAt(input.ExpiresAt)
+	if err != nil {
+		fail(c, http.StatusBadRequest, err.Error())
+		return
+	}
+	ownerID := &user.ID
+	key, plain, err := h.APIKeys.CreateFor(ownerID, input.Name, dailyLimit, totalLimit, expiresAt)
+	if err != nil {
+		fail(c, http.StatusInternalServerError, err.Error())
+		return
+	}
+	h.audit("api_key.create", actor(c), key.KeyPrefix, "")
+	created(c, gin.H{"api_key": key, "plain_key": plain})
+}
+
+func (h *Handler) patchAPIKey(c *gin.Context) {
+	user, loggedIn := h.requireLogin(c)
+	if !loggedIn {
+		return
+	}
+	var key models.APIKey
+	if err := h.DB.First(&key, "id = ?", c.Param("id")).Error; err != nil {
+		fail(c, http.StatusNotFound, "api key not found")
+		return
+	}
+	if user.Role != models.UserRoleAdmin && (key.OwnerID == nil || *key.OwnerID != user.ID) {
+		fail(c, http.StatusForbidden, "api key access denied")
+		return
+	}
+	var input struct {
+		Enabled    *bool  `json:"enabled"`
+		Name       string `json:"name"`
+		DailyLimit *int64 `json:"daily_limit"`
+		TotalLimit *int64 `json:"total_limit"`
+		ExpiresAt  string `json:"expires_at"`
+	}
+	if err := c.ShouldBindJSON(&input); err != nil {
+		fail(c, http.StatusBadRequest, "invalid json")
+		return
+	}
+	if input.Enabled != nil {
+		key.Enabled = *input.Enabled
+	}
+	if strings.TrimSpace(input.Name) != "" {
+		key.Name = strings.TrimSpace(input.Name)
+	}
+	if input.DailyLimit != nil {
+		if *input.DailyLimit < 0 {
+			fail(c, http.StatusBadRequest, "daily_limit must be zero or greater")
+			return
+		}
+		key.DailyLimit = *input.DailyLimit
+	}
+	if input.TotalLimit != nil {
+		if *input.TotalLimit < 0 {
+			fail(c, http.StatusBadRequest, "total_limit must be zero or greater")
+			return
+		}
+		key.TotalLimit = *input.TotalLimit
+	}
+	if strings.TrimSpace(input.ExpiresAt) != "" {
+		expiresAt, err := parseAPIKeyExpiresAt(input.ExpiresAt)
+		if err != nil {
+			fail(c, http.StatusBadRequest, err.Error())
+			return
+		}
+		key.ExpiresAt = expiresAt
+	}
+	if err := h.DB.Save(&key).Error; err != nil {
+		fail(c, http.StatusInternalServerError, err.Error())
+		return
+	}
+	h.audit("api_key.patch", actor(c), key.KeyPrefix, "")
+	ok(c, key)
+}
+
+func (h *Handler) deleteAPIKey(c *gin.Context) {
+	user, loggedIn := h.requireLogin(c)
+	if !loggedIn {
+		return
+	}
+	var key models.APIKey
+	if err := h.DB.First(&key, "id = ?", c.Param("id")).Error; err != nil {
+		fail(c, http.StatusNotFound, "api key not found")
+		return
+	}
+	if user.Role != models.UserRoleAdmin && (key.OwnerID == nil || *key.OwnerID != user.ID) {
+		fail(c, http.StatusForbidden, "api key access denied")
+		return
+	}
+	if err := h.DB.Delete(&key).Error; err != nil {
+		fail(c, http.StatusInternalServerError, err.Error())
+		return
+	}
+	h.audit("api_key.delete", actor(c), key.KeyPrefix, "")
+	ok(c, gin.H{"deleted": true})
+}
+
+func (h *Handler) revealAPIKey(c *gin.Context) {
+	user, loggedIn := h.requireLogin(c)
+	if !loggedIn {
+		return
+	}
+	if currentAPIKey(c) != nil {
+		fail(c, http.StatusForbidden, "api key auth not allowed for this endpoint")
+		return
+	}
+	var key models.APIKey
+	if err := h.DB.First(&key, "id = ?", c.Param("id")).Error; err != nil {
+		fail(c, http.StatusNotFound, "api key not found")
+		return
+	}
+	if user.Role != models.UserRoleAdmin && (key.OwnerID == nil || *key.OwnerID != user.ID) {
+		fail(c, http.StatusForbidden, "api key access denied")
+		return
+	}
+	h.audit("api_key.reveal", actor(c), key.KeyPrefix, "")
+	ok(c, gin.H{"plain_key": key.KeyValue})
+}
+
+func parseAPIKeyExpiresAt(value string) (*time.Time, error) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return nil, nil
+	}
+	parsed, err := time.Parse(time.RFC3339Nano, value)
+	if err != nil {
+		return nil, fmt.Errorf("expires_at must be an RFC3339 time")
+	}
+	if !parsed.After(time.Now()) {
+		return nil, fmt.Errorf("expires_at must be in the future")
+	}
+	return &parsed, nil
+}
+
+func (h *Handler) authorizeInbox(c *gin.Context, email string) (domaindb.RecipientParts, *models.Domain, bool) {
+	parts, err := domaindb.NormalizeRecipient(email)
+	if err != nil {
+		fail(c, http.StatusBadRequest, "valid email required")
+		return parts, nil, false
+	}
+	actor, allowed := h.requireActor(c)
+	if !allowed {
+		return parts, nil, false
+	}
+	if actor.isAdmin() {
+		return parts, nil, true
+	}
+	d, err := h.Resolver.ResolveDomain(parts.Recipient)
+	if err != nil {
+		fail(c, http.StatusNotFound, "domain not found or not verified")
+		return parts, nil, false
+	}
+	ownerID, hasOwner := actor.ownerID()
+	if hasOwner && d.OwnerID != nil && *d.OwnerID == ownerID {
+		return parts, d, true
+	}
+	if hasOwner {
+		var mailbox models.Mailbox
+		if err := h.DB.Where("email = ? AND owner_id = ?", parts.Recipient, ownerID).First(&mailbox).Error; err == nil {
+			return parts, d, true
+		}
+	}
+	fail(c, http.StatusForbidden, "邮箱访问被拒：需要是邮箱所有者、域名所有者或使用有权限的 API key")
+	return parts, d, false
+}
+
+func (h *Handler) canManageDomain(c *gin.Context, d models.Domain) bool {
+	user := currentUser(c)
+	if user == nil {
+		return false
+	}
+	if user.Role == models.UserRoleAdmin {
+		return true
+	}
+	return d.OwnerID != nil && *d.OwnerID == user.ID
+}
+
+func (h *Handler) canViewDomain(actor *requestActor, d models.Domain) bool {
+	if actor == nil {
+		return false
+	}
+	if d.Mode == models.DomainModePublic && d.IsReady() {
+		return true
+	}
+	if actor.isAdmin() {
+		return true
+	}
+	ownerID, ok := actor.ownerID()
+	return ok && d.OwnerID != nil && *d.OwnerID == ownerID
+}
+
+func (h *Handler) selectDomainForActor(input string, actor *requestActor) (*models.Domain, error) {
+	domainName := domaindb.NormalizeDomain(input)
+	if domainName != "" {
+		var d models.Domain
+		err := h.DB.Where("domain = ?", domainName).First(&d).Error
+		if err != nil {
+			return nil, fmt.Errorf("域名未激活或 MX 未验证")
+		}
+		if !d.IsReady() {
+			return nil, fmt.Errorf("域名未激活或 MX 未验证")
+		}
+		if d.Mode == models.DomainModePrivate {
+			if actor.isAdmin() {
+				return &d, nil
+			}
+			if ownerID, ok := actor.ownerID(); ok && d.OwnerID != nil && *d.OwnerID == ownerID {
+				return &d, nil
+			}
+			return nil, fmt.Errorf("该域名是私有域名，只有域名的所有者才能使用")
+		}
+		return &d, nil
+	}
+	var domains []models.Domain
+	if err := publicReadyDomainQuery(h.DB.Order("domain asc")).Find(&domains).Error; err != nil {
+		return nil, err
+	}
+	if len(domains) == 0 {
+		return nil, fmt.Errorf("暂无可用公共域名")
+	}
+	index := randomIndex(len(domains))
+	return &domains[index], nil
+}
+
+func (h *Handler) mailboxOwnerID(actor *requestActor) (uint, error) {
+	if ownerID, ok := actor.ownerID(); ok {
+		return ownerID, nil
+	}
+	if actor != nil && actor.Global {
+		var admin models.User
+		if err := h.DB.Where("role = ? AND enabled = ?", models.UserRoleAdmin, true).Order("id asc").First(&admin).Error; err == nil {
+			return admin.ID, nil
+		}
+	}
+	return 0, fmt.Errorf("api key must be bound to an active user to create mailboxes")
+}
+
+func (h *Handler) upsertDomain(rawDomain, mode string, wildcard bool, ownerID *uint, actorName string) (*models.Domain, domaindb.DNSInstructions, error) {
+	if domainWantsWildcard(rawDomain) {
+		wildcard = true
+	}
+	domainName := domaindb.NormalizeDomain(rawDomain)
+	if domainName == "" || !strings.Contains(domainName, ".") {
+		return nil, domaindb.DNSInstructions{}, fmt.Errorf("valid domain required")
+	}
+	var d models.Domain
+	err := h.DB.Where("domain = ?", domainName).First(&d).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		verificationToken, err := domaindb.NewVerificationToken()
+		if err != nil {
+			return nil, domaindb.DNSInstructions{}, err
+		}
+		d = models.Domain{
+			Domain:            domainName,
+			Mode:              mode,
+			Active:            true,
+			MXVerified:        h.Config.DevMode && strings.HasSuffix(domainName, ".test"),
+			WildcardEnabled:   wildcard && h.Config.DevMode && strings.HasSuffix(domainName, ".test"),
+			WildcardRequested: wildcard,
+			VerificationToken: verificationToken,
+			OwnerID:           ownerID,
+		}
+	} else if err != nil {
+		return nil, domaindb.DNSInstructions{}, err
+	} else {
+		if ownerID != nil && d.OwnerID != nil && *d.OwnerID != *ownerID {
+			return nil, domaindb.DNSInstructions{}, fmt.Errorf("domain is already owned by another user")
+		}
+		d.Mode = mode
+		d.Active = true
+		d.WildcardRequested = wildcard
+		if !wildcard {
+			d.WildcardEnabled = false
+		}
+		if ownerID != nil {
+			d.OwnerID = ownerID
+		}
+		if d.VerificationToken == "" {
+			verificationToken, err := domaindb.NewVerificationToken()
+			if err != nil {
+				return nil, domaindb.DNSInstructions{}, err
+			}
+			d.VerificationToken = verificationToken
+		}
+		if h.Config.DevMode && strings.HasSuffix(domainName, ".test") {
+			d.MXVerified = true
+			if wildcard {
+				d.WildcardEnabled = true
+			}
+		}
+	}
+	if d.ID == 0 {
+		err = h.DB.Create(&d).Error
+		if errors.Is(err, gorm.ErrDuplicatedKey) {
+			return nil, domaindb.DNSInstructions{}, fmt.Errorf("domain %s is already registered", domainName)
+		}
+	} else {
+		err = h.DB.Save(&d).Error
+	}
+	if err != nil {
+		return nil, domaindb.DNSInstructions{}, err
+	}
+	h.audit("domain.request", actorName, d.Domain, mode)
+	dns := domaindb.Instructions(d.Domain, h.Config.ExpectedMX)
+	return &d, dns, nil
+}
+
+func domainWantsWildcard(rawDomain string) bool {
+	return strings.HasPrefix(strings.TrimSpace(rawDomain), "*")
+}
+
+func (h *Handler) audit(action, actor, target, metadata string) {
+	h.DB.Create(&models.AuditLog{Action: action, Actor: actor, Target: target, Metadata: metadata})
+}
+
+type domainDTO struct {
+	models.Domain
+	MessageCount    int64      `json:"message_count"`
+	PendingDeleteAt *time.Time `json:"pending_delete_at,omitempty"`
+}
+
+func domainsWithCounts(db *gorm.DB, domains []models.Domain) []domainDTO {
+	if len(domains) == 0 {
+		return nil
+	}
+	domainNames := make([]string, len(domains))
+	for i, d := range domains {
+		domainNames[i] = d.Domain
+	}
+	type countResult struct {
+		RootDomain string
+		Count      int64
+	}
+	var counts []countResult
+	db.Model(&models.Message{}).
+		Select("root_domain, COUNT(*) as count").
+		Where("root_domain IN ?", domainNames).
+		Group("root_domain").
+		Scan(&counts)
+	countMap := make(map[string]int64, len(counts))
+	for _, c := range counts {
+		countMap[c.RootDomain] = c.Count
+	}
+	out := make([]domainDTO, 0, len(domains))
+	for _, d := range domains {
+		dto := domainDTO{Domain: d, MessageCount: countMap[d.Domain]}
+		if d.IsWaitingVerification() {
+			pendingDeleteAt := d.PendingDeleteAt()
+			dto.PendingDeleteAt = &pendingDeleteAt
+		}
+		out = append(out, dto)
+	}
+	return out
+}
+
+func domainsWithCountsOrEmpty(db *gorm.DB, domains []models.Domain) []domainDTO {
+	if len(domains) == 0 {
+		return []domainDTO{}
+	}
+	return domainsWithCounts(db, domains)
+}
+
+func domainWithCount(db *gorm.DB, d models.Domain) domainDTO {
+	var count int64
+	db.Model(&models.Message{}).Where("root_domain = ?", d.Domain).Count(&count)
+	dto := domainDTO{Domain: d, MessageCount: count}
+	if d.IsWaitingVerification() {
+		pendingDeleteAt := d.PendingDeleteAt()
+		dto.PendingDeleteAt = &pendingDeleteAt
+	}
+	return dto
+}
+
+type messageSummary struct {
+	ID          string    `json:"id"`
+	Recipient   string    `json:"recipient"`
+	FromAddress string    `json:"from_address"`
+	FromName    string    `json:"from_name,omitempty"`
+	Subject     string    `json:"subject"`
+	Seen        bool      `json:"seen"`
+	Preview     string    `json:"preview"`
+	CreatedAt   time.Time `json:"created_at"`
+	ExpiresAt   time.Time `json:"expires_at"`
+}
+
+func messageSummaries(messages []models.Message) []messageSummary {
+	out := make([]messageSummary, 0, len(messages))
+	for _, msg := range messages {
+		preview := strings.TrimSpace(msg.TextContent)
+		if preview == "" {
+			preview = strings.TrimSpace(stripTags(msg.HTMLContent))
+		}
+		if len(preview) > 180 {
+			preview = preview[:180]
+		}
+		out = append(out, messageSummary{
+			ID:          msg.ID,
+			Recipient:   msg.Recipient,
+			FromAddress: msg.FromAddress,
+			FromName:    msg.FromName,
+			Subject:     msg.Subject,
+			Seen:        msg.Seen,
+			Preview:     preview,
+			CreatedAt:   msg.CreatedAt,
+			ExpiresAt:   msg.ExpiresAt,
+		})
+	}
+	return out
+}
+
+func sanitizeLocal(value string) string {
+	value = strings.ToLower(strings.TrimSpace(value))
+	var builder strings.Builder
+	for _, r := range value {
+		switch {
+		case r >= 'a' && r <= 'z':
+			builder.WriteRune(r)
+		case r >= '0' && r <= '9':
+			builder.WriteRune(r)
+		case r == '.', r == '-', r == '_':
+			builder.WriteRune(r)
+		}
+	}
+	return strings.Trim(builder.String(), ".-_")
+}
+
+func randomLocal() string {
+	buf := make([]byte, 6)
+	if _, err := rand.Read(buf); err != nil {
+		return "mail" + strconv.FormatInt(time.Now().UnixNano(), 36)
+	}
+	return "mail" + hex.EncodeToString(buf)
+}
+
+func randomIndex(length int) int {
+	if length <= 1 {
+		return 0
+	}
+	n, err := rand.Int(rand.Reader, big.NewInt(int64(length)))
+	if err != nil {
+		return int(time.Now().UnixNano() % int64(length))
+	}
+	return int(n.Int64())
+}
+
+func isUniqueConstraintError(err error) bool {
+	if err == nil {
+		return false
+	}
+	text := strings.ToLower(err.Error())
+	return strings.Contains(text, "unique") || strings.Contains(text, "duplicate")
+}
+
+func parseLimit(value string, fallback, max int) int {
+	parsed, err := strconv.Atoi(value)
+	if err != nil || parsed <= 0 {
+		return fallback
+	}
+	if parsed > max {
+		return max
+	}
+	return parsed
+}
+
+func stripTags(value string) string {
+	var builder strings.Builder
+	inTag := false
+	for _, r := range value {
+		switch r {
+		case '<':
+			inTag = true
+		case '>':
+			inTag = false
+		default:
+			if !inTag {
+				builder.WriteRune(r)
+			}
+		}
+	}
+	return builder.String()
+}
+
+func startOfDay(t time.Time) time.Time {
+	y, m, d := t.Local().Date()
+	return time.Date(y, m, d, 0, 0, 0, 0, t.Location())
+}
+
+func (h *Handler) listMailboxes(c *gin.Context) {
+	actor, allowed := h.requireActor(c)
+	if !allowed {
+		return
+	}
+	var mailboxes []models.Mailbox
+	query := h.DB.Order("created_at desc")
+	if !actor.isAdmin() {
+		ownerID, hasOwner := actor.ownerID()
+		if !hasOwner {
+			fail(c, http.StatusForbidden, "api key must be bound to an active user")
+			return
+		}
+		query = query.Where("owner_id = ?", ownerID)
+	}
+	if err := query.Find(&mailboxes).Error; err != nil {
+		fail(c, http.StatusInternalServerError, err.Error())
+		return
+	}
+	type mailboxWithCount struct {
+		models.Mailbox
+		MessageCount  int64      `json:"message_count"`
+		LastMessageAt *time.Time `json:"last_message_at,omitempty"`
+	}
+	out := make([]mailboxWithCount, 0, len(mailboxes))
+	for _, m := range mailboxes {
+		var count int64
+		h.DB.Model(&models.Message{}).Where("recipient = ?", m.Email).Count(&count)
+		var lastMsg models.Message
+		lastAt := new(time.Time)
+		if err := h.DB.Where("recipient = ?", m.Email).Order("created_at desc").First(&lastMsg).Error; err == nil {
+			*lastAt = lastMsg.CreatedAt
+		} else {
+			lastAt = nil
+		}
+		out = append(out, mailboxWithCount{
+			Mailbox:       m,
+			MessageCount:  count,
+			LastMessageAt: lastAt,
+		})
+	}
+	ok(c, out)
+}
+
+func (h *Handler) deleteMailbox(c *gin.Context) {
+	actor, allowed := h.requireActor(c)
+	if !allowed {
+		return
+	}
+	var mailbox models.Mailbox
+	if err := h.DB.First(&mailbox, "id = ?", c.Param("id")).Error; err != nil {
+		fail(c, http.StatusNotFound, "mailbox not found")
+		return
+	}
+	ownerID, hasOwner := actor.ownerID()
+	if !actor.isAdmin() && (!hasOwner || mailbox.OwnerID != ownerID) {
+		fail(c, http.StatusForbidden, "mailbox access denied")
+		return
+	}
+	if err := h.DB.Delete(&mailbox).Error; err != nil {
+		fail(c, http.StatusInternalServerError, err.Error())
+		return
+	}
+	h.audit("mailbox.delete", actor.name(), mailbox.Email, "")
+	ok(c, gin.H{"deleted": true})
+}

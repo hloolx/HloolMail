@@ -1,0 +1,71 @@
+name: hloolmail
+
+services:
+  app:
+    image: ${HLOOLMAIL_IMAGE:-ghcr.io/hloolx/hloolmail:latest}
+    build:
+      context: .
+      args:
+        GOPROXY: "${GOPROXY:-https://proxy.golang.org|https://goproxy.cn|direct}"
+        NPM_CONFIG_REGISTRY: "${NPM_CONFIG_REGISTRY:-https://registry.npmjs.org/}"
+    ports:
+      - "${HTTP_PORT:-3000}:3000"
+      - "${SMTP_PORT:-2525}:2525"
+    environment:
+      HTTP_ADDR: ":3000"
+      SMTP_ADDR: ":2525"
+      PUBLIC_BASE_URL: "${PUBLIC_BASE_URL:-http://localhost:3000}"
+      MAIL_HOSTNAME: "${MAIL_HOSTNAME:-mail.example.com}"
+      EXPECTED_MX: "${EXPECTED_MX:-mail.example.com}"
+      MX_STRICT: "${MX_STRICT:-false}"
+      DATABASE_DRIVER: "postgres"
+      DATABASE_URL: "${DATABASE_URL:-postgres://${POSTGRES_USER:-hloolmail}:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@postgres:5432/${POSTGRES_DB:-hloolmail}?sslmode=disable}"
+      FRONTEND_DIST: "/app/web/dist"
+      MESSAGE_RETENTION_HOURS: "${MESSAGE_RETENTION_HOURS:-24}"
+      MAX_MESSAGE_BYTES: "${MAX_MESSAGE_BYTES:-10485760}"
+      MAX_ATTACHMENT_BYTES: "${MAX_ATTACHMENT_BYTES:-10485760}"
+      DEV_MODE: "${DEV_MODE:-false}"
+      ADMIN_TOKEN: "${ADMIN_TOKEN:-}"
+      INBOX_TOKEN_SECRET: "${INBOX_TOKEN_SECRET:-}"
+      SESSION_SECRET: "${SESSION_SECRET:-}"
+      API_KEY_DEFAULT_DAILY_LIMIT: "${API_KEY_DEFAULT_DAILY_LIMIT:-200000}"
+      ALLOW_API_KEY_QUERY_PARAM: "${ALLOW_API_KEY_QUERY_PARAM:-false}"
+      GITHUB_OAUTH_CLIENT_ID: "${GITHUB_OAUTH_CLIENT_ID:-}"
+      GITHUB_OAUTH_CLIENT_SECRET: "${GITHUB_OAUTH_CLIENT_SECRET:-}"
+      GITHUB_OAUTH_REDIRECT_URL: "${GITHUB_OAUTH_REDIRECT_URL:-}"
+      GITHUB_OAUTH_ENABLED: "${GITHUB_OAUTH_ENABLED:-false}"
+      LINUXDO_OAUTH_CLIENT_ID: "${LINUXDO_OAUTH_CLIENT_ID:-}"
+      LINUXDO_OAUTH_CLIENT_SECRET: "${LINUXDO_OAUTH_CLIENT_SECRET:-}"
+      LINUXDO_OAUTH_REDIRECT_URL: "${LINUXDO_OAUTH_REDIRECT_URL:-}"
+      LINUXDO_OAUTH_ENABLED: "${LINUXDO_OAUTH_ENABLED:-false}"
+      CONFIG_ENV_PATH: "/app/storage/.env"
+    volumes:
+      - app-storage:/app/storage
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: "${POSTGRES_DB:-hloolmail}"
+      POSTGRES_USER: "${POSTGRES_USER:-hloolmail}"
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\""]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    profiles: ["optional"]
+    restart: unless-stopped
+
+volumes:
+  app-storage:
+  postgres-data:

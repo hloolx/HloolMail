@@ -1,0 +1,158 @@
+package db
+
+import (
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"gptmail/internal/config"
+
+	"gorm.io/gorm"
+)
+
+func TestOpenSQLiteConfiguresPragmas(t *testing.T) {
+	database, err := Open(config.Config{
+		DatabaseDriver: "sqlite",
+		DatabaseURL:    filepath.Join(t.TempDir(), "mail.db"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sqlDB, err := database.DB()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer sqlDB.Close()
+
+	var journalMode string
+	if err := database.Raw("PRAGMA journal_mode").Scan(&journalMode).Error; err != nil {
+		t.Fatal(err)
+	}
+	if strings.ToLower(journalMode) != "wal" {
+		t.Fatalf("journal_mode = %q, want wal", journalMode)
+	}
+
+	var busyTimeout int
+	if err := database.Raw("PRAGMA busy_timeout").Scan(&busyTimeout).Error; err != nil {
+		t.Fatal(err)
+	}
+	if busyTimeout != 5000 {
+		t.Fatalf("busy_timeout = %d, want 5000", busyTimeout)
+	}
+
+	var foreignKeys int
+	if err := database.Raw("PRAGMA foreign_keys").Scan(&foreignKeys).Error; err != nil {
+		t.Fatal(err)
+	}
+	if foreignKeys != 1 {
+		t.Fatalf("foreign_keys = %d, want 1", foreignKeys)
+	}
+
+	if maxOpen := sqlDB.Stats().MaxOpenConnections; maxOpen != 1 {
+		t.Fatalf("MaxOpenConnections = %d, want 1", maxOpen)
+	}
+}
+
+func TestSQLiteDSNWithPragmasPreservesExistingQuery(t *testing.T) {
+	dsn := sqliteDSNWithPragmas("storage/mail.db?cache=shared")
+	if !strings.HasPrefix(dsn, "storage/mail.db?cache=shared&") {
+		t.Fatalf("dsn = %q, want existing query preserved", dsn)
+	}
+	for _, want := range []string{
+		"_pragma=journal_mode(WAL)",
+		"_pragma=busy_timeout(5000)",
+		"_pragma=foreign_keys(ON)",
+	} {
+		if !strings.Contains(dsn, want) {
+			t.Fatalf("dsn = %q, missing %s", dsn, want)
+		}
+	}
+}
+
+func TestAutoMigrateCreatesIntegrityConstraints(t *testing.T) {
+	database, err := Open(config.Config{
+		DatabaseDriver: "sqlite",
+		DatabaseURL:    filepath.Join(t.TempDir(), "mail.db"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sqlDB, err := database.DB()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer sqlDB.Close()
+
+	if err := AutoMigrate(database); err != nil {
+		t.Fatal(err)
+	}
+
+	assertNotNullColumns(t, database, "users", "email", "password_hash", "role")
+	assertNotNullColumns(t, database, "oauth_identities", "user_id", "provider", "provider_uid")
+	assertNotNullColumns(t, database, "oauth_provider_settings", "provider")
+	assertNotNullColumns(t, database, "domains", "domain", "mode", "verification_token")
+	assertNotNullColumns(t, database, "api_keys", "name", "key_prefix", "key_hash", "key_value")
+	assertNotNullColumns(t, database, "messages", "recipient", "recipient_domain", "root_domain", "from_address", "subject", "expires_at")
+	assertNotNullColumns(t, database, "mailboxes", "owner_id", "email", "local_part", "host", "domain_id")
+	assertNotNullColumns(t, database, "domain_check_result_records", "run_id", "domain_id", "domain", "status", "mx_records_json", "probes_json")
+
+	assertForeignKey(t, database, "domains", "owner_id", "users")
+	assertForeignKey(t, database, "oauth_identities", "user_id", "users")
+	assertForeignKey(t, database, "domains", "last_health_run_id", "domain_check_runs")
+	assertForeignKey(t, database, "api_keys", "owner_id", "users")
+	assertForeignKey(t, database, "session_tokens", "user_id", "users")
+	assertForeignKey(t, database, "messages", "domain_id", "domains")
+	assertForeignKey(t, database, "mailboxes", "owner_id", "users")
+	assertForeignKey(t, database, "mailboxes", "domain_id", "domains")
+	assertForeignKey(t, database, "api_usage_logs", "api_key_id", "api_keys")
+	assertForeignKey(t, database, "api_usage_logs", "user_id", "users")
+	assertForeignKey(t, database, "notifications", "user_id", "users")
+	assertForeignKey(t, database, "notifications", "domain_id", "domains")
+	assertForeignKey(t, database, "domain_check_result_records", "run_id", "domain_check_runs")
+	assertForeignKey(t, database, "domain_check_result_records", "domain_id", "domains")
+}
+
+type tableColumn struct {
+	Name    string
+	NotNull int `gorm:"column:notnull"`
+}
+
+func assertNotNullColumns(t *testing.T, database *gorm.DB, table string, names ...string) {
+	t.Helper()
+	var columns []tableColumn
+	if err := database.Raw("PRAGMA table_info(" + table + ")").Scan(&columns).Error; err != nil {
+		t.Fatal(err)
+	}
+	byName := make(map[string]tableColumn, len(columns))
+	for _, column := range columns {
+		byName[column.Name] = column
+	}
+	for _, name := range names {
+		column, ok := byName[name]
+		if !ok {
+			t.Fatalf("%s.%s column not found", table, name)
+		}
+		if column.NotNull != 1 {
+			t.Fatalf("%s.%s notnull = %d, want 1", table, name, column.NotNull)
+		}
+	}
+}
+
+type foreignKeyColumn struct {
+	Table string `gorm:"column:table"`
+	From  string `gorm:"column:from"`
+}
+
+func assertForeignKey(t *testing.T, database *gorm.DB, table string, from string, targetTable string) {
+	t.Helper()
+	var keys []foreignKeyColumn
+	if err := database.Raw("PRAGMA foreign_key_list(" + table + ")").Scan(&keys).Error; err != nil {
+		t.Fatal(err)
+	}
+	for _, key := range keys {
+		if key.From == from && key.Table == targetTable {
+			return
+		}
+	}
+	t.Fatalf("%s.%s foreign key to %s not found: %+v", table, from, targetTable, keys)
+}

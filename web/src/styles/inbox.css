@@ -1,0 +1,79 @@
+.mail-list {
+  display: grid;
+  gap: 0.35rem;
+}
+
+.mail-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  width: 100%;
+  align-items: center;
+  gap: 1rem;
+  border: 1px solid transparent;
+  border-radius: 0.5rem;
+  padding: 0.65rem;
+  text-align: left;
+  transition: background-color 160ms ease, border-color 160ms ease, box-shadow 160ms ease;
+}
+
+.mail-row-animated {
+  animation: mail-row-in 280ms cubic-bezier(0.22, 1, 0.36, 1) both;
+  animation-delay: calc(min(var(--index, 0), 20) * 30ms);
+}
+
+.mail-row-pulse {
+  will-change: background-color, box-shadow;
+  animation: mail-pulse 2.5s ease-out both;
+}
+
+@keyframes mail-row-in {
+  from { opacity: 0; transform: translateX(-6px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+
+@keyframes mail-pulse {
+  0% { background: color-mix(in srgb, var(--focus) 14%, transparent); box-shadow: 0 0 0 1px color-mix(in srgb, var(--focus) 22%, transparent); }
+  100% { background: transparent; box-shadow: 0 0 0 1px transparent; }
+}
+
+.mail-row:hover,
+.mail-row-active {
+  border-color: var(--border);
+  background: var(--soft);
+}
+
+.message-text {
+  max-height: 20rem;
+  overflow: auto;
+  white-space: pre-wrap;
+  border: 1px solid var(--border);
+  border-radius: 0.5rem;
+  background: var(--soft);
+  padding: 0.75rem;
+  font-size: 0.82rem;
+}
+
+.message-frame {
+  width: 100%;
+  min-height: 18rem;
+  border: 1px solid var(--border);
+  border-radius: 0.5rem;
+  background: white;
+}
+
+.dark .message-frame {
+  background: #1a1a1a;
+}
+
+.attachment-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  border: 1px solid var(--border);
+  border-radius: 0.5rem;
+  padding: 0.55rem 0.65rem;
+  color: var(--foreground);
+  font-size: 0.82rem;
+  text-decoration: none;
+}

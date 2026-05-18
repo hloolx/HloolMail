@@ -1,0 +1,758 @@
+.btn-danger {
+  display: inline-flex;
+  height: 2.25rem;
+  align-items: center;
+  justify-content: center;
+  gap: 0.45rem;
+  border: 1px solid color-mix(in srgb, var(--bad) 42%, transparent);
+  border-radius: 0.5rem;
+  background: var(--bad);
+  color: white;
+  padding: 0 0.75rem;
+  font-size: 0.875rem;
+  font-weight: 700;
+  transition: background-color 180ms ease, border-color 180ms ease, box-shadow 180ms ease, transform 180ms ease;
+}
+
+.table-empty {
+  color: var(--muted);
+  padding: 1rem 0.5rem;
+  text-align: center;
+}
+
+.admin-page-header,
+.users-panel-header,
+.admin-panel-header {
+  align-items: flex-start;
+}
+
+.admin-page-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.admin-page-header h1 {
+  margin: 0;
+  font-size: 1.1rem;
+  font-weight: 760;
+}
+
+.admin-page-header p {
+  margin: 0.2rem 0 0;
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+
+.admin-status-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.admin-dns-settings {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0.75rem;
+  margin: 0.9rem 0;
+}
+
+.admin-toggle {
+  align-items: center;
+  border: 1px solid var(--border);
+  border-radius: 0.5rem;
+  display: inline-flex;
+  gap: 0.5rem;
+  min-height: 2.6rem;
+  padding: 0.55rem 0.7rem;
+}
+
+.admin-toggle input {
+  accent-color: var(--focus);
+}
+
+.admin-resolver-field {
+  grid-column: span 2;
+}
+
+@media (max-width: 900px) {
+  .admin-dns-settings {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 640px) {
+  .admin-dns-settings {
+    grid-template-columns: 1fr;
+  }
+
+  .admin-resolver-field {
+    grid-column: auto;
+  }
+}
+
+.admin-risk-list {
+  display: grid;
+  gap: 0.55rem;
+  margin-top: 0.85rem;
+}
+
+.admin-risk {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: start;
+  gap: 0.55rem;
+  border: 1px solid var(--border);
+  border-radius: 0.65rem;
+  background: var(--soft);
+  padding: 0.7rem 0.8rem;
+}
+
+.admin-risk b,
+.admin-risk small {
+  display: block;
+}
+
+.admin-risk b {
+  font-size: 0.82rem;
+}
+
+.admin-risk small {
+  margin-top: 0.12rem;
+  color: var(--muted);
+  font-size: 0.75rem;
+  line-height: 1.55;
+}
+
+.admin-risk-warning {
+  border-color: color-mix(in srgb, var(--warn) 32%, var(--border));
+  color: var(--warn);
+}
+
+.admin-risk-critical {
+  border-color: color-mix(in srgb, var(--bad) 32%, var(--border));
+  color: var(--bad);
+}
+
+.admin-risk-ok {
+  border-color: color-mix(in srgb, var(--good) 28%, var(--border));
+  color: var(--good);
+}
+
+.admin-oauth-grid {
+  display: grid;
+  gap: 1rem;
+}
+
+@media (min-width: 980px) {
+  .admin-oauth-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+.admin-oauth-card {
+  display: grid;
+  gap: 0.9rem;
+  align-content: start;
+}
+
+.admin-oauth-provider-head {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.admin-oauth-provider-head h2 {
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 780;
+}
+
+.admin-oauth-provider-head p {
+  overflow: hidden;
+  margin: 0.16rem 0 0;
+  color: var(--muted);
+  font-size: 0.75rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.admin-oauth-mark {
+  display: grid;
+  width: 2.55rem;
+  height: 2.55rem;
+  place-items: center;
+  border: 1px solid var(--border);
+  border-radius: 0.7rem;
+  background: var(--soft);
+  color: var(--foreground);
+}
+
+.admin-oauth-mark-linuxdo {
+  color: var(--focus);
+}
+
+.admin-oauth-statuses {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+}
+
+.admin-oauth-summary {
+  display: grid;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 0.75rem;
+  background: var(--soft);
+}
+
+.admin-oauth-summary-row {
+  display: grid;
+  grid-template-columns: minmax(6.5rem, 0.3fr) minmax(0, 1fr);
+  align-items: center;
+  gap: 0.55rem;
+  min-width: 0;
+  padding: 0.65rem 0.75rem;
+}
+
+.admin-oauth-summary-row + .admin-oauth-summary-row {
+  border-top: 1px solid var(--border);
+}
+
+.admin-oauth-summary-row-action {
+  grid-template-columns: minmax(6.5rem, 0.3fr) minmax(0, 1fr) auto;
+}
+
+.admin-oauth-summary-label {
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 760;
+}
+
+.admin-oauth-summary-value {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--foreground);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.78rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.admin-oauth-control {
+  display: inline-flex;
+  height: 2rem;
+  align-items: center;
+  justify-content: center;
+  gap: 0.38rem;
+  border: 1px solid var(--border);
+  border-radius: 0.5rem;
+  background: var(--panel);
+  color: var(--foreground);
+  padding: 0 0.58rem;
+  font-size: 0.78rem;
+  font-weight: 720;
+  line-height: 1;
+  text-decoration: none;
+  white-space: nowrap;
+  transition: background-color 180ms ease, border-color 180ms ease, transform 180ms ease;
+}
+
+.admin-oauth-control:hover {
+  border-color: color-mix(in srgb, var(--focus) 36%, var(--border));
+  background: color-mix(in srgb, var(--focus) 9%, var(--panel));
+  transform: translateY(-1px);
+}
+
+.admin-oauth-edit-control {
+  align-self: start;
+}
+
+.admin-oauth-form-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 0.5rem;
+}
+
+.admin-oauth-form {
+  display: grid;
+  gap: 0.75rem;
+  border-top: 1px solid var(--border);
+  padding-top: 0.85rem;
+}
+
+@media (min-width: 720px) {
+  .admin-oauth-form {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .admin-oauth-wide,
+  .admin-oauth-form-actions {
+    grid-column: 1 / -1;
+  }
+}
+
+.admin-oauth-state {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  color: var(--muted);
+  font-size: 0.84rem;
+}
+
+@media (max-width: 640px) {
+  .admin-oauth-provider-head {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .admin-oauth-edit-control {
+    grid-column: 1 / -1;
+    justify-self: stretch;
+  }
+
+  .admin-oauth-summary-row,
+  .admin-oauth-summary-row-action {
+    grid-template-columns: minmax(0, 1fr);
+    align-items: stretch;
+  }
+
+  .admin-oauth-summary-row-action .admin-oauth-control {
+    justify-self: start;
+  }
+}
+
+.admin-domain-cell {
+  display: grid;
+  gap: 0.12rem;
+  min-width: 0;
+}
+
+.admin-domain-cell b {
+  overflow: hidden;
+  font-size: 0.82rem;
+  font-weight: 720;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.admin-domain-cell small {
+  max-width: 22rem;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 0.72rem;
+  line-height: 1.45;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.severity-pill {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  padding: 0.2rem 0.5rem;
+  font-size: 0.72rem;
+  font-weight: 760;
+  white-space: nowrap;
+}
+
+.severity-ok {
+  background: color-mix(in srgb, var(--good) 14%, transparent);
+  color: var(--good);
+}
+
+.severity-warning {
+  background: color-mix(in srgb, var(--warn) 16%, transparent);
+  color: var(--warn);
+}
+
+.severity-critical {
+  background: color-mix(in srgb, var(--bad) 14%, transparent);
+  color: var(--bad);
+}
+
+.admin-code {
+  border-radius: 0.35rem;
+  background: var(--soft);
+  padding: 0.18rem 0.35rem;
+  font-size: 0.72rem;
+}
+
+.admin-log-target {
+  display: inline-block;
+  max-width: 16rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.users-filters {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 0.5rem;
+}
+
+.users-search {
+  display: inline-flex;
+  height: 2.25rem;
+  min-width: min(14rem, 100%);
+  align-items: center;
+  gap: 0.45rem;
+  border: 1px solid var(--border);
+  border-radius: 0.5rem;
+  background: var(--panel);
+  color: var(--muted);
+  padding: 0 0.65rem;
+}
+
+.users-search:focus-within {
+  border-color: var(--foreground);
+  box-shadow: 0 0 0 3px var(--focus-soft);
+}
+
+.users-search input {
+  min-width: 0;
+  border: 0;
+  background: transparent;
+  color: var(--foreground);
+  outline: none;
+}
+
+.user-form {
+  display: grid;
+  gap: 0.8rem;
+}
+
+.user-form-field {
+  display: grid;
+  gap: 0.35rem;
+  min-width: 0;
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+
+.user-limit-grid {
+  display: grid;
+  gap: 0.7rem;
+}
+
+@media (min-width: 640px) {
+  .user-limit-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+.user-form-note {
+  margin: -0.25rem 0 0;
+  color: var(--muted);
+  font-size: 0.75rem;
+  line-height: 1.6;
+}
+
+.user-edit-modal {
+  width: min(100%, 32rem);
+}
+
+.user-edit-modal .user-form {
+  padding: 1rem;
+}
+
+.user-enabled-row {
+  align-self: end;
+}
+
+.modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.5rem;
+  padding-top: 0.2rem;
+}
+
+.notification-bell {
+  position: relative;
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+}
+
+.notification-trigger,
+.notification-mark-all {
+  position: relative;
+  display: grid;
+  width: 2.15rem;
+  height: 2.15rem;
+  place-items: center;
+  border: 1px solid var(--border);
+  border-radius: 0.58rem;
+  background: color-mix(in srgb, var(--background) 84%, transparent);
+  color: var(--foreground);
+  transition: background-color 180ms ease, border-color 180ms ease, transform 180ms ease;
+}
+
+.notification-trigger:hover,
+.notification-trigger-active,
+.notification-mark-all:hover {
+  border-color: color-mix(in srgb, var(--focus) 34%, var(--border));
+  background: color-mix(in srgb, var(--focus) 12%, var(--background));
+  transform: translateY(-1px);
+}
+
+.notification-mark-all:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+  transform: none;
+}
+
+.notification-count {
+  position: absolute;
+  top: -0.35rem;
+  right: -0.35rem;
+  min-width: 1.1rem;
+  height: 1.1rem;
+  border: 2px solid var(--shell);
+  border-radius: 999px;
+  background: var(--bad);
+  color: #fff;
+  padding: 0 0.22rem;
+  font-size: 0.62rem;
+  font-weight: 800;
+  line-height: 0.9rem;
+  text-align: center;
+}
+
+.notification-popover {
+  position: absolute;
+  top: calc(100% + 0.55rem);
+  right: 0;
+  z-index: 70;
+  width: min(24rem, calc(100vw - 1.5rem));
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 0.75rem;
+  background: color-mix(in srgb, var(--panel) 96%, transparent);
+  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.18);
+  backdrop-filter: blur(18px);
+  animation: popover-in 180ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.notification-popover-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  border-bottom: 1px solid var(--border);
+  padding: 0.75rem;
+}
+
+.notification-popover-head h2 {
+  margin: 0;
+  font-size: 0.92rem;
+  font-weight: 760;
+}
+
+.notification-popover-head p {
+  margin: 0.12rem 0 0;
+  color: var(--muted);
+  font-size: 0.74rem;
+}
+
+.notification-list {
+  display: grid;
+  max-height: min(28rem, calc(100vh - 7rem));
+  overflow: auto;
+  padding: 0.35rem;
+}
+
+.notification-empty {
+  padding: 1rem;
+  color: var(--muted);
+  font-size: 0.8rem;
+  text-align: center;
+}
+
+.notification-item {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 0.6rem;
+  border-radius: 0.55rem;
+  padding: 0.65rem;
+  text-align: left;
+}
+
+.notification-item:hover,
+.notification-item-unread {
+  background: var(--soft);
+}
+
+.notification-icon {
+  display: grid;
+  width: 1.7rem;
+  height: 1.7rem;
+  place-items: center;
+  border-radius: 0.5rem;
+}
+
+.notification-icon-ok {
+  background: color-mix(in srgb, var(--good) 14%, transparent);
+  color: var(--good);
+}
+
+.notification-icon-warning {
+  background: color-mix(in srgb, var(--warn) 16%, transparent);
+  color: var(--warn);
+}
+
+.notification-icon-critical {
+  background: color-mix(in srgb, var(--bad) 14%, transparent);
+  color: var(--bad);
+}
+
+.notification-copy {
+  display: grid;
+  min-width: 0;
+  gap: 0.12rem;
+}
+
+.notification-copy b {
+  font-size: 0.82rem;
+}
+
+.notification-copy span {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 0.76rem;
+  line-height: 1.45;
+  text-overflow: ellipsis;
+}
+
+.notification-copy small {
+  color: color-mix(in srgb, var(--muted) 78%, transparent);
+  font-size: 0.68rem;
+}
+
+.confirm-modal {
+  display: grid;
+  width: min(100%, 27rem);
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 0.85rem;
+  overflow: hidden;
+  padding: 1rem;
+}
+
+.confirm-modal-icon {
+  display: grid;
+  width: 2.5rem;
+  height: 2.5rem;
+  place-items: center;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--bad) 12%, transparent);
+  color: var(--bad);
+}
+
+.confirm-modal-copy {
+  min-width: 0;
+}
+
+.confirm-modal-copy h2 {
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 760;
+}
+
+.confirm-modal-copy p {
+  margin: 0.3rem 0 0;
+  color: var(--muted);
+  font-size: 0.82rem;
+  line-height: 1.6;
+}
+
+.confirm-modal-copy code {
+  display: block;
+  width: fit-content;
+  max-width: 100%;
+  margin-top: 0.65rem;
+  overflow-wrap: anywhere;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--soft);
+  color: var(--foreground);
+  padding: 0.35rem 0.55rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.75rem;
+}
+
+.confirm-modal-actions {
+  grid-column: 1 / -1;
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.5rem;
+  padding-top: 0.15rem;
+}
+
+@keyframes modal-backdrop-in {
+  from {
+    opacity: 0;
+  }
+
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes modal-panel-in {
+  from {
+    opacity: 0;
+    transform: translateY(0.55rem) scale(0.96);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.status-loading {
+  background: var(--soft);
+  color: var(--muted);
+}
+
+.status-warn {
+  background: color-mix(in srgb, var(--focus) 14%, transparent);
+  color: var(--focus);
+}
+
+.btn-primary:active,
+.btn-secondary:active,
+.btn-ghost:active,
+.icon-btn:active {
+  transform: translateY(0) scale(0.98);
+  transition-duration: 80ms;
+}
+
+/* Refresh spin */
+.is-refetching svg,
+.is-pending svg {
+  animation: spin 800ms linear infinite;
+}
+
+.metric-value {
+  transition: color 400ms ease;
+}
+
+.metric-loading {
+  display: inline-block;
+  width: 3rem;
+  height: 1.2rem;
+  vertical-align: middle;
+  border-radius: 0.25rem;
+  background: var(--soft);
+  animation: metric-shimmer 1.4s ease-in-out infinite;
+}
+
+@keyframes metric-shimmer {
+  0%, 100% { opacity: 0.4; }
+  50% { opacity: 0.75; }
+}

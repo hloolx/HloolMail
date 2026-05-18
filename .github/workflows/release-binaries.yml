@@ -1,0 +1,99 @@
+name: Release binaries
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - goos: linux
+            goarch: amd64
+            ext: ""
+            archive: tar.gz
+          - goos: linux
+            goarch: arm64
+            ext: ""
+            archive: tar.gz
+          - goos: darwin
+            goarch: arm64
+            ext: ""
+            archive: tar.gz
+          - goos: windows
+            goarch: amd64
+            ext: ".exe"
+            archive: zip
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Build web console
+        working-directory: web
+        run: |
+          npm install
+          node scripts/install-native-build-deps.cjs
+          npm run build
+
+      - name: Build server
+        shell: bash
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: "0"
+        run: |
+          name="hloolmail-${GOOS}-${GOARCH}"
+          package_dir="dist/${name}"
+          mkdir -p "${package_dir}/web"
+          go build -trimpath -ldflags="-s -w" -o "${package_dir}/hloolmail${{ matrix.ext }}" ./cmd/server
+          cp -R web/dist "${package_dir}/web/dist"
+          cp README.md .env.example "${package_dir}/"
+          if [ "${{ matrix.archive }}" = "zip" ]; then
+            (cd dist && zip -qr "${name}.zip" "${name}")
+          else
+            (cd dist && tar -czf "${name}.tar.gz" "${name}")
+          fi
+
+      - name: Upload binary artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: hloolmail-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: dist/hloolmail-${{ matrix.goos }}-${{ matrix.goarch }}.${{ matrix.archive }}
+          if-no-files-found: error
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Publish GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          generate_release_notes: true
