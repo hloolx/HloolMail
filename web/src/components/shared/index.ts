@@ -2,6 +2,7 @@ export { ConfigLine } from './ConfigLine';
 export { DNSRecordRow } from './DNSRecordRow';
 export { Field } from './Field';
 export { CodeBlock } from './CodeBlock';
+export { AppLogo } from './AppLogo';
 export { Metric } from './Metric';
 export { DataTable } from './DataTable';
 export { StatusPill } from './StatusPill';

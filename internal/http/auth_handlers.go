@@ -1,8 +1,11 @@
 package httpapi
 
 import (
+	"context"
 	"fmt"
+	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -11,6 +14,7 @@ import (
 	"gptmail/internal/auth"
 	"gptmail/internal/config"
 	appdb "gptmail/internal/db"
+	appdomain "gptmail/internal/domain"
 	"gptmail/internal/models"
 
 	"github.com/gin-gonic/gin"
@@ -38,6 +42,7 @@ func (h *Handler) installStatus(c *gin.Context) {
 			"expected_mx":     h.Config.ExpectedMX,
 			"database_driver": h.Config.DatabaseDriver,
 			"database_url":    maskDSN(h.Config.DatabaseURL),
+			"env_path":        h.Config.EnvPath,
 		},
 		"deployment": gin.H{
 			"kind":               deploymentKind(),
@@ -109,15 +114,85 @@ func (h *Handler) install(c *gin.Context) {
 			return
 		}
 	}
-	if err := writeEnvFile(h.Config.EnvPath, input); err != nil {
-		fail(c, http.StatusInternalServerError, err.Error())
-		return
+	envContent := buildEnvFileContent(input)
+	envWritten := true
+	envError := ""
+	if err := writeEnvFile(h.Config.EnvPath, envContent); err != nil {
+		envWritten = false
+		envError = err.Error()
 	}
 	if !restartRequired {
 		h.Config = targetCfg
 		h.Sessions = auth.NewSessionService(targetCfg.SessionSecret, h.DB)
 	}
-	ok(c, gin.H{"installed": true, "restart_required": restartRequired})
+	ok(c, gin.H{
+		"installed":          true,
+		"restart_required":   restartRequired,
+		"env_written":        envWritten,
+		"env_error":          envError,
+		"env_path":           h.Config.EnvPath,
+		"env_content":        envContent,
+		"deployment_kind":    deploymentKind(),
+		"config_lock_reason": configLockReason(h.installRuntimeConfigLocked()),
+	})
+}
+
+func (h *Handler) installDNSCheck(c *gin.Context) {
+	var input installDNSCheckInput
+	if err := c.ShouldBindJSON(&input); err != nil {
+		fail(c, http.StatusBadRequest, "invalid json")
+		return
+	}
+	input.applyDefaults(h.Config)
+	if err := input.validate(); err != nil {
+		fail(c, http.StatusBadRequest, err.Error())
+		return
+	}
+	if input.DevMode && strings.HasSuffix(input.Domain, ".test") {
+		ok(c, gin.H{
+			"verified":      true,
+			"domain":        input.Domain,
+			"mail_hostname": input.MailHostname,
+			"expected_mx":   input.ExpectedMX,
+			"message":       "dev mode accepts .test domains without external DNS",
+		})
+		return
+	}
+
+	checkCtx, cancel := context.WithTimeout(c.Request.Context(), 15*time.Second)
+	defer cancel()
+
+	addressCheck := checkInstallHostAddress(checkCtx, input.MailHostname, input.ServerIP)
+	mxCheck, err := runInstallMXCheck(checkCtx, h.DNSChecker, input.Domain, input.ExpectedMX)
+	if err != nil {
+		fail(c, http.StatusBadRequest, err.Error())
+		return
+	}
+	var wildcardCheck *appdomain.CheckResult
+	if input.CheckWildcard {
+		result, err := runInstallMXCheck(checkCtx, h.DNSChecker, "probe-install."+input.Domain, input.ExpectedMX)
+		if err != nil {
+			fail(c, http.StatusBadRequest, err.Error())
+			return
+		}
+		wildcardCheck = &result
+	}
+
+	verified := addressCheck.Verified && mxCheck.MXVerified && (!input.CheckWildcard || (wildcardCheck != nil && wildcardCheck.MXVerified))
+	message := "DNS records are not ready yet"
+	if verified {
+		message = "DNS records are verified"
+	}
+	ok(c, gin.H{
+		"verified":       verified,
+		"domain":         input.Domain,
+		"mail_hostname":  input.MailHostname,
+		"expected_mx":    input.ExpectedMX,
+		"address_check":  addressCheck,
+		"mx_check":       mxCheck,
+		"wildcard_check": wildcardCheck,
+		"message":        message,
+	})
 }
 
 func (h *Handler) login(c *gin.Context) {
@@ -251,12 +326,35 @@ type installInput struct {
 	ExpectedMX       string `json:"expected_mx"`
 	DatabaseDriver   string `json:"database_driver"`
 	DatabaseURL      string `json:"database_url"`
+	DatabaseHost     string `json:"database_host"`
+	DatabasePort     string `json:"database_port"`
+	DatabaseName     string `json:"database_name"`
+	DatabaseUser     string `json:"database_user"`
+	DatabasePassword string `json:"database_password"`
+	DatabaseSSLMode  string `json:"database_sslmode"`
 	FrontendDist     string `json:"frontend_dist"`
 	AdminEmail       string `json:"admin_email"`
 	AdminPassword    string `json:"admin_password"`
 	InboxTokenSecret string `json:"inbox_token_secret"`
 	SessionSecret    string `json:"session_secret"`
 	DevMode          bool   `json:"dev_mode"`
+}
+
+type installDNSCheckInput struct {
+	Domain        string `json:"domain"`
+	MailHostname  string `json:"mail_hostname"`
+	ExpectedMX    string `json:"expected_mx"`
+	ServerIP      string `json:"server_ip"`
+	CheckWildcard bool   `json:"check_wildcard"`
+	DevMode       bool   `json:"dev_mode"`
+}
+
+type installAddressCheck struct {
+	Host       string   `json:"host"`
+	ExpectedIP string   `json:"expected_ip"`
+	Verified   bool     `json:"verified"`
+	Addresses  []string `json:"addresses"`
+	Error      string   `json:"error,omitempty"`
 }
 
 func (i *installInput) applyDefaults(cfg config.Config) error {
@@ -277,6 +375,9 @@ func (i *installInput) applyDefaults(cfg config.Config) error {
 	}
 	if i.DatabaseDriver == "" {
 		i.DatabaseDriver = cfg.DatabaseDriver
+	}
+	if err := i.populateDatabaseURLFromParts(); err != nil {
+		return err
 	}
 	if i.DatabaseURL == "" {
 		i.DatabaseURL = cfg.DatabaseURL
@@ -301,6 +402,43 @@ func (i *installInput) applyDefaults(cfg config.Config) error {
 	return nil
 }
 
+func (i *installInput) populateDatabaseURLFromParts() error {
+	driver := strings.ToLower(strings.TrimSpace(i.DatabaseDriver))
+	if driver != "postgres" && driver != "postgresql" {
+		return nil
+	}
+	if strings.TrimSpace(i.DatabaseURL) != "" {
+		return nil
+	}
+	host := strings.TrimSpace(i.DatabaseHost)
+	name := strings.TrimSpace(i.DatabaseName)
+	user := strings.TrimSpace(i.DatabaseUser)
+	if host == "" && name == "" && user == "" && strings.TrimSpace(i.DatabasePassword) == "" {
+		return nil
+	}
+	if host == "" || name == "" || user == "" {
+		return fmt.Errorf("database host, name and user are required for PostgreSQL")
+	}
+	u := url.URL{
+		Scheme: "postgres",
+		Host:   host,
+		Path:   "/" + strings.TrimPrefix(name, "/"),
+	}
+	if port := strings.TrimSpace(i.DatabasePort); port != "" {
+		u.Host = net.JoinHostPort(host, port)
+	}
+	u.User = url.UserPassword(user, i.DatabasePassword)
+	query := u.Query()
+	sslMode := strings.TrimSpace(i.DatabaseSSLMode)
+	if sslMode == "" {
+		sslMode = "disable"
+	}
+	query.Set("sslmode", sslMode)
+	u.RawQuery = query.Encode()
+	i.DatabaseURL = u.String()
+	return nil
+}
+
 func (i installInput) validate() error {
 	if !strings.Contains(i.AdminEmail, "@") {
 		return fmt.Errorf("admin email required")
@@ -310,6 +448,9 @@ func (i installInput) validate() error {
 	}
 	if strings.TrimSpace(i.DatabaseURL) == "" {
 		return fmt.Errorf("database url required")
+	}
+	if strings.Contains(i.DatabaseURL, "***") {
+		return fmt.Errorf("database credentials are masked; enter the database password or keep the existing runtime config")
 	}
 	if strings.TrimSpace(i.PublicBaseURL) == "" || strings.TrimSpace(i.MailHostname) == "" || strings.TrimSpace(i.ExpectedMX) == "" {
 		return fmt.Errorf("public base url, mail hostname and expected mx are required")
@@ -350,11 +491,82 @@ func (i *installInput) preserveMaskedDatabaseURL(cfg config.Config) {
 	}
 }
 
-func writeEnvFile(path string, input installInput) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil && filepath.Dir(path) != "." {
-		return err
+func (i *installDNSCheckInput) applyDefaults(cfg config.Config) {
+	i.Domain = appdomain.NormalizeDomain(i.Domain)
+	i.MailHostname = appdomain.NormalizeDomain(firstInstallValue(i.MailHostname, cfg.MailHostname))
+	i.ExpectedMX = appdomain.NormalizeDomain(firstInstallValue(i.ExpectedMX, i.MailHostname, cfg.ExpectedMX))
+	i.ServerIP = strings.TrimSpace(i.ServerIP)
+	if i.Domain == "" {
+		i.Domain = rootDomainGuess(i.MailHostname)
 	}
-	content := strings.Join([]string{
+}
+
+func (i installDNSCheckInput) validate() error {
+	if i.Domain == "" || !strings.Contains(i.Domain, ".") {
+		return fmt.Errorf("domain is required for DNS verification")
+	}
+	if i.MailHostname == "" || !strings.Contains(i.MailHostname, ".") {
+		return fmt.Errorf("receiving hostname is required for DNS verification")
+	}
+	if i.ExpectedMX == "" || !strings.Contains(i.ExpectedMX, ".") {
+		return fmt.Errorf("MX target is required for DNS verification")
+	}
+	if strings.TrimSpace(i.ServerIP) == "" && !(i.DevMode && strings.HasSuffix(i.Domain, ".test")) {
+		return fmt.Errorf("server ip is required for DNS A/AAAA verification")
+	}
+	return nil
+}
+
+func firstInstallValue(values ...string) string {
+	for _, value := range values {
+		if trimmed := strings.TrimSpace(value); trimmed != "" {
+			return trimmed
+		}
+	}
+	return ""
+}
+
+func rootDomainGuess(host string) string {
+	parts := strings.Split(appdomain.NormalizeDomain(host), ".")
+	if len(parts) < 2 {
+		return ""
+	}
+	return strings.Join(parts[len(parts)-2:], ".")
+}
+
+func checkInstallHostAddress(ctx context.Context, host, expectedIP string) installAddressCheck {
+	check := installAddressCheck{
+		Host:       host,
+		ExpectedIP: expectedIP,
+	}
+	expected := net.ParseIP(strings.Trim(expectedIP, "[]"))
+	records, err := net.DefaultResolver.LookupIPAddr(ctx, host)
+	if err != nil {
+		check.Error = err.Error()
+		return check
+	}
+	for _, record := range records {
+		ip := record.IP.String()
+		check.Addresses = append(check.Addresses, ip)
+		if expected != nil && record.IP.Equal(expected) {
+			check.Verified = true
+		}
+	}
+	return check
+}
+
+func runInstallMXCheck(ctx context.Context, checker appdomain.DNSChecker, host, expectedMX string) (appdomain.CheckResult, error) {
+	runner := checker.ProbeRunner
+	if runner == nil {
+		runner = appdomain.MiekgDNSProbeRunner{}
+	}
+	options := appdomain.DefaultCheckOptions()
+	options.StrictMX = checker.Config.MXStrict
+	return runner.CheckMX(ctx, host, expectedMX, options)
+}
+
+func buildEnvFileContent(input installInput) string {
+	return strings.Join([]string{
 		"HTTP_ADDR=" + quoteEnv(input.HTTPAddr),
 		"SMTP_ADDR=" + quoteEnv(input.SMTPAddr),
 		"PUBLIC_BASE_URL=" + quoteEnv(input.PublicBaseURL),
@@ -368,6 +580,12 @@ func writeEnvFile(path string, input installInput) error {
 		"SESSION_SECRET=" + quoteEnv(input.SessionSecret),
 		"",
 	}, "\n")
+}
+
+func writeEnvFile(path string, content string) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil && filepath.Dir(path) != "." {
+		return err
+	}
 	return os.WriteFile(path, []byte(content), 0o600)
 }
 

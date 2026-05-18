@@ -63,6 +63,7 @@ func NewRouter(h *Handler) *gin.Engine {
 	api := router.Group("/api")
 	api.GET("/health", h.perIPRateLimit(2, 5), h.health)
 	api.GET("/install/status", h.perIPRateLimit(1.0/3, 3), h.installStatus)
+	api.POST("/install/dns-check", h.perIPRateLimit(1.0/6, 3), h.installDNSCheck)
 	api.POST("/install", h.perIPRateLimit(1.0/3, 3), h.install)
 	api.POST("/auth/login", h.perIPRateLimit(1.0/3, 5), h.login)
 	api.POST("/auth/register", h.perIPRateLimit(1.0/3, 5), h.register)

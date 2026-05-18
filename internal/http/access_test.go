@@ -1152,6 +1152,80 @@ func TestInstallPreservesRuntimeConfigWhenLocked(t *testing.T) {
 	}
 }
 
+func TestInstallBuildsPostgresURLFromParts(t *testing.T) {
+	input := installInput{
+		DatabaseDriver:   "postgres",
+		DatabaseHost:     "db.example.com",
+		DatabasePort:     "5432",
+		DatabaseName:     "hloolmail",
+		DatabaseUser:     "mailuser",
+		DatabasePassword: "p@ss word",
+		DatabaseSSLMode:  "require",
+		AdminEmail:       "admin@example.com",
+		AdminPassword:    "password123",
+		PublicBaseURL:    "https://mail.example.com",
+		MailHostname:     "mail.example.com",
+		ExpectedMX:       "mail.example.com",
+	}
+
+	if err := input.applyDefaults(config.Config{}); err != nil {
+		t.Fatal(err)
+	}
+	want := "postgres://mailuser:p%40ss%20word@db.example.com:5432/hloolmail?sslmode=require"
+	if input.DatabaseURL != want {
+		t.Fatalf("database url = %q, want %q", input.DatabaseURL, want)
+	}
+}
+
+func TestInstallReturnsManualEnvWhenEnvWriteFails(t *testing.T) {
+	db := httpTestDB(t)
+	envPathIsDirectory := t.TempDir()
+	router := testRouterWithConfig(t, db, func(cfg *config.Config) {
+		cfg.EnvPath = envPathIsDirectory
+	})
+
+	install := perform(router, http.MethodPost, "/api/install", map[string]any{
+		"admin_email":     "admin@example.com",
+		"admin_password":  "password123",
+		"database_driver": "sqlite",
+		"database_url":    ":memory:",
+		"public_base_url": "http://localhost:3000",
+		"mail_hostname":   "mail.example.com",
+		"expected_mx":     "mail.example.com",
+	}, nil)
+	if install.Code != http.StatusOK {
+		t.Fatalf("install = %d: %s", install.Code, install.Body.String())
+	}
+	var body struct {
+		Data struct {
+			EnvWritten bool   `json:"env_written"`
+			EnvError   string `json:"env_error"`
+			EnvPath    string `json:"env_path"`
+			EnvContent string `json:"env_content"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(install.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if body.Data.EnvWritten {
+		t.Fatal("expected env_written=false when env path is a directory")
+	}
+	if body.Data.EnvError == "" {
+		t.Fatal("expected env_error to explain the write failure")
+	}
+	if body.Data.EnvPath != envPathIsDirectory {
+		t.Fatalf("env path = %q, want %q", body.Data.EnvPath, envPathIsDirectory)
+	}
+	if !strings.Contains(body.Data.EnvContent, `DATABASE_URL=":memory:"`) || !strings.Contains(body.Data.EnvContent, "SESSION_SECRET=") {
+		t.Fatalf("env content missing expected values:\n%s", body.Data.EnvContent)
+	}
+	var adminCount int64
+	db.Model(&models.User{}).Where("email = ?", "admin@example.com").Count(&adminCount)
+	if adminCount != 1 {
+		t.Fatal("install should still create the admin when env content must be copied manually")
+	}
+}
+
 func TestLogoutRevokesSession(t *testing.T) {
 	db := httpTestDB(t)
 	hash, err := auth.HashSecret("password123")

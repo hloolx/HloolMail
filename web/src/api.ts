@@ -133,6 +133,7 @@ export type InstallStatus = {
     expected_mx: string;
     database_driver: string;
     database_url: string;
+    env_path?: string;
   };
   deployment?: {
     kind: string;
@@ -140,6 +141,54 @@ export type InstallStatus = {
     config_locked: boolean;
     config_lock_reason?: string;
   };
+};
+
+export type InstallResult = {
+  installed: boolean;
+  restart_required: boolean;
+  env_written: boolean;
+  env_error?: string;
+  env_path: string;
+  env_content: string;
+  deployment_kind: string;
+  config_lock_reason?: string;
+};
+
+export type InstallDNSProbe = {
+  source: string;
+  resolver?: string;
+  authoritative: boolean;
+  verified: boolean;
+  mx_records?: string[];
+  error?: string;
+};
+
+export type InstallDNSMXCheck = {
+  domain: string;
+  mx_verified: boolean;
+  dns_status: string;
+  mx_records?: string[];
+  dns_checks?: InstallDNSProbe[];
+  check_message?: string;
+};
+
+export type InstallAddressCheck = {
+  host: string;
+  expected_ip: string;
+  verified: boolean;
+  addresses?: string[];
+  error?: string;
+};
+
+export type InstallDNSCheckResult = {
+  verified: boolean;
+  domain: string;
+  mail_hostname: string;
+  expected_mx: string;
+  address_check?: InstallAddressCheck;
+  mx_check?: InstallDNSMXCheck;
+  wildcard_check?: InstallDNSMXCheck | null;
+  message: string;
 };
 
 type RequestOptions = RequestInit & {

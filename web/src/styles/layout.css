@@ -1030,6 +1030,34 @@
   color: color-mix(in srgb, var(--muted) 86%, var(--foreground));
 }
 
+.install-brand {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin-bottom: 1rem;
+}
+
+.install-brand .app-logo {
+  width: 2.35rem;
+  height: 2.35rem;
+}
+
+.install-brand-copy {
+  display: grid;
+  gap: 0.1rem;
+  min-width: 0;
+}
+
+.install-brand strong {
+  font-size: 1rem;
+  font-weight: 780;
+}
+
+.install-brand-copy span {
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
 .install-lock-notice {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr);
@@ -1063,6 +1091,190 @@
   color: var(--muted);
   font-size: 0.78rem;
   line-height: 1.6;
+}
+
+.install-section-title {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  margin: 1rem 0 0.65rem;
+  color: var(--foreground);
+  font-size: 0.82rem;
+  font-weight: 750;
+}
+
+.install-section-title svg {
+  color: var(--focus);
+}
+
+.install-generated-line {
+  display: grid;
+  gap: 0.35rem;
+  margin-top: 0.75rem;
+  font-size: 0.75rem;
+}
+
+.install-generated-line span {
+  color: var(--muted);
+}
+
+.install-generated-line code {
+  overflow-wrap: anywhere;
+  border: 1px solid var(--border);
+  border-radius: 0.5rem;
+  background: var(--soft);
+  padding: 0.65rem;
+  color: var(--foreground);
+}
+
+.install-danger-label {
+  color: var(--bad);
+  font-weight: 760;
+}
+
+.install-danger-input {
+  border-color: color-mix(in srgb, var(--bad) 48%, var(--border));
+}
+
+.install-danger-input:focus {
+  border-color: var(--bad);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--bad) 16%, transparent);
+}
+
+.install-danger-hint,
+.install-warning-text {
+  color: var(--bad);
+  font-size: 0.75rem;
+  line-height: 1.55;
+}
+
+.install-dns-result {
+  display: grid;
+  gap: 0.5rem;
+  border-top: 1px solid var(--border);
+  padding-top: 0.75rem;
+}
+
+.install-dns-ok,
+.install-dns-bad {
+  font-size: 0.82rem;
+  font-weight: 760;
+}
+
+.install-dns-ok {
+  color: var(--good);
+}
+
+.install-dns-bad {
+  color: var(--bad);
+}
+
+.install-dns-line {
+  display: grid;
+  grid-template-columns: auto 4.75rem minmax(0, 1fr);
+  align-items: center;
+  gap: 0.45rem;
+  min-width: 0;
+  font-size: 0.74rem;
+}
+
+.install-dns-line strong {
+  color: var(--muted);
+  font-weight: 650;
+}
+
+.install-dns-line code {
+  overflow-wrap: anywhere;
+  color: var(--foreground);
+}
+
+.install-dot-ok,
+.install-dot-bad {
+  width: 0.48rem;
+  height: 0.48rem;
+  border-radius: 999px;
+}
+
+.install-dot-ok {
+  background: var(--good);
+}
+
+.install-dot-bad {
+  background: var(--bad);
+}
+
+.install-complete-panel {
+  max-width: 58rem;
+  margin: 0 auto;
+}
+
+.install-env-guidance {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  border-top: 1px solid var(--border);
+  padding-top: 0.9rem;
+}
+
+.install-env-guidance div {
+  display: grid;
+  gap: 0.25rem;
+  min-width: 0;
+}
+
+.install-env-guidance strong {
+  font-size: 0.86rem;
+}
+
+.install-env-guidance span,
+.install-note {
+  color: var(--muted);
+  font-size: 0.78rem;
+  line-height: 1.65;
+}
+
+.install-env-guidance code,
+.install-note code {
+  color: var(--foreground);
+}
+
+.install-env-output {
+  overflow: auto;
+  max-height: min(48vh, 28rem);
+  margin: 0.9rem 0 0;
+  border: 1px solid var(--border);
+  border-radius: 0.5rem;
+  background: var(--soft);
+  padding: 0.85rem;
+  color: var(--foreground);
+  font-size: 0.76rem;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.install-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.75rem;
+  margin-top: 1rem;
+}
+
+@media (max-width: 720px) {
+  .install-env-guidance {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .install-dns-line {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .install-dns-line code {
+    grid-column: 2;
+  }
 }
 
 .btn-primary,
