@@ -246,32 +246,6 @@ curl 'http://localhost:3000/api/emails?email=demo@example.com' \
 https://mail.example.com/api/docs.md
 ```
 
-## GitHub Actions 自动发布
-
-仓库内置两条自动化流水线：
-
-- `Publish Docker image`：推送到 `main` 或打 `v*` 标签时，自动构建多架构镜像并推送到 `ghcr.io/hloolx/hloolmail`。
-- `Release binaries`：推送 `v*` 标签时，自动构建 Linux、macOS、Windows 二进制包，并发布到 GitHub Releases。
-
-发布版本示例：
-
-```bash
-git tag v0.1.1
-git push origin v0.1.1
-```
-
-## 上传前检查
-
-仓库默认忽略以下内容，避免把本机数据和敏感内容上传到 GitHub：
-
-- `.env`、`.env.*` 本地配置和密钥文件。
-- `storage/`、`*.db`、`*.sqlite` 数据库文件。
-- `web/node_modules/`、`web/dist/`、`build/`、`release/` 构建产物。
-- `test-results/`、`.playwright-cli/`、日志和本地二进制。
-- 内部实现 prompt、审计草稿和临时规划文档。
-
-`.env.example` 和 `.env.compose.example` 会保留在仓库中，作为部署模板。
-
 ## 安全提示
 
 - 生产环境必须设置 `DEV_MODE=false`。
