@@ -325,7 +325,7 @@ function InstallShell({
           <strong>HLOOL Mail</strong>
           <span>{runtimeConfigLocked ? 'Docker Compose 初始化' : '首次安装向导'}</span>
         </div>
-        {status?.deployment?.kind && <StatusPill>{status.deployment.kind}</StatusPill>}
+        {status?.deployment?.kind && <StatusPill ok>{status.deployment.kind}</StatusPill>}
       </div>
       {children}
     </div>
