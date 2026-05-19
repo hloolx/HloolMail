@@ -1608,7 +1608,7 @@ func TestInstallLoginAndAdminGate(t *testing.T) {
 	}
 }
 
-func TestInstallStatusRedactsInstalledAnonymousResponse(t *testing.T) {
+func TestInstallStatusRedactsInstalledAnonymousInternalResponse(t *testing.T) {
 	db := httpTestDB(t)
 	hash, err := auth.HashSecret("password123")
 	if err != nil {
@@ -1648,9 +1648,28 @@ func TestInstallStatusRedactsInstalledAnonymousResponse(t *testing.T) {
 	if !anonymous.Success || anonymous.Data["installed"] != true {
 		t.Fatalf("unexpected anonymous status: %s", status.Body.String())
 	}
-	for _, forbidden := range []string{"config", "deployment", "site_api_calls_today", "registered_users", "hosted_domains"} {
+	for _, required := range []string{"config", "site_api_calls_today", "registered_users", "hosted_domains"} {
+		if _, exists := anonymous.Data[required]; !exists {
+			t.Fatalf("anonymous install status missing public %q: %s", required, status.Body.String())
+		}
+	}
+	publicConfig, ok := anonymous.Data["config"].(map[string]any)
+	if !ok {
+		t.Fatalf("anonymous install status config should be an object: %s", status.Body.String())
+	}
+	for _, required := range []string{"expected_mx", "mail_hostname", "public_base_url"} {
+		if _, exists := publicConfig[required]; !exists {
+			t.Fatalf("anonymous install status missing public config %q: %s", required, status.Body.String())
+		}
+	}
+	for _, forbidden := range []string{"deployment"} {
 		if _, exists := anonymous.Data[forbidden]; exists {
 			t.Fatalf("anonymous install status leaked %q: %s", forbidden, status.Body.String())
+		}
+	}
+	for _, forbidden := range []string{"http_addr", "smtp_addr", "database_driver", "database_url", "env_path"} {
+		if _, exists := publicConfig[forbidden]; exists {
+			t.Fatalf("anonymous install status leaked config %q: %s", forbidden, status.Body.String())
 		}
 	}
 

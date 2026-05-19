@@ -26,39 +26,46 @@ const sessionCookieName = "gptmail_session"
 
 func (h *Handler) installStatus(c *gin.Context) {
 	installed := h.isInstalled()
-	if installed && currentUser(c) == nil {
-		ok(c, gin.H{"installed": true})
-		return
-	}
 
+	// Stats are public; always query so the landing page shows real numbers.
 	var apiUsageToday, registeredUsers, hostedDomains int64
 	h.DB.Model(&models.APIUsageLog{}).Where("created_at >= ?", startOfDay(time.Now())).Count(&apiUsageToday)
 	h.DB.Model(&models.User{}).Count(&registeredUsers)
 	h.DB.Model(&models.Domain{}).Count(&hostedDomains)
-	configLocked := h.installRuntimeConfigLocked()
 
-	ok(c, gin.H{
+	resp := gin.H{
 		"installed":            installed,
 		"site_api_calls_today": apiUsageToday,
 		"registered_users":     registeredUsers,
 		"hosted_domains":       hostedDomains,
-		"config": gin.H{
-			"http_addr":       h.Config.HTTPAddr,
-			"smtp_addr":       h.Config.SMTPAddr,
-			"public_base_url": h.Config.PublicBaseURL,
-			"mail_hostname":   h.Config.MailHostname,
-			"expected_mx":     h.Config.ExpectedMX,
-			"database_driver": h.Config.DatabaseDriver,
-			"database_url":    maskDSN(h.Config.DatabaseURL),
-			"env_path":        h.Config.EnvPath,
-		},
-		"deployment": gin.H{
+	}
+
+	// Public config: always safe to expose (DNS records are public by nature,
+	// public_base_url is the address users already use to reach this service).
+	resp["config"] = gin.H{
+		"expected_mx":     h.Config.ExpectedMX,
+		"mail_hostname":   h.Config.MailHostname,
+		"public_base_url": h.Config.PublicBaseURL,
+	}
+
+	// Internal details only for authenticated users or during initial setup.
+	if currentUser(c) != nil || !installed {
+		resp["config"].(gin.H)["http_addr"] = h.Config.HTTPAddr
+		resp["config"].(gin.H)["smtp_addr"] = h.Config.SMTPAddr
+		resp["config"].(gin.H)["database_driver"] = h.Config.DatabaseDriver
+		resp["config"].(gin.H)["database_url"] = maskDSN(h.Config.DatabaseURL)
+		resp["config"].(gin.H)["env_path"] = h.Config.EnvPath
+
+		configLocked := h.installRuntimeConfigLocked()
+		resp["deployment"] = gin.H{
 			"kind":               deploymentKind(),
 			"container":          isContainerRuntime(),
 			"config_locked":      configLocked,
 			"config_lock_reason": configLockReason(configLocked),
-		},
-	})
+		}
+	}
+
+	ok(c, resp)
 }
 
 func (h *Handler) install(c *gin.Context) {
