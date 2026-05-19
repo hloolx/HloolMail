@@ -17,12 +17,14 @@ import { loginWithPasskey } from '../lib/passkeys';
 declare global {
   interface Window {
     turnstile?: {
-      render: (container: string | HTMLElement, options: { sitekey: string; callback?: (token: string) => void; 'error-callback'?: () => void; 'expired-callback'?: () => void; theme?: string }) => string;
+      render: (container: string | HTMLElement, options: { sitekey: string; callback?: (token: string) => void; 'error-callback'?: () => void; 'expired-callback'?: () => void; theme?: string; appearance?: string }) => string;
       reset: (widgetId: string) => void;
       remove: (widgetId: string) => void;
     };
   }
 }
+
+const TURNSTILE_SCRIPT_SRC = 'https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit';
 
 export function LandingPage({ status, onDone }: { status?: InstallStatus; onDone: () => void }) {
   const text = useText();
@@ -58,53 +60,113 @@ export function LandingPage({ status, onDone }: { status?: InstallStatus; onDone
     staleTime: 60_000
   });
   const [turnstileToken, setTurnstileToken] = useState('');
+  const [turnstileLoadError, setTurnstileLoadError] = useState(false);
   const turnstileWidgetId = useRef<string | null>(null);
   const turnstileContainerRef = useRef<HTMLDivElement>(null);
 
-  const turnstileEnabled = loginSettings.data?.turnstile_enabled && loginSettings.data?.turnstile_site_key;
+  const turnstileEnabled = Boolean(loginSettings.data?.turnstile_enabled && loginSettings.data?.turnstile_site_key);
   const turnstileSiteKey = loginSettings.data?.turnstile_site_key || '';
   const passkeyEnabled = !!loginSettings.data?.passkey_enabled;
 
   const resetTurnstile = useCallback(() => {
-    if (turnstileWidgetId.current && window.turnstile) {
-      window.turnstile.reset(turnstileWidgetId.current);
-    }
     setTurnstileToken('');
+    if (turnstileWidgetId.current && window.turnstile) {
+      try {
+        window.turnstile.reset(turnstileWidgetId.current);
+      } catch {
+        turnstileWidgetId.current = null;
+      }
+    }
   }, []);
 
   useEffect(() => {
-    if (!turnstileEnabled) return;
-    if (document.querySelector('script[src*="turnstile"]')) {
-      if (window.turnstile && turnstileContainerRef.current && !turnstileWidgetId.current) {
-        turnstileWidgetId.current = window.turnstile.render(turnstileContainerRef.current, {
-          sitekey: turnstileSiteKey,
-          callback: (token: string) => setTurnstileToken(token),
-          'error-callback': () => setTurnstileToken(''),
-          'expired-callback': () => setTurnstileToken(''),
-          theme: 'auto'
-        });
-      }
+    if (!turnstileEnabled) {
+      setTurnstileToken('');
+      setTurnstileLoadError(false);
       return;
     }
-    const script = document.createElement('script');
-    script.src = 'https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit';
-    script.async = true;
-    script.defer = true;
-    script.onload = () => {
-      if (window.turnstile && turnstileContainerRef.current) {
+
+    let cancelled = false;
+    let loadTimeout: number | undefined;
+    let script = document.querySelector<HTMLScriptElement>('script[data-turnstile-api="true"], script[src*="challenges.cloudflare.com/turnstile/v0/api.js"]');
+
+    const renderWidget = () => {
+      if (cancelled || !window.turnstile || !turnstileContainerRef.current || turnstileWidgetId.current) return;
+      try {
         turnstileWidgetId.current = window.turnstile.render(turnstileContainerRef.current, {
           sitekey: turnstileSiteKey,
-          callback: (token: string) => setTurnstileToken(token),
-          'error-callback': () => setTurnstileToken(''),
-          'expired-callback': () => setTurnstileToken(''),
+          callback: (token: string) => {
+            if (cancelled) return;
+            setTurnstileToken(token);
+            setTurnstileLoadError(false);
+          },
+          'error-callback': () => {
+            if (cancelled) return;
+            setTurnstileToken('');
+            setTurnstileLoadError(true);
+          },
+          'expired-callback': () => {
+            if (cancelled) return;
+            setTurnstileToken('');
+          },
+          appearance: 'always',
           theme: 'auto'
         });
+        setTurnstileLoadError(false);
+      } catch {
+        if (!cancelled) {
+          setTurnstileToken('');
+          setTurnstileLoadError(true);
+        }
       }
     };
-    document.head.appendChild(script);
+
+    const handleLoad = () => {
+      if (loadTimeout) window.clearTimeout(loadTimeout);
+      renderWidget();
+    };
+    const handleError = () => {
+      if (loadTimeout) window.clearTimeout(loadTimeout);
+      if (!cancelled) {
+        setTurnstileToken('');
+        setTurnstileLoadError(true);
+      }
+    };
+
+    setTurnstileToken('');
+    setTurnstileLoadError(false);
+
+    if (window.turnstile) {
+      renderWidget();
+    } else {
+      if (!script) {
+        script = document.createElement('script');
+        script.src = TURNSTILE_SCRIPT_SRC;
+        script.async = true;
+        script.defer = true;
+        script.dataset.turnstileApi = 'true';
+        document.head.appendChild(script);
+      }
+      script.addEventListener('load', handleLoad);
+      script.addEventListener('error', handleError);
+      loadTimeout = window.setTimeout(() => {
+        if (!cancelled && !window.turnstile) {
+          setTurnstileLoadError(true);
+        }
+      }, 8000);
+    }
+
     return () => {
+      cancelled = true;
+      if (loadTimeout) window.clearTimeout(loadTimeout);
+      script?.removeEventListener('load', handleLoad);
+      script?.removeEventListener('error', handleError);
       if (turnstileWidgetId.current && window.turnstile) {
-        window.turnstile.remove(turnstileWidgetId.current);
+        try {
+          window.turnstile.remove(turnstileWidgetId.current);
+        } catch {
+          // The widget may already be gone after a strict-mode remount.
+        }
         turnstileWidgetId.current = null;
       }
     };
@@ -227,7 +289,14 @@ export function LandingPage({ status, onDone }: { status?: InstallStatus; onDone
               <input id="auth-confirm-password" className="input" value={confirmPassword} onChange={(event) => setConfirmPassword(event.target.value)} placeholder={text.login.confirmPassword} type="password" autoComplete="new-password" />
             </div>
             {turnstileEnabled && (
-              <div ref={turnstileContainerRef} style={{ display: 'flex', justifyContent: 'center', minHeight: 65 }} />
+              <>
+                <div ref={turnstileContainerRef} className="auth-turnstile-widget" />
+                {turnstileLoadError && (
+                  <p className="auth-turnstile-error" role="status">
+                    Turnstile failed to load. Refresh the page or check CSP/network settings.
+                  </p>
+                )}
+              </>
             )}
             <button ref={authSubmitRef} className="btn-primary auth-submit" type="submit" disabled={pending || (!!turnstileEnabled && !turnstileToken)}>
               {pending ? (

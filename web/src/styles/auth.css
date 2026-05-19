@@ -59,6 +59,25 @@
   width: 100%;
 }
 
+.auth-turnstile-widget {
+  display: flex;
+  min-height: 65px;
+  align-items: center;
+  justify-content: center;
+}
+
+.auth-turnstile-error {
+  margin: -0.2rem 0 0;
+  border: 1px solid color-mix(in srgb, var(--danger, #dc2626) 28%, var(--border));
+  border-radius: 0.65rem;
+  background: color-mix(in srgb, var(--danger, #dc2626) 8%, var(--background));
+  color: color-mix(in srgb, var(--danger, #dc2626) 82%, var(--foreground));
+  padding: 0.55rem 0.65rem;
+  font-size: 0.76rem;
+  font-weight: 680;
+  line-height: 1.45;
+}
+
 .oauth-login-box {
   display: grid;
   gap: 0.65rem;
