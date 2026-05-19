@@ -32,7 +32,6 @@ function AppContent() {
   const installStatus = useQuery({
     queryKey: ['install-status'],
     queryFn: () => api<InstallStatus>('/api/install/status'),
-    enabled: !me.isError && me.data?.installed === false,
     retry: false
   });
   const skipInstall = typeof window !== 'undefined' && sessionStorage.getItem('hlool_skip_install') === '1';
@@ -107,7 +106,7 @@ function AppContent() {
               }}
             />
           ) : me.isError || !me.data?.user ? (
-            <LandingPage onDone={() => queryClient.invalidateQueries({ queryKey: ['me'] })} />
+            <LandingPage status={installStatus.data} onDone={() => queryClient.invalidateQueries({ queryKey: ['me'] })} />
           ) : (
             <Console user={me.data.user} />
           )}
