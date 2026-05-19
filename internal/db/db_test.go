@@ -194,6 +194,67 @@ func TestBackfillMailboxCountersUsesExistingMailboxes(t *testing.T) {
 	}
 }
 
+func TestBackfillDomainFirstVerifiedAtProtectsOnlyCurrentlyReadyDomains(t *testing.T) {
+	database, err := Open(config.Config{
+		DatabaseDriver: "sqlite",
+		DatabaseURL:    filepath.Join(t.TempDir(), "mail.db"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sqlDB, err := database.DB()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer sqlDB.Close()
+
+	if err := AutoMigrate(database); err != nil {
+		t.Fatal(err)
+	}
+	lastHealthyAt := time.Now().Add(-time.Hour).UTC()
+	ready := models.Domain{
+		Domain:            "ready-backfill.test",
+		Mode:              models.DomainModePrivate,
+		Active:            true,
+		MXVerified:        true,
+		VerificationToken: "ready-token",
+		LastHealthyAt:     &lastHealthyAt,
+	}
+	unhealthy := models.Domain{
+		Domain:            "unhealthy-backfill.test",
+		Mode:              models.DomainModePrivate,
+		Active:            true,
+		MXVerified:        false,
+		VerificationToken: "unhealthy-token",
+		CreatedAt:         time.Now().Add(-30 * 24 * time.Hour),
+	}
+	if err := database.Create(&[]models.Domain{ready, unhealthy}).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	if err := BackfillDomainFirstVerifiedAt(database); err != nil {
+		t.Fatal(err)
+	}
+
+	var reloadedReady models.Domain
+	if err := database.First(&reloadedReady, "domain = ?", ready.Domain).Error; err != nil {
+		t.Fatal(err)
+	}
+	if reloadedReady.FirstVerifiedAt == nil || !reloadedReady.FirstVerifiedAt.Equal(lastHealthyAt) {
+		t.Fatalf("first_verified_at = %v, want %v", reloadedReady.FirstVerifiedAt, lastHealthyAt)
+	}
+	if reloadedReady.PendingDeleteAt != nil {
+		t.Fatalf("pending_delete_at should remain nil, got %v", reloadedReady.PendingDeleteAt)
+	}
+	var reloadedUnhealthy models.Domain
+	if err := database.First(&reloadedUnhealthy, "domain = ?", unhealthy.Domain).Error; err != nil {
+		t.Fatal(err)
+	}
+	if reloadedUnhealthy.FirstVerifiedAt != nil || reloadedUnhealthy.PendingDeleteAt != nil {
+		t.Fatalf("unhealthy legacy domain should stay conservative, first=%v pending=%v", reloadedUnhealthy.FirstVerifiedAt, reloadedUnhealthy.PendingDeleteAt)
+	}
+}
+
 type tableColumn struct {
 	Name    string
 	NotNull int `gorm:"column:notnull"`

@@ -1,14 +1,14 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { FormEvent } from 'react';
 import { createPortal } from 'react-dom';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { Copy, KeyRound, Loader2, X } from 'lucide-react';
+import { Copy, KeyRound, X } from 'lucide-react';
 import { toast } from 'sonner';
 import type { APIKey } from '../api';
 import { postJSON } from '../api';
 import { useText } from '../locales';
 import { copy } from '../lib/clipboard';
-import { IconButton } from '../components/shared';
+import { IconButton, InfoTip, LoadingIndicator } from '../components/shared';
 
 export function CreateAPIKeyDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
   const text = useText();
@@ -24,6 +24,7 @@ export function CreateAPIKeyDialog({ open, onClose }: { open: boolean; onClose: 
   const [expiresAt, setExpiresAt] = useState('');
   const [plainKey, setPlainKey] = useState('');
   const [createdCopied, setCreatedCopied] = useState(false);
+  const createButtonRef = useRef<HTMLButtonElement | null>(null);
 
   const hasDailyLimit = dailyUnlimited || dailyLimit.trim() !== '';
   const hasTotalLimit = totalUnlimited || totalLimit.trim() !== '';
@@ -103,7 +104,7 @@ export function CreateAPIKeyDialog({ open, onClose }: { open: boolean; onClose: 
         const existing = current || [];
         return [data.api_key, ...existing.filter((key) => key.id !== data.api_key.id)];
       });
-      void copy(data.plain_key, { celebrate: true, label: text.apiKeys.copiedSecret, toastMessage: text.apiKeys.copiedSecret })
+      void copy(data.plain_key, { celebrate: true, origin: createButtonRef.current, label: text.apiKeys.copiedSecret, toastMessage: text.apiKeys.copiedSecret })
         .then(setCreatedCopied);
     },
     onError: (error) => toast.error(error.message)
@@ -178,13 +179,13 @@ export function CreateAPIKeyDialog({ open, onClose }: { open: boolean; onClose: 
               </button>
             </div>
           </div>
-          <p className="api-key-quota-note">{text.apiKeys.quotaHint}</p>
+          <div className="flex items-center gap-1 mb-1"><InfoTip text={text.apiKeys.quotaHint} /></div>
           <div className="confirm-modal-actions">
             <button className="btn-secondary" type="button" onClick={handleClose} disabled={createKey.isPending}>
               {text.common.cancel}
             </button>
-            <button className="btn-primary" type="submit" disabled={!canCreate || createKey.isPending}>
-              {createKey.isPending ? <Loader2 size={16} className="animate-spin" /> : <KeyRound size={16} />}
+            <button ref={createButtonRef} className="btn-primary" type="submit" disabled={!canCreate || createKey.isPending}>
+              {createKey.isPending ? <LoadingIndicator /> : <KeyRound size={16} />}
               {text.common.create}
             </button>
           </div>

@@ -99,6 +99,8 @@ func AutoMigrate(db *gorm.DB) error {
 	if err := db.AutoMigrate(
 		&models.User{},
 		&models.OAuthIdentity{},
+		&models.PasskeyCredential{},
+		&models.WebAuthnSession{},
 		&models.OAuthProviderSetting{},
 		&models.DomainCheckSettings{},
 		&models.DomainCheckRun{},
@@ -114,10 +116,25 @@ func AutoMigrate(db *gorm.DB) error {
 		&models.DomainCheckResultRecord{},
 		&models.AuditLog{},
 		&models.SystemQuotaSettings{},
+		&models.LoginSettings{},
 	); err != nil {
 		return err
 	}
-	return BackfillMailboxCounters(db)
+	if err := BackfillMailboxCounters(db); err != nil {
+		return err
+	}
+	return BackfillDomainFirstVerifiedAt(db)
+}
+
+func BackfillDomainFirstVerifiedAt(db *gorm.DB) error {
+	return db.Model(&models.Domain{}).
+		Where("active = ? AND mx_verified = ? AND (wildcard_requested = ? OR wildcard_enabled = ?) AND first_verified_at IS NULL",
+			true,
+			true,
+			false,
+			true,
+		).
+		Update("first_verified_at", gorm.Expr("COALESCE(last_healthy_at, updated_at, created_at)")).Error
 }
 
 func BackfillMailboxCounters(db *gorm.DB) error {
@@ -220,6 +237,27 @@ func backfillUserPublicMailboxToday(db *gorm.DB, now time.Time) error {
 func startOfLocalDay(t time.Time) time.Time {
 	y, m, d := t.Local().Date()
 	return time.Date(y, m, d, 0, 0, 0, 0, t.Location())
+}
+
+func EnsureLoginSettings(db *gorm.DB) (*models.LoginSettings, error) {
+	var settings models.LoginSettings
+	err := db.First(&settings).Error
+	if err == nil {
+		return &settings, nil
+	}
+	if err != gorm.ErrRecordNotFound {
+		return nil, err
+	}
+	settings = models.LoginSettings{
+		ID: 1,
+	}
+	if err := db.Create(&settings).Error; err != nil {
+		if err2 := db.First(&settings).Error; err2 != nil {
+			return nil, err
+		}
+		return &settings, nil
+	}
+	return &settings, nil
 }
 
 func EnsureSystemQuotaSettings(db *gorm.DB) (*models.SystemQuotaSettings, error) {

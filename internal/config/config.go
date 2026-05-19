@@ -12,30 +12,31 @@ import (
 const InsecureDefaultSecret = "change-this-in-production"
 
 type Config struct {
-	HTTPAddr                   string
-	SMTPAddr                   string
-	PublicBaseURL              string
-	MailHostname               string
-	ExpectedMX                 string
-	MXStrict                   bool
-	DatabaseDriver             string
-	DatabaseURL                string
-	MaxMessageBytes            int64
-	MaxAttachmentBytes         int64
-	MessageRetention           time.Duration
-	AdminToken                 string
-	DevMode                    bool
-	AllowedOrigin              string
-	InboxTokenSecret           string
-	SessionSecret              string
-	FrontendDist               string
-	EnvPath                    string
-	APIKeyDefaultDailyCap      int64
-	AllowAPIKeyQueryParam      bool
-	AuditLogRetentionDays      int
-	AuditActivityRetentionDays int
-	GitHubOAuth                OAuthProviderConfig
-	LinuxDoOAuth               OAuthProviderConfig
+	HTTPAddr                           string
+	SMTPAddr                           string
+	PublicBaseURL                      string
+	MailHostname                       string
+	ExpectedMX                         string
+	MXStrict                           bool
+	DatabaseDriver                     string
+	DatabaseURL                        string
+	MaxMessageBytes                    int64
+	MaxAttachmentBytes                 int64
+	MessageRetention                   time.Duration
+	AdminToken                         string
+	DevMode                            bool
+	AllowedOrigin                      string
+	InboxTokenSecret                   string
+	SessionSecret                      string
+	FrontendDist                       string
+	EnvPath                            string
+	APIKeyDefaultDailyCap              int64
+	AllowAPIKeyQueryParam              bool
+	AuditLogRetentionDays              int
+	AuditActivityRetentionDays         int
+	DisablePendingDomainDataProtection bool
+	GitHubOAuth                        OAuthProviderConfig
+	LinuxDoOAuth                       OAuthProviderConfig
 }
 
 type OAuthProviderConfig struct {
@@ -55,30 +56,31 @@ func Load() Config {
 	gitHubOAuth := loadOAuthProviderConfig("GITHUB")
 	linuxDoOAuth := loadOAuthProviderConfig("LINUXDO")
 	return Config{
-		HTTPAddr:                   getEnv("HTTP_ADDR", ":3000"),
-		SMTPAddr:                   getEnv("SMTP_ADDR", ":2525"),
-		PublicBaseURL:              getEnv("PUBLIC_BASE_URL", "http://localhost:3000"),
-		MailHostname:               getEnv("MAIL_HOSTNAME", "mail.example.com"),
-		ExpectedMX:                 strings.TrimSuffix(strings.ToLower(getEnv("EXPECTED_MX", "mail.example.com")), "."),
-		MXStrict:                   getBool("MX_STRICT", false),
-		DatabaseDriver:             strings.ToLower(getEnv("DATABASE_DRIVER", "sqlite")),
-		DatabaseURL:                getEnv("DATABASE_URL", "storage/hlool-mail.db"),
-		MaxMessageBytes:            maxMessageBytes,
-		MaxAttachmentBytes:         getInt64("MAX_ATTACHMENT_BYTES", maxMessageBytes),
-		MessageRetention:           time.Duration(retentionHours) * time.Hour,
-		AdminToken:                 getEnv("ADMIN_TOKEN", ""),
-		DevMode:                    getBool("DEV_MODE", false),
-		AllowedOrigin:              getEnv("ALLOWED_ORIGIN", ""),
-		InboxTokenSecret:           getEnv("INBOX_TOKEN_SECRET", InsecureDefaultSecret),
-		SessionSecret:              getEnv("SESSION_SECRET", ""),
-		FrontendDist:               getEnv("FRONTEND_DIST", "web/dist"),
-		EnvPath:                    getEnv("CONFIG_ENV_PATH", ".env"),
-		APIKeyDefaultDailyCap:      getInt64("API_KEY_DEFAULT_DAILY_LIMIT", 200000),
-		AllowAPIKeyQueryParam:      getBool("ALLOW_API_KEY_QUERY_PARAM", false),
-		AuditLogRetentionDays:      getInt("AUDIT_LOG_RETENTION_DAYS", 180),
-		AuditActivityRetentionDays: getInt("AUDIT_ACTIVITY_RETENTION_DAYS", 30),
-		GitHubOAuth:                gitHubOAuth,
-		LinuxDoOAuth:               linuxDoOAuth,
+		HTTPAddr:                           getEnv("HTTP_ADDR", ":3000"),
+		SMTPAddr:                           getEnv("SMTP_ADDR", ":2525"),
+		PublicBaseURL:                      getEnv("PUBLIC_BASE_URL", "http://localhost:3000"),
+		MailHostname:                       getEnv("MAIL_HOSTNAME", "mail.example.com"),
+		ExpectedMX:                         strings.TrimSuffix(strings.ToLower(getEnv("EXPECTED_MX", "mail.example.com")), "."),
+		MXStrict:                           getBool("MX_STRICT", false),
+		DatabaseDriver:                     strings.ToLower(getEnv("DATABASE_DRIVER", "sqlite")),
+		DatabaseURL:                        getEnv("DATABASE_URL", "storage/hlool-mail.db"),
+		MaxMessageBytes:                    maxMessageBytes,
+		MaxAttachmentBytes:                 getInt64("MAX_ATTACHMENT_BYTES", maxMessageBytes),
+		MessageRetention:                   time.Duration(retentionHours) * time.Hour,
+		AdminToken:                         getEnv("ADMIN_TOKEN", ""),
+		DevMode:                            getBool("DEV_MODE", false),
+		AllowedOrigin:                      getEnv("ALLOWED_ORIGIN", ""),
+		InboxTokenSecret:                   getEnv("INBOX_TOKEN_SECRET", InsecureDefaultSecret),
+		SessionSecret:                      getEnv("SESSION_SECRET", ""),
+		FrontendDist:                       getEnv("FRONTEND_DIST", "web/dist"),
+		EnvPath:                            getEnv("CONFIG_ENV_PATH", ".env"),
+		APIKeyDefaultDailyCap:              getInt64("API_KEY_DEFAULT_DAILY_LIMIT", 200000),
+		AllowAPIKeyQueryParam:              getBool("ALLOW_API_KEY_QUERY_PARAM", false),
+		AuditLogRetentionDays:              getInt("AUDIT_LOG_RETENTION_DAYS", 180),
+		AuditActivityRetentionDays:         getInt("AUDIT_ACTIVITY_RETENTION_DAYS", 30),
+		DisablePendingDomainDataProtection: getBool("DISABLE_PENDING_DOMAIN_DATA_PROTECTION", false),
+		GitHubOAuth:                        gitHubOAuth,
+		LinuxDoOAuth:                       linuxDoOAuth,
 	}
 }
 

@@ -2,8 +2,7 @@ import type zhCN from './zh-CN';
 
 const enUS: typeof zhCN = {
   loading: {
-    checkingInstall: 'Checking installation status',
-    restoringLogin: 'Restoring login session'
+    starting: 'Starting HLOOL Mail'
   },
   page: {
     inbox: 'Inbox',
@@ -14,8 +13,9 @@ const enUS: typeof zhCN = {
     'api-keys': 'API Keys',
     'api-docs': 'API Docs',
     users: 'Users & Quotas',
-    'admin-oauth': 'Third-party Login',
-    admin: 'Admin Console'
+    'admin-oauth': 'Login Settings',
+    admin: 'Admin Console',
+    announcements: 'Announcements'
   },
   nav: {
     mail: 'Mail',
@@ -76,7 +76,13 @@ const enUS: typeof zhCN = {
     unbind: 'Unbind',
     unbound: 'Third-party account unbound',
     boundToast: '{provider} bound',
-    oauthRegistered: 'Account created with {provider}'
+    oauthRegistered: 'Account created with {provider}',
+    passkeys: 'Passkeys',
+    addPasskey: 'Add passkey',
+    noPasskeys: 'No passkeys bound yet',
+    passkeysDisabled: 'Passkey login is not enabled by an admin',
+    passkeyBound: 'Passkey bound',
+    passkeyDeleted: 'Passkey deleted'
   },
   toast: {
     apiKeyDeleted: 'API key deleted',
@@ -206,6 +212,9 @@ const enUS: typeof zhCN = {
     registerSubmit: 'Create account',
     registerPending: 'Creating account...',
     loginPending: 'Logging in...',
+    passkeySubmit: 'Log in with passkey',
+    passkeyPending: 'Verifying passkey...',
+    emailRequired: 'Enter your email first',
     passwordMismatch: 'Passwords do not match',
     registerDone: 'Registration complete',
     skipToContent: 'Skip to content',
@@ -364,7 +373,7 @@ const enUS: typeof zhCN = {
     reactivated: 'Domain reactivated',
 
     waitingTitle: 'Pending Verification',
-    waitingDesc: 'These domains have not passed MX verification. You can check them manually. Unverified domains will be auto-deleted 2 hours after submission.',
+    waitingDesc: 'Domains needing DNS attention. Only newly submitted domains that have never verified are auto-cleaned after their deadline.',
     randomSubdomainNotReady: 'Wildcard not active',
     mxNotReady: 'Not active',
     mxNotReadyToast: 'MX not active yet',
@@ -438,6 +447,10 @@ const enUS: typeof zhCN = {
 
     autoRetryOn: 'Background check runs every 10 min. Retried {count} time(s). Next check: {next}. Est. auto-delete: {autoDelete}.',
     autoRetryOff: 'If DNS propagation takes time, enable background check every 10 min. Unverified domains will be auto-deleted {autoDeleteTime}.',
+    pendingAutoDeleteHint: 'Complete MX verification within {time}, or this domain will be auto-cleaned.',
+    dnsIssue: 'DNS issue',
+    dnsIssueNeedsAction: 'Needs DNS fix',
+    noAutoDelete: 'No auto-delete',
 
     domainLoadError: 'Domain info not loaded. Reopen the dialog and try again.',
     autoRetryTimedOut: 'Verification timeout. Domain has been auto-deleted.',
@@ -639,13 +652,21 @@ const enUS: typeof zhCN = {
       settingsError: 'Failed to load DNS check settings. Refresh and try again.',
       settingsErrorHint: 'Load failed',
       enabled: 'Enable',
+      enabledDesc: 'Automatically run DNS checks on all domains on a schedule',
       checkInactive: 'Check inactive domains',
+      checkInactiveDesc: 'Also check disabled domains; otherwise only active domains are checked',
       interval: 'Interval (min)',
+      intervalDesc: 'Time between two automatic check runs, in minutes',
       timeout: 'Timeout (ms)',
+      timeoutDesc: 'Timeout for a single DNS query, in milliseconds',
       concurrency: 'Concurrency',
+      concurrencyDesc: 'Maximum number of concurrent DNS queries',
       failureThreshold: 'Failure threshold',
+      failureThresholdDesc: 'Consecutive failures reaching this count mark the domain as unhealthy',
       recoveryThreshold: 'Recovery threshold',
+      recoveryThresholdDesc: 'Consecutive successes reaching this count restore the domain to healthy',
       resolvers: 'Resolvers',
+      resolversDesc: 'DNS resolver list, one per line in IP:Port format',
       colTime: 'Time',
       colTrigger: 'Trigger',
       colStatus: 'Status',
@@ -718,9 +739,6 @@ const enUS: typeof zhCN = {
       title: 'Recent Key Audits',
       desc: 'Security and config changes are shown by default; filter to inspect high-volume activity',
       empty: 'No audit logs',
-      loadMore: 'Load More',
-      older: 'Older',
-      reset: 'Reset',
       all: 'All',
       filterCategory: 'Scope',
       filterSeverity: 'Level',
@@ -777,7 +795,7 @@ const enUS: typeof zhCN = {
       userDailyPublicMailboxLimitHint: 'Max public-domain mailboxes a user can create per day. Private domains are not affected.',
       requirePublicDomainForQuota: 'Require public domain for quota',
       requirePublicDomainForQuotaHint: 'When enabled, users must own at least one public domain before they can create public-domain mailboxes.',
-      save: 'Save quota settings',
+      save: 'Save',
       saved: 'Quota settings saved'
     },
     validation: {
@@ -812,6 +830,41 @@ const enUS: typeof zhCN = {
     discard: 'Discard',
     editing_hint: 'Save or cancel the current edit first'
   },
+  loginSettings: {
+    title: 'Login Settings',
+    desc: 'Manage third-party login and security verification',
+    save: 'Save',
+    saved: 'Login settings saved',
+    load_error: 'Failed to load login settings'
+  },
+  turnstile: {
+    title: 'Bot Detection',
+    description: 'Cloudflare Turnstile provides invisible bot detection to prevent brute-force attacks and malicious registrations without impacting real users.',
+    benefit1: 'Prevent automated login brute-force attacks',
+    benefit2: 'Block bot mass registrations',
+    benefit3: 'Invisible to real users, no interaction required',
+    benefit4: 'Free forever, powered by Cloudflare',
+    site_key: 'Site Key',
+    site_key_hint: 'Turnstile site key (frontend)',
+    secret_key: 'Secret Key',
+    secret_key_hint: 'Turnstile secret key (backend verification)',
+    secret_stored: 'Stored (shown as placeholder). Enter a new value to replace.',
+    apply: 'Apply on Cloudflare',
+    apply_url: 'https://dash.cloudflare.com/',
+    enabled: 'Enabled',
+    disabled: 'Disabled'
+  },
+  passkey: {
+    title: 'Passkey',
+    description: 'WebAuthn-based passkey authentication. Users can sign in with fingerprint, face, or hardware key — no password needed.',
+    benefit1: 'No password to remember — fingerprint, face, or hardware key',
+    benefit2: 'FIDO2/WebAuthn standard, phishing-resistant',
+    benefit3: 'Private key never leaves the device, more secure than passwords',
+    benefit4: 'Works on Chrome, Edge, Safari, and Firefox',
+    enabled: 'Enabled',
+    disabled: 'Disabled',
+    bindHint: 'Users bind their passkeys in profile settings'
+  },
   notifications: {
     title: 'Notifications',
     unread: '{count} unread',
@@ -831,11 +884,14 @@ const enUS: typeof zhCN = {
     }
   },
   announcements: {
+    pageTitle: 'Announcements',
+    pageDesc: 'Publish and manage system announcements visible to all users',
     title: 'Announcements',
     read: 'Read',
     unreadCount: '{count} unread announcements',
     noAnnouncements: 'No announcements',
     newAnnouncement: 'New Announcement',
+    createHint: 'Fill in title and content, supports Markdown',
     createAnnouncement: 'Create Announcement',
     deleteAnnouncement: 'Delete Announcement',
     deleteConfirm: 'Delete this announcement? This cannot be undone.',
@@ -848,6 +904,8 @@ const enUS: typeof zhCN = {
     loadError: 'Failed to load announcements',
     createError: 'Failed to create announcement',
     deleteError: 'Failed to delete announcement',
+    listTitle: 'Announcement List',
+    listDesc: 'Published announcements and read statistics',
     readerCount: '{count} readers',
     markRead: 'Mark as read',
     expand: 'Show more',

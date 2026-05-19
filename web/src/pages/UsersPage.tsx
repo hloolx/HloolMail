@@ -1,22 +1,23 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Ban, CheckCircle, Loader2, Pencil, Search, Trash2, UserCog } from 'lucide-react';
+import { Ban, CheckCircle, Pencil, Save, Search, Trash2, UserCog } from 'lucide-react';
 import { toast } from 'sonner';
-import type { PaginatedResponse, User } from '../api';
+import type { PaginatedResponse, SystemQuotaSettings, User } from '../api';
 import { api, patchJSON, postJSON } from '../api';
 import { roleText, useText } from '../locales';
-import { dissolveElement } from '../lib/dissolve';
+import { notifySuccess, runDeleteEffect } from '../lib/feedback';
 import { boolBadge, relativeTime } from '../lib/display';
-import { ConfirmModal, DataTable, PaginationControls } from '../components/shared';
+import { ConfirmModal, DataTable, InfoTip, PaginationControls } from '../components/shared';
+import { CreateUserDialog } from './CreateUserDialog';
 import { EditUserDialog } from './EditUserDialog';
-import { type UserForm, buildCreatePayload, buildUpdatePayload, emptyCreateForm, validateEmail } from './userFormHelpers';
+import { type UserForm, buildCreatePayload, buildUpdatePayload } from './userFormHelpers';
 
 const USER_PAGE_SIZE = 20;
 
 export function UsersPage({ currentUser }: { currentUser: User }) {
   const queryClient = useQueryClient();
   const text = useText();
-  const [form, setForm] = useState<UserForm>(emptyCreateForm());
+  const [showCreateDialog, setShowCreateDialog] = useState(false);
   const [page, setPage] = useState(1);
   const [search, setSearch] = useState('');
   const [roleFilter, setRoleFilter] = useState<'all' | User['role']>('all');
@@ -25,7 +26,8 @@ export function UsersPage({ currentUser }: { currentUser: User }) {
   const [disableTarget, setDisableTarget] = useState<User | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<User | null>(null);
   const [dissolveTarget, setDissolveTarget] = useState<HTMLElement | null>(null);
-  const [emailError, setEmailError] = useState('');
+  const quotaSaveButtonRef = useRef<HTMLButtonElement | null>(null);
+  const userFeedbackOriginRef = useRef<HTMLElement | null>(null);
   const users = useQuery({
     queryKey: ['users', page, search.trim(), roleFilter, statusFilter],
     queryFn: () => {
@@ -53,12 +55,49 @@ export function UsersPage({ currentUser }: { currentUser: User }) {
   };
 
   const create = useMutation({
-    mutationFn: () => postJSON<User>('/api/users', buildCreatePayload(form)),
+    mutationFn: (form: UserForm) => postJSON<User>('/api/users', buildCreatePayload(form)),
     onSuccess: () => {
       invalidateUserViews();
-      setForm(emptyCreateForm());
-      setEmailError('');
-      toast.success(text.toast.userCreated);
+      setShowCreateDialog(false);
+      notifySuccess(text.toast.userCreated, { origin: userFeedbackOriginRef.current });
+      userFeedbackOriginRef.current = null;
+    },
+    onError: (error) => {
+      userFeedbackOriginRef.current = null;
+      toast.error(error.message);
+    }
+  });
+
+  const quotaSettings = useQuery({
+    queryKey: ['admin-quota-settings'],
+    queryFn: () => api<SystemQuotaSettings>('/api/admin/quota-settings'),
+    retry: false,
+    staleTime: 30_000
+  });
+  const [quotaForm, setQuotaForm] = useState({
+    public_domain_mailbox_limit: '0',
+    user_daily_public_mailbox_limit: '0',
+    require_public_domain_for_quota: false
+  });
+  useEffect(() => {
+    const qs = quotaSettings.data;
+    if (!qs) return;
+    setQuotaForm({
+      public_domain_mailbox_limit: String(qs.public_domain_mailbox_limit),
+      user_daily_public_mailbox_limit: String(qs.user_daily_public_mailbox_limit),
+      require_public_domain_for_quota: qs.require_public_domain_for_quota
+    });
+  }, [quotaSettings.data]);
+
+  const saveQuotaSettings = useMutation({
+    mutationFn: () => patchJSON<SystemQuotaSettings>('/api/admin/quota-settings', {
+      public_domain_mailbox_limit: toPositiveInt64(quotaForm.public_domain_mailbox_limit, 0),
+      user_daily_public_mailbox_limit: toPositiveInt64(quotaForm.user_daily_public_mailbox_limit, 0),
+      require_public_domain_for_quota: quotaForm.require_public_domain_for_quota
+    }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['admin-quota-settings'] });
+      notifySuccess(text.admin.quotaSettings.saved, { origin: quotaSaveButtonRef.current });
     },
     onError: (error) => toast.error(error.message)
   });
@@ -68,9 +107,13 @@ export function UsersPage({ currentUser }: { currentUser: User }) {
     onSuccess: () => {
       invalidateUserViews();
       setEditingUser(null);
-      toast.success(text.toast.userUpdated);
+      notifySuccess(text.toast.userUpdated, { origin: userFeedbackOriginRef.current });
+      userFeedbackOriginRef.current = null;
     },
-    onError: (error) => toast.error(error.message)
+    onError: (error) => {
+      userFeedbackOriginRef.current = null;
+      toast.error(error.message);
+    }
   });
 
   const toggleUser = useMutation({
@@ -78,9 +121,13 @@ export function UsersPage({ currentUser }: { currentUser: User }) {
     onSuccess: () => {
       invalidateUserViews();
       setDisableTarget(null);
-      toast.success(text.toast.userUpdated);
+      notifySuccess(text.toast.userUpdated, { origin: userFeedbackOriginRef.current });
+      userFeedbackOriginRef.current = null;
     },
-    onError: (error) => toast.error(error.message)
+    onError: (error) => {
+      userFeedbackOriginRef.current = null;
+      toast.error(error.message);
+    }
   });
 
   const deleteUser = useMutation({
@@ -88,73 +135,66 @@ export function UsersPage({ currentUser }: { currentUser: User }) {
     onSuccess: () => {
       invalidateUserViews();
       setDeleteTarget(null);
-      toast.success(text.toast.userDeleted);
+      notifySuccess(text.toast.userDeleted, { burst: false });
     },
     onError: (error) => toast.error(error.message)
   });
-
-  const set = (key: keyof UserForm, value: string | boolean) => {
-    setForm((current) => ({ ...current, [key]: value }));
-    if (key === 'email') {
-      setEmailError(validateEmail(value as string, text));
-    }
-  };
 
   return (
     <>
       <div className="grid gap-4 xl:grid-cols-[22rem_1fr]">
         <section className="panel">
-          <div className="panel-header">
+          <div className="panel-header admin-panel-header">
             <div>
-              <h2>{text.users.createTitle}</h2>
-              <p>{text.users.desc}</p>
+              <h2>{text.admin.quotaSettings.title}<InfoTip text={text.admin.quotaSettings.desc} /></h2>
             </div>
-          </div>
-          <form className="user-form" onSubmit={(event) => {
-            event.preventDefault();
-            if (!create.isPending) create.mutate();
-          }}>
-            <label className="user-form-field">
-              <span>{text.users.email}</span>
-              <input className="input" value={form.email} onChange={(event) => set('email', event.target.value)} placeholder="user@example.com" />
-              {emailError && <span className="field-error">{emailError}</span>}
-            </label>
-            <label className="user-form-field">
-              <span>{text.users.password}</span>
-              <input className="input" value={form.password} onChange={(event) => set('password', event.target.value)} placeholder={text.users.passwordPlaceholder} type="password" />
-            </label>
-            <label className="user-form-field">
-              <span>{text.users.role}</span>
-              <select className="input" value={form.role} onChange={(event) => set('role', event.target.value as User['role'])}>
-                <option value="user">{text.role.user}</option>
-                <option value="admin">{text.role.admin}</option>
-              </select>
-            </label>
-            <div className="user-limit-grid">
-              <label className="user-form-field">
-                <span>{text.users.dailyLimit}</span>
-                <input className="input" type="number" min={0} value={form.daily_limit} onChange={(event) => set('daily_limit', event.target.value)} />
-                <small className="field-hint">{text.users.dailyLimitHint}</small>
-              </label>
-              <label className="user-form-field">
-                <span>{text.users.totalLimit}</span>
-                <input className="input" type="number" min={0} value={form.total_limit} onChange={(event) => set('total_limit', event.target.value)} />
-                <small className="field-hint">{text.users.totalLimitHint}</small>
-              </label>
-            </div>
-            <p className="user-form-note">{text.users.quotaNote}</p>
-            <button className="btn-primary" type="submit" disabled={create.isPending}>
-              {create.isPending ? <Loader2 size={16} className="animate-spin" /> : <UserCog size={16} />}
-              {text.users.createTitle}
+            <button
+              ref={quotaSaveButtonRef}
+              className="btn-secondary"
+              onClick={() => saveQuotaSettings.mutate()}
+              disabled={saveQuotaSettings.isPending || quotaSettings.isError}
+            >
+              <Save size={15} />
+              {text.admin.quotaSettings.save}
             </button>
-          </form>
+          </div>
+          <div className="admin-dns-settings">
+            <label className="grid gap-1 text-sm">
+              <span className="text-[var(--muted)]">{text.admin.quotaSettings.publicDomainMailboxLimit}<InfoTip text={text.admin.quotaSettings.publicDomainMailboxLimitHint} /></span>
+              <input className="input" type="number" min="0" value={quotaForm.public_domain_mailbox_limit} onChange={(event) => setQuotaForm((current) => ({ ...current, public_domain_mailbox_limit: event.target.value }))} />
+            </label>
+            <label className="grid gap-1 text-sm">
+              <span className="text-[var(--muted)]">{text.admin.quotaSettings.userDailyPublicMailboxLimit}<InfoTip text={text.admin.quotaSettings.userDailyPublicMailboxLimitHint} /></span>
+              <input className="input" type="number" min="0" value={quotaForm.user_daily_public_mailbox_limit} onChange={(event) => setQuotaForm((current) => ({ ...current, user_daily_public_mailbox_limit: event.target.value }))} />
+            </label>
+            <label className="grid gap-1 text-sm">
+              <div className="toggle-row">
+                <span className="toggle-row-label">{text.admin.quotaSettings.requirePublicDomainForQuota}<InfoTip text={text.admin.quotaSettings.requirePublicDomainForQuotaHint} /></span>
+                <button
+                  type="button"
+                  className={`toggle-switch ${quotaForm.require_public_domain_for_quota ? 'on' : ''}`}
+                  onClick={() => setQuotaForm((current) => ({ ...current, require_public_domain_for_quota: !current.require_public_domain_for_quota }))}
+                  role="switch"
+                  aria-checked={quotaForm.require_public_domain_for_quota}
+                >
+                  <span className="toggle-switch-knob" />
+                </button>
+              </div>
+            </label>
+          </div>
         </section>
 
         <section className="panel">
-          <div className="panel-header users-panel-header">
-            <div>
-              <h2>{text.users.title}</h2>
-              <p>{visibleUsers.length}/{userPage?.total ?? 0} {text.users.count}</p>
+          <div className="panel-header users-panel-header users-panel-header-stack">
+            <div className="users-panel-title-row">
+              <div>
+                <h2>{text.users.title}</h2>
+                <p>{visibleUsers.length}/{userPage?.total ?? 0} {text.users.count}</p>
+              </div>
+              <button className="btn-primary" onClick={() => setShowCreateDialog(true)}>
+                <UserCog size={15} />
+                {text.users.createTitle}
+              </button>
             </div>
             <div className="users-filters">
               <label className="users-search">
@@ -174,19 +214,20 @@ export function UsersPage({ currentUser }: { currentUser: User }) {
             </div>
           </div>
           <DataTable
+            ariaLabel={text.users.title}
             emptyLabel={
               users.isLoading ? text.common.loading
               : users.isError ? text.users.errorLoading
               : text.users.empty
             }
             columns={[
-              { key: 'email', header: text.users.email },
-              { key: 'role', header: text.users.role },
-              { key: 'enabled', header: text.users.enabled },
-              { key: 'today-usage', header: text.users.todayUsage },
-              { key: 'total-usage', header: text.users.totalUsage },
-              { key: 'last-used', header: text.users.lastUsed },
-              { key: 'actions', header: text.users.actions }
+              { key: 'email', header: text.users.email, minWidth: '15rem' },
+              { key: 'role', header: text.users.role, width: '7rem' },
+              { key: 'enabled', header: text.users.enabled, align: 'center', width: '6rem' },
+              { key: 'today-usage', header: text.users.todayUsage, align: 'right', width: '8rem' },
+              { key: 'total-usage', header: text.users.totalUsage, align: 'right', width: '8rem' },
+              { key: 'last-used', header: text.users.lastUsed, width: '8rem' },
+              { key: 'actions', header: text.users.actions, align: 'right', minWidth: '15rem' }
             ]}
             rows={visibleUsers.map((user) => ({
               key: user.id,
@@ -215,7 +256,10 @@ export function UsersPage({ currentUser }: { currentUser: User }) {
                       {text.common.disabled}
                     </button>
                   ) : (
-                    <button className="btn-ghost" disabled={toggleUser.isPending} onClick={() => toggleUser.mutate({ user, enabled: true })}>
+                    <button className="btn-ghost" disabled={toggleUser.isPending} onClick={(event) => {
+                      userFeedbackOriginRef.current = event.currentTarget;
+                      toggleUser.mutate({ user, enabled: true });
+                    }}>
                       <CheckCircle size={14} />
                       {text.common.enabled}
                     </button>
@@ -235,13 +279,27 @@ export function UsersPage({ currentUser }: { currentUser: User }) {
         </section>
       </div>
 
+      {showCreateDialog && (
+        <CreateUserDialog
+          isPending={create.isPending}
+          onClose={() => setShowCreateDialog(false)}
+          onSubmit={(form, origin) => {
+            userFeedbackOriginRef.current = origin;
+            create.mutate(form);
+          }}
+        />
+      )}
+
       {editingUser && (
         <EditUserDialog
           currentUser={currentUser}
           user={editingUser}
           isPending={updateUser.isPending}
           onClose={() => setEditingUser(null)}
-          onSubmit={(nextForm) => updateUser.mutate({ user: editingUser, form: nextForm })}
+          onSubmit={(nextForm, origin) => {
+            userFeedbackOriginRef.current = origin;
+            updateUser.mutate({ user: editingUser, form: nextForm });
+          }}
         />
       )}
 
@@ -257,7 +315,10 @@ export function UsersPage({ currentUser }: { currentUser: User }) {
           danger
           confirmText={text.common.disabled}
           cancelText={text.common.cancel}
-          onConfirm={() => toggleUser.mutate({ user: disableTarget, enabled: false })}
+          onConfirm={(event) => {
+            userFeedbackOriginRef.current = event.currentTarget;
+            toggleUser.mutate({ user: disableTarget, enabled: false });
+          }}
           onCancel={() => setDisableTarget(null)}
         />
       )}
@@ -277,11 +338,7 @@ export function UsersPage({ currentUser }: { currentUser: User }) {
             setDissolveTarget(null);
             await new Promise(r => requestAnimationFrame(r));
             if (targetEl) {
-              try {
-                await dissolveElement(targetEl, { duration: 400, blockSize: 4, direction: 'out' });
-              } catch {
-                // dissolve failed, proceed with mutation anyway
-              }
+              await runDeleteEffect(targetEl);
             }
             deleteUser.mutate(target);
           }}
@@ -290,4 +347,9 @@ export function UsersPage({ currentUser }: { currentUser: User }) {
       )}
     </>
   );
+}
+
+function toPositiveInt64(value: string, fallback: number) {
+  const parsed = Number.parseInt(value, 10);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback;
 }

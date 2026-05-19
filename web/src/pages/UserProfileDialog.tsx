@@ -2,13 +2,15 @@ import { useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { AnimatePresence, motion } from 'framer-motion';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { CircleUserRound, Github, Loader2, Unlink, X } from 'lucide-react';
+import { CircleUserRound, Fingerprint, Github, Plus, Trash2, Unlink, X } from 'lucide-react';
 import { toast } from 'sonner';
 import type { User } from '../api';
 import { api } from '../api';
-import type { OAuthProvider } from '../types';
+import type { OAuthProvider, PublicLoginSettings } from '../types';
 import { roleText, useText } from '../locales';
-import { IconButton } from '../components/shared';
+import { IconButton, InfoTip, LoadingIndicator } from '../components/shared';
+import { notifySuccess } from '../lib/feedback';
+import { registerPasskey, type PasskeyCredentialSummary } from '../lib/passkeys';
 
 type OAuthIdentity = {
   provider: string;
@@ -21,6 +23,7 @@ export function UserProfileDialog({ open, onClose, user }: { open: boolean; onCl
   const queryClient = useQueryClient();
   const text = useText();
   const panelRef = useRef<HTMLDivElement | null>(null);
+  const feedbackOriginRef = useRef<HTMLElement | null>(null);
 
   const identities = useQuery({
     queryKey: ['user-oauth-identities'],
@@ -37,11 +40,52 @@ export function UserProfileDialog({ open, onClose, user }: { open: boolean; onCl
     staleTime: 60_000,
   });
 
+  const loginSettings = useQuery({
+    queryKey: ['login-settings'],
+    queryFn: () => api<PublicLoginSettings>('/api/auth/login-settings'),
+    enabled: open,
+    retry: false,
+    staleTime: 60_000,
+  });
+
+  const passkeys = useQuery({
+    queryKey: ['user-passkeys'],
+    queryFn: () => api<PasskeyCredentialSummary[]>('/api/user/passkeys'),
+    enabled: open && !!loginSettings.data?.passkey_enabled,
+    retry: false,
+  });
+
   const unbind = useMutation({
     mutationFn: (provider: string) => api<{ provider: string; unbound: boolean }>(`/api/user/oauth-identities/${provider}`, { method: 'DELETE' }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['user-oauth-identities'] });
-      toast.success(text.profile.unbound);
+      notifySuccess(text.profile.unbound, { origin: feedbackOriginRef.current });
+      feedbackOriginRef.current = null;
+    },
+    onError: (error) => {
+      feedbackOriginRef.current = null;
+      toast.error(error.message);
+    },
+  });
+
+  const bindPasskey = useMutation({
+    mutationFn: registerPasskey,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['user-passkeys'] });
+      notifySuccess(text.profile.passkeyBound, { origin: feedbackOriginRef.current });
+      feedbackOriginRef.current = null;
+    },
+    onError: (error) => {
+      feedbackOriginRef.current = null;
+      toast.error(error.message);
+    },
+  });
+
+  const deletePasskey = useMutation({
+    mutationFn: (id: number) => api(`/api/user/passkeys/${id}`, { method: 'DELETE' }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['user-passkeys'] });
+      notifySuccess(text.profile.passkeyDeleted, { burst: false });
     },
     onError: (error) => toast.error(error.message),
   });
@@ -124,8 +168,7 @@ export function UserProfileDialog({ open, onClose, user }: { open: boolean; onCl
           >
             <div className="modal-header">
               <div>
-                <h2 id="profile-dialog-title">{text.profile.title}</h2>
-                <p>{text.profile.desc}</p>
+                <h2 id="profile-dialog-title">{text.profile.title}<InfoTip text={text.profile.desc} /></h2>
               </div>
               <IconButton title={text.common.close} onClick={onClose}>
                 <X size={16} />
@@ -145,8 +188,7 @@ export function UserProfileDialog({ open, onClose, user }: { open: boolean; onCl
                 <h3 className="profile-section-title">{text.profile.linkedAccounts}</h3>
                 {loadingProviders ? (
                   <p className="profile-empty">
-                    <Loader2 size={14} className="animate-spin" />
-                    {text.common.loading}
+                    <LoadingIndicator size={14} label={text.common.loading} />
                   </p>
                 ) : availableProviders.length === 0 ? (
                   <p className="profile-empty">{text.profile.noProviders}</p>
@@ -168,9 +210,12 @@ export function UserProfileDialog({ open, onClose, user }: { open: boolean; onCl
                               className="btn-ghost profile-unbind-btn"
                               type="button"
                               disabled={busy}
-                              onClick={() => unbind.mutate(provider.provider)}
+                              onClick={(event) => {
+                                feedbackOriginRef.current = event.currentTarget;
+                                unbind.mutate(provider.provider);
+                              }}
                             >
-                              {busy ? <Loader2 size={14} className="animate-spin" /> : <Unlink size={14} />}
+                              {busy ? <LoadingIndicator size={14} /> : <Unlink size={14} />}
                               {text.profile.unbind}
                             </button>
                           ) : (
@@ -189,6 +234,54 @@ export function UserProfileDialog({ open, onClose, user }: { open: boolean; onCl
                   </div>
                 )}
               </div>
+
+              <div className="profile-section">
+                <h3 className="profile-section-title">{text.profile.passkeys}</h3>
+                {!loginSettings.data?.passkey_enabled ? (
+                  <p className="profile-empty">{text.profile.passkeysDisabled}</p>
+                ) : passkeys.isLoading ? (
+                  <p className="profile-empty">
+                    <LoadingIndicator size={14} label={text.common.loading} />
+                  </p>
+                ) : (
+                  <div className="profile-provider-list">
+                    {(passkeys.data || []).map((passkey) => {
+                      const busy = deletePasskey.isPending && deletePasskey.variables === passkey.id;
+                      return (
+                        <div className="profile-provider-row profile-provider-bound" key={passkey.id}>
+                          <div className="profile-provider-left">
+                            <Fingerprint size={18} />
+                            <span>{passkey.name}</span>
+                            <span className="profile-muted">{formatProfileDate(passkey.last_used_at || passkey.created_at)}</span>
+                          </div>
+                          <button
+                            className="btn-ghost profile-unbind-btn"
+                            type="button"
+                            disabled={busy}
+                            onClick={() => deletePasskey.mutate(passkey.id)}
+                          >
+                            {busy ? <LoadingIndicator size={14} /> : <Trash2 size={14} />}
+                            {text.common.delete}
+                          </button>
+                        </div>
+                      );
+                    })}
+                    {(passkeys.data || []).length === 0 && <p className="profile-empty">{text.profile.noPasskeys}</p>}
+                    <button
+                      className="btn-secondary profile-bind-btn profile-add-passkey"
+                      type="button"
+                      disabled={bindPasskey.isPending}
+                      onClick={(event) => {
+                        feedbackOriginRef.current = event.currentTarget;
+                        bindPasskey.mutate();
+                      }}
+                    >
+                      {bindPasskey.isPending ? <LoadingIndicator size={14} /> : <Plus size={14} />}
+                      {text.profile.addPasskey}
+                    </button>
+                  </div>
+                )}
+              </div>
             </div>
 
             <div className="modal-footer">
@@ -202,4 +295,13 @@ export function UserProfileDialog({ open, onClose, user }: { open: boolean; onCl
     </AnimatePresence>,
     document.body
   );
+}
+
+function formatProfileDate(value?: string) {
+  if (!value) return '';
+  try {
+    return new Intl.DateTimeFormat(undefined, { dateStyle: 'medium' }).format(new Date(value));
+  } catch {
+    return value;
+  }
 }

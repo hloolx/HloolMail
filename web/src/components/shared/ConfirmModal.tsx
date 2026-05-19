@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import type { MouseEventHandler } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
 import { AlertTriangle, X } from 'lucide-react'
 
@@ -10,7 +11,7 @@ type ConfirmModalProps = {
   cancelText?: string
   danger?: boolean
   requireType?: string
-  onConfirm: () => void
+  onConfirm: MouseEventHandler<HTMLButtonElement>
   onCancel: () => void
 }
 
@@ -87,7 +88,7 @@ export function ConfirmModal({
     <AnimatePresence>
       {open && (
         <motion.div
-          className="fixed inset-0 z-50 flex items-center justify-center"
+          className="fixed inset-0 z-[90] flex items-center justify-center"
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}

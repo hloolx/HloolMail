@@ -3,7 +3,7 @@ import { AnimatePresence, motion } from 'framer-motion';
 import { ChevronRight, Clock, History, Trash2, X } from 'lucide-react';
 import type { HistoryEntry } from '../hooks/useRequestHistory';
 import { useText } from '../locales';
-import { dissolveContainer, dissolveElement } from '../lib/dissolve';
+import { runDeleteContainerEffect, runDeleteEffect } from '../lib/feedback';
 
 interface ApiDocsHistoryProps {
   showHistory: boolean;
@@ -40,9 +40,7 @@ export function ApiDocsHistory({
             <div className="api-docs-history-actions">
               {history.length > 0 && (
                 <button className="btn-icon" onClick={async () => {
-                  if (historyListRef.current) {
-                    await dissolveContainer(historyListRef.current, { duration: 400 });
-                  }
+                  await runDeleteContainerEffect(historyListRef.current, { duration: 400 });
                   clearHistory();
                 }} title="Clear history">
                   <Trash2 size={14} />
@@ -72,7 +70,7 @@ export function ApiDocsHistory({
                   </button>
                   <button className="api-docs-history-delete" onClick={async (e) => {
                     const item = (e.currentTarget as HTMLElement).closest('.api-docs-history-item') as HTMLElement | null;
-                    if (item) await dissolveElement(item, { duration: 400, blockSize: 4, direction: 'out' });
+                    await runDeleteEffect(item);
                     removeEntry(entry.id);
                   }} title="Remove">
                     <X size={12} />

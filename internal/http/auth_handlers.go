@@ -1,7 +1,9 @@
 package httpapi
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"net"
 	"net/http"
@@ -207,11 +209,16 @@ func (h *Handler) login(c *gin.Context) {
 		return
 	}
 	var input struct {
-		Email    string `json:"email"`
-		Password string `json:"password"`
+		Email          string `json:"email"`
+		Password       string `json:"password"`
+		TurnstileToken string `json:"turnstile_token"`
 	}
 	if err := c.ShouldBindJSON(&input); err != nil {
 		fail(c, http.StatusBadRequest, "invalid json")
+		return
+	}
+	if err := h.verifyTurnstileIfEnabled(input.TurnstileToken); err != nil {
+		fail(c, http.StatusBadRequest, err.Error())
 		return
 	}
 	var user models.User
@@ -238,11 +245,16 @@ func (h *Handler) register(c *gin.Context) {
 		return
 	}
 	var input struct {
-		Email    string `json:"email"`
-		Password string `json:"password"`
+		Email          string `json:"email"`
+		Password       string `json:"password"`
+		TurnstileToken string `json:"turnstile_token"`
 	}
 	if err := c.ShouldBindJSON(&input); err != nil {
 		fail(c, http.StatusBadRequest, "invalid json")
+		return
+	}
+	if err := h.verifyTurnstileIfEnabled(input.TurnstileToken); err != nil {
+		fail(c, http.StatusBadRequest, err.Error())
 		return
 	}
 	email := strings.ToLower(strings.TrimSpace(input.Email))
@@ -304,6 +316,37 @@ func (h *Handler) me(c *gin.Context) {
 		return
 	}
 	ok(c, gin.H{"installed": true, "user": user})
+}
+
+func (h *Handler) loginSettings(c *gin.Context) {
+	installed := h.isInstalled()
+	response := gin.H{
+		"installed": installed,
+	}
+	if !installed {
+		ok(c, response)
+		return
+	}
+	settings, err := appdb.EnsureLoginSettings(h.DB)
+	if err != nil {
+		ok(c, response)
+		return
+	}
+	response["turnstile_enabled"] = settings.TurnstileEnabled
+	response["turnstile_site_key"] = settings.TurnstileSiteKey
+	response["passkey_enabled"] = settings.PasskeyEnabled
+
+	providers := make([]oauthProviderDTO, 0, len(oauthProviderMetas()))
+	for _, meta := range oauthProviderMetas() {
+		cfg, ok, err := h.effectiveOAuthConfig(meta.Provider)
+		if err != nil || !ok || !cfg.Enabled || !oauthConfigConfigured(cfg) {
+			continue
+		}
+		providers = append(providers, h.oauthProviderDTO(meta, cfg, false))
+	}
+	response["oauth_providers"] = providers
+
+	ok(c, response)
 }
 
 func (h *Handler) isInstalled() bool {
@@ -738,4 +781,58 @@ func envFlagEnabled(value string) bool {
 	default:
 		return false
 	}
+}
+
+func (h *Handler) loginSettingsOrNil() *models.LoginSettings {
+	settings, err := appdb.EnsureLoginSettings(h.DB)
+	if err != nil {
+		return nil
+	}
+	return settings
+}
+
+func (h *Handler) verifyTurnstileIfEnabled(token string) error {
+	settings := h.loginSettingsOrNil()
+	if settings == nil || !settings.TurnstileEnabled {
+		return nil
+	}
+	token = strings.TrimSpace(token)
+	if token == "" {
+		return fmt.Errorf("turnstile verification required")
+	}
+	if err := verifyTurnstileToken(token, settings.TurnstileSecretKey); err != nil {
+		return fmt.Errorf("turnstile verification failed: %w", err)
+	}
+	return nil
+}
+
+func verifyTurnstileToken(token, secretKey string) error {
+	body := map[string]string{
+		"secret":   secretKey,
+		"response": token,
+	}
+	payload, _ := json.Marshal(body)
+	req, err := http.NewRequest("POST", "https://challenges.cloudflare.com/turnstile/v0/siteverify", bytes.NewReader(payload))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	resp, err := oauthHTTPClient.Do(req.WithContext(ctx))
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	var result struct {
+		Success    bool     `json:"success"`
+		ErrorCodes []string `json:"error-codes"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return err
+	}
+	if !result.Success {
+		return fmt.Errorf("%s", strings.Join(result.ErrorCodes, ", "))
+	}
+	return nil
 }

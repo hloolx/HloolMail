@@ -1,14 +1,14 @@
 import { useRef, useState, useEffect, useCallback, type FormEvent } from 'react';
 import type { ReactNode } from 'react';
 import { useMutation } from '@tanstack/react-query';
-import { Check, Clipboard, Database, ExternalLink, Globe2, Loader2, Lock, RefreshCw, Server, Shield } from 'lucide-react';
+import { Check, Clipboard, Database, ExternalLink, Globe2, Lock, RefreshCw, Server, Shield } from 'lucide-react';
 import { toast } from 'sonner';
 import type { InstallDNSCheckResult, InstallResult, InstallStatus, User } from '../api';
 import { postJSON } from '../api';
 import { useText } from '../locales';
 import { copy } from '../lib/clipboard';
-import { launchSuccessBurst } from '../lib/confetti';
-import { AppLogo, CodeBlock, Field, StatusPill } from '../components/shared';
+import { notifySuccess } from '../lib/feedback';
+import { AppLogo, CodeBlock, Field, LoadingIndicator, StatusPill } from '../components/shared';
 import { StepIndicator } from './InstallStepIndicator';
 import { DNSCheckDetails, installDNSMessage } from './InstallDNSVerify';
 
@@ -45,6 +45,7 @@ const INSTALL_FORM_KEY = 'hlool:install-form';
 export function InstallPage({ status, onDone }: { status?: InstallStatus; onDone: () => void }) {
   const text = useText();
   const installButtonRef = useRef<HTMLButtonElement>(null);
+  const dnsCheckButtonRef = useRef<HTMLButtonElement>(null);
   const logoTapRef = useRef({ count: 0, since: 0 });
   const runtimeConfigLocked = Boolean(status?.deployment?.config_locked);
   const [mailHostEdited, setMailHostEdited] = useState(false);
@@ -113,7 +114,7 @@ export function InstallPage({ status, onDone }: { status?: InstallStatus; onDone
     onSuccess: (result) => {
       setDNSState({ key: makeDNSKey(form), result });
       if (result.verified) {
-        toast.success(text.install.dnsPassed);
+        notifySuccess(text.install.dnsPassed, { origin: dnsCheckButtonRef.current });
         // Scroll to the install button
         setTimeout(() => {
           installButtonRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
@@ -147,9 +148,10 @@ export function InstallPage({ status, onDone }: { status?: InstallStatus; onDone
       }
       const message = data.restart_required ? text.toast.installDoneRestart : text.toast.installDone;
       if (!isDevSkip) {
-        launchSuccessBurst({ origin: installButtonRef.current, label: text.toast.installDone });
+        notifySuccess(message, { origin: installButtonRef.current });
+      } else {
+        notifySuccess(message);
       }
-      toast.success(message);
       onDone();
     },
     onError: (error) => toast.error(error.message)
@@ -406,7 +408,7 @@ export function InstallPage({ status, onDone }: { status?: InstallStatus; onDone
             className="btn-primary mt-4"
             disabled={install.isPending || (!runtimeConfigLocked && !dnsVerified)}
           >
-            {install.isPending ? <Loader2 size={16} className="animate-spin" /> : <Check size={16} />}
+            {install.isPending ? <LoadingIndicator /> : <Check size={16} />}
             {runtimeConfigLocked ? text.install.finish : (dnsVerified ? text.install.finish : text.install.finishBtnDNS)}
           </button>
         </section>
@@ -435,8 +437,8 @@ export function InstallPage({ status, onDone }: { status?: InstallStatus; onDone
             <CodeBlock>{`${form.setup_domain || 'xx.com'}. MX 10 ${form.expected_mx || form.mail_hostname || 'mail.xx.com'}.`}</CodeBlock>
             {form.check_wildcard && <CodeBlock>{`*.${form.setup_domain || 'xx.com'}. MX 10 ${form.expected_mx || form.mail_hostname || 'mail.xx.com'}.`}</CodeBlock>}
 
-            <button className="btn-secondary" type="button" onClick={() => dnsCheck.mutate()} disabled={dnsCheck.isPending}>
-              {dnsCheck.isPending ? <Loader2 size={16} className="animate-spin" /> : <RefreshCw size={16} />}
+            <button ref={dnsCheckButtonRef} className="btn-secondary" type="button" onClick={() => dnsCheck.mutate()} disabled={dnsCheck.isPending}>
+              {dnsCheck.isPending ? <LoadingIndicator /> : <RefreshCw size={16} />}
               {text.install.dnsDetectBtn}
             </button>
 
@@ -451,7 +453,7 @@ export function InstallPage({ status, onDone }: { status?: InstallStatus; onDone
               className="btn-primary install-mobile-install mt-2"
               disabled={install.isPending || (!runtimeConfigLocked && !dnsVerified)}
             >
-              {install.isPending ? <Loader2 size={16} className="animate-spin" /> : <Check size={16} />}
+              {install.isPending ? <LoadingIndicator /> : <Check size={16} />}
               {runtimeConfigLocked ? text.install.finish : (dnsVerified ? text.install.finish : text.install.finishBtnDNS)}
             </button>
           </div>

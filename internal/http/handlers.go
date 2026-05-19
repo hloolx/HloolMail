@@ -302,7 +302,7 @@ func (h *Handler) adminStats(c *gin.Context) {
 	h.DB.Model(&models.Domain{}).Count(&totalDomains)
 	h.DB.Model(&models.Domain{}).Where("active = ?", true).Count(&activeDomains)
 	h.DB.Model(&models.Domain{}).Where("active = ? AND mx_verified = ?", true, false).Count(&failedDomains)
-	h.DB.Model(&models.Domain{}).Where("active = ? AND mx_verified = ?", false, false).Count(&pendingDomains)
+	h.DB.Model(&models.Domain{}).Where("active = ? AND first_verified_at IS NULL AND pending_delete_at IS NOT NULL", true).Count(&pendingDomains)
 	h.DB.Model(&models.Domain{}).Where("last_mx_check_at IS NULL OR last_mx_check_at < ?", time.Now().Add(-24*time.Hour)).Count(&staleDomains)
 	h.DB.Model(&models.User{}).Count(&users)
 	h.DB.Model(&models.User{}).Where("enabled = ?", true).Count(&enabledUsers)
@@ -732,8 +732,11 @@ func (h *Handler) scheduleDomainMXAutoRetry(d models.Domain) {
 	if !d.IsWaitingVerification() {
 		return
 	}
+	if d.FirstVerifiedAt != nil || d.PendingDeleteAt == nil {
+		return
+	}
 	now := time.Now()
-	until := d.PendingDeleteAt()
+	until := *d.PendingDeleteAt
 	if !until.After(now) {
 		return
 	}
@@ -936,17 +939,31 @@ func (h *Handler) setDomainMXAutoRetry(c *gin.Context) {
 	}
 	now := time.Now()
 	if input.Enabled {
-		if d.MXVerified && (!d.WildcardRequested || d.WildcardEnabled) {
+		if d.HasCompleteVerification() {
 			fail(c, http.StatusBadRequest, "domain is already verified")
 			return
 		}
-		until := d.PendingDeleteAt()
+		var until time.Time
+		if d.FirstVerifiedAt == nil {
+			if d.PendingDeleteAt == nil {
+				pendingDeleteAt := now.Add(models.PendingDomainTTL)
+				d.PendingDeleteAt = &pendingDeleteAt
+			}
+			until = *d.PendingDeleteAt
+		} else {
+			until = now.Add(models.PendingDomainTTL)
+		}
 		if !until.After(now) {
-			if err := h.DB.Delete(&d).Error; err != nil {
+			d.MXAutoRetryEnabled = false
+			d.MXAutoRetryNextAt = nil
+			d.LastHealthStatus = "unhealthy"
+			d.LastUnhealthyAt = &now
+			d.LastCheckMessage = "verification window has expired; domain was retained for safety"
+			if err := h.DB.Save(&d).Error; err != nil {
 				fail(c, http.StatusInternalServerError, err.Error())
 				return
 			}
-			ok(c, gin.H{"deleted": true})
+			ok(c, domainWithCount(h.DB, d))
 			return
 		}
 		next := now.Add(10 * time.Minute)
@@ -1320,11 +1337,15 @@ func (h *Handler) upsertDomain(rawDomain, mode string, wildcard bool, ownerID *u
 	}
 	var d models.Domain
 	err := h.DB.Where("domain = ?", domainName).First(&d).Error
+	now := time.Now()
+	isNewDomain := false
+	wasActive := false
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		verificationToken, err := domaindb.NewVerificationToken()
 		if err != nil {
 			return nil, domaindb.DNSInstructions{}, err
 		}
+		isNewDomain = true
 		d = models.Domain{
 			Domain:            domainName,
 			Mode:              mode,
@@ -1338,6 +1359,7 @@ func (h *Handler) upsertDomain(rawDomain, mode string, wildcard bool, ownerID *u
 	} else if err != nil {
 		return nil, domaindb.DNSInstructions{}, err
 	} else {
+		wasActive = d.Active
 		if ownerID != nil && d.OwnerID != nil && *d.OwnerID != *ownerID {
 			return nil, domaindb.DNSInstructions{}, fmt.Errorf("domain is already owned by another user")
 		}
@@ -1364,6 +1386,7 @@ func (h *Handler) upsertDomain(rawDomain, mode string, wildcard bool, ownerID *u
 			}
 		}
 	}
+	applyDomainVerificationLifecycle(&d, now, isNewDomain || !wasActive)
 	if d.ID == 0 {
 		err = h.DB.Create(&d).Error
 		if errors.Is(err, gorm.ErrDuplicatedKey) {
@@ -1378,6 +1401,24 @@ func (h *Handler) upsertDomain(rawDomain, mode string, wildcard bool, ownerID *u
 	h.audit("domain.request", actorName, d.Domain, mode)
 	dns := domaindb.Instructions(d.Domain, h.Config.ExpectedMX)
 	return &d, dns, nil
+}
+
+func applyDomainVerificationLifecycle(d *models.Domain, now time.Time, allowPendingDelete bool) {
+	if d.HasCompleteVerification() {
+		if d.FirstVerifiedAt == nil {
+			d.FirstVerifiedAt = &now
+		}
+		d.PendingDeleteAt = nil
+		return
+	}
+	if d.FirstVerifiedAt != nil {
+		d.PendingDeleteAt = nil
+		return
+	}
+	if allowPendingDelete {
+		pendingDeleteAt := now.Add(models.PendingDomainTTL)
+		d.PendingDeleteAt = &pendingDeleteAt
+	}
 }
 
 func domainWantsWildcard(rawDomain string) bool {
@@ -1403,6 +1444,7 @@ type webDomainDTO struct {
 	LastMXCheckAt     *time.Time `json:"last_mx_check_at,omitempty"`
 	DomainExpiresAt   *time.Time `json:"domain_expires_at,omitempty"`
 	MessageCount      int64      `json:"message_count"`
+	FirstVerifiedAt   *time.Time `json:"first_verified_at,omitempty"`
 	PendingDeleteAt   *time.Time `json:"pending_delete_at,omitempty"`
 	CreatedAt         time.Time  `json:"created_at"`
 	UpdatedAt         time.Time  `json:"updated_at"`
@@ -1410,8 +1452,7 @@ type webDomainDTO struct {
 
 type domainDTO struct {
 	models.Domain
-	MessageCount    int64      `json:"message_count"`
-	PendingDeleteAt *time.Time `json:"pending_delete_at,omitempty"`
+	MessageCount int64 `json:"message_count"`
 }
 
 func domainNames(domains []models.Domain) []string {
@@ -1482,12 +1523,10 @@ func webDomainsWithCounts(db *gorm.DB, domains []models.Domain) []webDomainDTO {
 			LastMXCheckAt:     d.LastMXCheckAt,
 			DomainExpiresAt:   d.DomainExpiresAt,
 			MessageCount:      countMap[d.Domain],
+			FirstVerifiedAt:   d.FirstVerifiedAt,
+			PendingDeleteAt:   d.PendingDeleteAt,
 			CreatedAt:         d.CreatedAt,
 			UpdatedAt:         d.UpdatedAt,
-		}
-		if d.IsWaitingVerification() {
-			pendingDeleteAt := d.PendingDeleteAt()
-			dto.PendingDeleteAt = &pendingDeleteAt
 		}
 		out = append(out, dto)
 	}
@@ -1502,10 +1541,6 @@ func domainsWithCounts(db *gorm.DB, domains []models.Domain) []domainDTO {
 	out := make([]domainDTO, 0, len(domains))
 	for _, d := range domains {
 		dto := domainDTO{Domain: d, MessageCount: countMap[d.Domain]}
-		if d.IsWaitingVerification() {
-			pendingDeleteAt := d.PendingDeleteAt()
-			dto.PendingDeleteAt = &pendingDeleteAt
-		}
 		out = append(out, dto)
 	}
 	return out
@@ -1522,10 +1557,6 @@ func domainWithCount(db *gorm.DB, d models.Domain) domainDTO {
 	var count int64
 	db.Model(&models.Message{}).Where("root_domain = ?", d.Domain).Count(&count)
 	dto := domainDTO{Domain: d, MessageCount: count}
-	if d.IsWaitingVerification() {
-		pendingDeleteAt := d.PendingDeleteAt()
-		dto.PendingDeleteAt = &pendingDeleteAt
-	}
 	return dto
 }
 

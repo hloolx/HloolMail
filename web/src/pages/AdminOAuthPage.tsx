@@ -1,11 +1,12 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { AnimatePresence, motion } from 'framer-motion';
 import { CircleUserRound, Clipboard, ExternalLink, Github, Loader2, Pencil, Save } from 'lucide-react';
 import { toast } from 'sonner';
 import { api, patchJSON } from '../api';
 import type { OAuthProvider } from '../types';
-import { ConfirmModal } from '../components/shared';
+import { ConfirmModal, InfoTip, LoadingIndicator } from '../components/shared';
+import { notifySuccess } from '../lib/feedback';
 import { useText } from '../locales';
 
 type OAuthForm = {
@@ -28,6 +29,7 @@ export function AdminOAuthPage() {
   const [editing, setEditing] = useState<string | null>(null);
   const [savingProvider, setSavingProvider] = useState<string | null>(null);
   const [pendingDiscard, setPendingDiscard] = useState<string | null>(null);
+  const saveButtonRef = useRef<HTMLButtonElement | null>(null);
 
   useEffect(() => {
     if (!providers.data) return;
@@ -56,12 +58,12 @@ export function AdminOAuthPage() {
       redirect_url: form.redirect_url.trim(),
       enabled: form.enabled
     }),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['admin-oauth-providers'] });
-      queryClient.invalidateQueries({ queryKey: ['oauth-providers'] });
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ['admin-oauth-providers'] });
+      await queryClient.invalidateQueries({ queryKey: ['oauth-providers'] });
       setEditing(null);
       setSavingProvider(null);
-      toast.success(text.oauth.saved);
+      notifySuccess(text.oauth.saved, { origin: saveButtonRef.current });
     },
     onError: (error) => {
       setSavingProvider(null);
@@ -81,10 +83,10 @@ export function AdminOAuthPage() {
     }));
   };
 
-  const copyCallback = async (value: string) => {
+  const copyCallback = async (value: string, origin: HTMLElement | null) => {
     try {
       await navigator.clipboard.writeText(value);
-      toast.success(text.common.copied);
+      notifySuccess(text.common.copied, { origin });
     } catch {
       toast.error(text.common.copyFailed);
     }
@@ -124,15 +126,13 @@ export function AdminOAuthPage() {
     <div className="admin-oauth-page grid gap-4">
       <div className="admin-page-header">
         <div>
-          <h1>{text.oauth.title}</h1>
-          <p>{text.oauth.admin_desc}</p>
+          <h1>{text.oauth.title}<InfoTip text={text.oauth.admin_desc} /></h1>
         </div>
       </div>
 
       {providers.isLoading && (
         <section className="panel admin-oauth-state">
-          <Loader2 size={18} className="animate-spin" />
-          <span>{text.common.loading}</span>
+          <LoadingIndicator label={text.common.loading} size={18} />
         </section>
       )}
 
@@ -170,11 +170,11 @@ export function AdminOAuthPage() {
                   type="button"
                   disabled={isEditingLocked}
                   onClick={() => handleEditClick(provider.provider)}
-                  title={isEditingLocked ? text.oauth.editing_hint : undefined}
                   aria-label={isEditing ? text.common.close : text.oauth.edit}
                 >
                   <Pencil size={15} aria-hidden="true" />
                   {isEditing ? text.common.close : text.oauth.edit}
+                  {isEditingLocked && <InfoTip text={text.oauth.editing_hint} />}
                 </button>
               </div>
 
@@ -195,7 +195,7 @@ export function AdminOAuthPage() {
                 <div className="admin-oauth-summary-row admin-oauth-summary-row-action">
                   <span className="admin-oauth-summary-label">{text.oauth.redirect_url}</span>
                   <code className="admin-oauth-summary-value">{callbackURL}</code>
-                  <button className="admin-oauth-control" type="button" onClick={() => copyCallback(callbackURL)} aria-label={text.common.copy}>
+                  <button className="admin-oauth-control" type="button" onClick={(event) => copyCallback(callbackURL, event.currentTarget)} aria-label={text.common.copy}>
                     <Clipboard size={15} aria-hidden="true" />
                     {text.common.copy}
                   </button>
@@ -228,7 +228,7 @@ export function AdminOAuthPage() {
                       <input className="input" value={form.client_id} onChange={(event) => setFormValue(provider.provider, 'client_id', event.target.value)} placeholder="Iv1..." />
                     </label>
                     <label className="user-form-field">
-                      <span>{text.oauth.client_secret}</span>
+                      <span>{text.oauth.client_secret}{provider.client_secret && <InfoTip text={text.oauth.secret_hint} />}</span>
                       <input
                         className="input"
                         value={form.client_secret}
@@ -237,25 +237,26 @@ export function AdminOAuthPage() {
                         type="password"
                         autoComplete="new-password"
                       />
-                      {provider.client_secret && (
-                        <p className="user-form-note">{text.oauth.secret_hint}</p>
-                      )}
                     </label>
                     <label className="user-form-field admin-oauth-wide">
                       <span>{text.oauth.redirect_url}</span>
                       <input className="input" value={form.redirect_url} onChange={(event) => setFormValue(provider.provider, 'redirect_url', event.target.value)} placeholder={fallbackCallbackURL(provider)} />
                     </label>
-                    <div className="segmented-control admin-oauth-wide">
-                      <button type="button" className={`segment-choice ${!form.enabled ? 'segment-choice-active' : ''}`} onClick={() => setFormValue(provider.provider, 'enabled', false)} aria-pressed={!form.enabled}>
-                        {text.oauth.disabled}
-                      </button>
-                      <button type="button" className={`segment-choice ${form.enabled ? 'segment-choice-active' : ''}`} onClick={() => setFormValue(provider.provider, 'enabled', true)} aria-pressed={form.enabled}>
-                        {text.oauth.enabled}
+                    <div className="toggle-row">
+                      <span className="toggle-row-label">{text.common.enabled}</span>
+                      <button
+                        type="button"
+                        className={`toggle-switch ${form.enabled ? 'on' : ''}`}
+                        onClick={() => setFormValue(provider.provider, 'enabled', !form.enabled)}
+                        role="switch"
+                        aria-checked={form.enabled}
+                      >
+                        <span className="toggle-switch-knob" />
                       </button>
                     </div>
                     <div className="admin-oauth-form-actions">
                       <button className="btn-secondary" type="button" onClick={() => handleEditClick(provider.provider)} aria-label={text.common.cancel}>{text.common.cancel}</button>
-                      <button className="btn-primary" type="submit" disabled={savingProvider !== null} aria-label={text.oauth.save}>
+                      <button ref={saveButtonRef} className="btn-primary" type="submit" disabled={savingProvider !== null} aria-label={text.oauth.save}>
                         {savingProvider === provider.provider ? <Loader2 size={16} className="animate-spin" aria-hidden="true" /> : <Save size={16} aria-hidden="true" />}
                         {text.oauth.save}
                       </button>

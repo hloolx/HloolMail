@@ -184,11 +184,13 @@ func (c DNSChecker) persistCheckResult(d models.Domain, result CheckResult) erro
 	if result.WildcardChecked {
 		updates["wildcard_requested"] = true
 	}
-	if result.MXVerified && (!result.WildcardChecked || result.WildcardEnabled) {
+	if checkResultReady(d, result) {
 		updates["last_healthy_at"] = &now
 		updates["last_health_status"] = "healthy"
 		updates["mx_auto_retry_enabled"] = false
 		updates["mx_auto_retry_next_at"] = nil
+		updates["first_verified_at"] = gorm.Expr("COALESCE(first_verified_at, ?)", now)
+		updates["pending_delete_at"] = nil
 	} else {
 		updates["last_unhealthy_at"] = &now
 		updates["last_health_status"] = "unhealthy"
@@ -203,6 +205,11 @@ func (c DNSChecker) persistCheckResult(d models.Domain, result CheckResult) erro
 		query = query.Where("domain = ?", d.Domain)
 	}
 	return query.Updates(updates).Error
+}
+
+func checkResultReady(d models.Domain, result CheckResult) bool {
+	wildcardRequired := d.WildcardRequested || result.WildcardChecked
+	return result.MXVerified && (!wildcardRequired || result.WildcardEnabled)
 }
 
 func (c DNSChecker) lookupWithOptions(ctx context.Context, d models.Domain, options CheckOptions) CheckResult {

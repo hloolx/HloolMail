@@ -1,11 +1,11 @@
 import { useQuery } from '@tanstack/react-query';
 import { useState, type Dispatch, type SetStateAction } from 'react';
-import { ChevronRight, RefreshCw, RotateCcw, Search } from 'lucide-react';
+import { RefreshCw, Search } from 'lucide-react';
 import { api } from '../api';
 import type { AuditLog, AuditLogPage } from '../types';
 import { relativeTime } from '../lib/display';
 import { currentText, useText } from '../locales';
-import { DataTable } from '../components/shared';
+import { DataTable, InfoTip, PaginationControls } from '../components/shared';
 
 type AuditLogFilters = {
   category: string;
@@ -39,11 +39,12 @@ export function AdminAuditLog() {
   const text = useText();
 
   const [auditFilters, setAuditFilters] = useState<AuditLogFilters>(() => defaultAuditFilters());
-  const [auditCursor, setAuditCursor] = useState('');
+  const [auditPage, setAuditPage] = useState(1);
+  const auditPerPage = 20;
 
   const auditLogs = useQuery({
-    queryKey: ['admin-audit-logs', auditFilters, auditCursor],
-    queryFn: () => api<AuditLogPage>(`/api/admin/audit-logs?${buildAuditLogQuery(auditFilters, auditCursor)}`),
+    queryKey: ['admin-audit-logs', auditFilters, auditPage],
+    queryFn: () => api<AuditLogPage>(`/api/admin/audit-logs?${buildAuditLogQuery(auditFilters, auditPage, auditPerPage)}`),
     retry: false,
     staleTime: 30_000
   });
@@ -52,36 +53,35 @@ export function AdminAuditLog() {
     <section className="panel" id="admin-audit-logs">
       <div className="panel-header admin-panel-header">
         <div>
-          <h2>{text.admin.auditLogs.title}</h2>
-          <p>{text.admin.auditLogs.desc}</p>
+          <h2>{text.admin.auditLogs.title}<InfoTip text={text.admin.auditLogs.desc} /></h2>
         </div>
         <div className="table-actions">
           <button
-            className="btn-ghost"
-            type="button"
-            onClick={() => {
-              setAuditFilters(defaultAuditFilters());
-              setAuditCursor('');
-            }}
-          >
-            <RotateCcw size={14} />
-            {text.admin.auditLogs.reset}
-          </button>
-          <button
             className="btn-secondary"
             type="button"
-            onClick={() => setAuditCursor(auditLogs.data?.next_cursor || '')}
-            disabled={!auditLogs.data?.next_cursor || auditLogs.isFetching}
+            onClick={() => auditLogs.refetch()}
+            disabled={auditLogs.isFetching}
           >
-            {auditLogs.isFetching ? <RefreshCw size={14} className="animate-spin" /> : <ChevronRight size={14} />}
-            {text.admin.auditLogs.older}
+            <RefreshCw size={14} className={auditLogs.isFetching ? 'animate-spin' : ''} />
+            {text.common.refresh}
           </button>
         </div>
       </div>
       <div className="admin-audit-filters">
+        <label className="admin-audit-search">
+          <span>{text.admin.auditLogs.search}</span>
+          <div className="admin-audit-search-box">
+            <Search size={15} />
+            <input
+              value={auditFilters.q}
+              onChange={(event) => updateAuditFilter(setAuditFilters, setAuditPage, { q: event.target.value })}
+              placeholder={text.admin.auditLogs.searchPlaceholder}
+            />
+          </div>
+        </label>
         <label>
           <span>{text.admin.auditLogs.filterCategory}</span>
-          <select className="input" value={auditFilters.category} onChange={(event) => updateAuditFilter(setAuditFilters, setAuditCursor, { category: event.target.value })}>
+          <select className="input" value={auditFilters.category} onChange={(event) => updateAuditFilter(setAuditFilters, setAuditPage, { category: event.target.value })}>
             <option value="security">{text.admin.auditLogs.categorySecurity}</option>
             <option value="activity">{text.admin.auditLogs.categoryActivity}</option>
             <option value="system">{text.admin.auditLogs.categorySystem}</option>
@@ -90,7 +90,7 @@ export function AdminAuditLog() {
         </label>
         <label>
           <span>{text.admin.auditLogs.filterSeverity}</span>
-          <select className="input" value={auditFilters.severity} onChange={(event) => updateAuditFilter(setAuditFilters, setAuditCursor, { severity: event.target.value })}>
+          <select className="input" value={auditFilters.severity} onChange={(event) => updateAuditFilter(setAuditFilters, setAuditPage, { severity: event.target.value })}>
             <option value="all">{text.admin.auditLogs.all}</option>
             <option value="critical">{text.admin.auditLogs.severityCritical}</option>
             <option value="warning">{text.admin.auditLogs.severityWarning}</option>
@@ -99,7 +99,7 @@ export function AdminAuditLog() {
         </label>
         <label>
           <span>{text.admin.auditLogs.filterAction}</span>
-          <select className="input" value={auditFilters.action} onChange={(event) => updateAuditFilter(setAuditFilters, setAuditCursor, { action: event.target.value })}>
+          <select className="input" value={auditFilters.action} onChange={(event) => updateAuditFilter(setAuditFilters, setAuditPage, { action: event.target.value })}>
             <option value="all">{text.admin.auditLogs.all}</option>
             {auditActionOptions.map((action) => (
               <option key={action} value={action}>{auditActionLabel(action)}</option>
@@ -108,7 +108,7 @@ export function AdminAuditLog() {
         </label>
         <label>
           <span>{text.admin.auditLogs.filterTarget}</span>
-          <select className="input" value={auditFilters.targetType} onChange={(event) => updateAuditFilter(setAuditFilters, setAuditCursor, { targetType: event.target.value })}>
+          <select className="input" value={auditFilters.targetType} onChange={(event) => updateAuditFilter(setAuditFilters, setAuditPage, { targetType: event.target.value })}>
             <option value="all">{text.admin.auditLogs.all}</option>
             <option value="user">{text.admin.auditLogs.targetUser}</option>
             <option value="domain">{text.admin.auditLogs.targetDomain}</option>
@@ -117,26 +117,16 @@ export function AdminAuditLog() {
             <option value="oauth_provider">{text.admin.auditLogs.targetOAuth}</option>
           </select>
         </label>
-        <label className="admin-audit-search">
-          <span>{text.admin.auditLogs.search}</span>
-          <div className="admin-audit-search-box">
-            <Search size={15} />
-            <input
-              value={auditFilters.q}
-              onChange={(event) => updateAuditFilter(setAuditFilters, setAuditCursor, { q: event.target.value })}
-              placeholder={text.admin.auditLogs.searchPlaceholder}
-            />
-          </div>
-        </label>
       </div>
       <DataTable
+        ariaLabel={text.admin.auditLogs.title}
         emptyLabel={text.admin.auditLogs.empty}
         columns={[
-          { key: 'created-at', header: text.admin.auditLogs.colTime },
-          { key: 'event', header: text.admin.auditLogs.colEvent },
-          { key: 'severity', header: text.admin.auditLogs.colSeverity },
-          { key: 'actor', header: text.admin.auditLogs.colActor },
-          { key: 'target', header: text.admin.auditLogs.colTarget }
+          { key: 'created-at', header: text.admin.auditLogs.colTime, width: '8rem' },
+          { key: 'event', header: text.admin.auditLogs.colEvent, minWidth: '18rem' },
+          { key: 'severity', header: text.admin.auditLogs.colSeverity, align: 'center', width: '8rem' },
+          { key: 'actor', header: text.admin.auditLogs.colActor, minWidth: '9rem' },
+          { key: 'target', header: text.admin.auditLogs.colTarget, minWidth: '12rem' }
         ]}
         rows={(auditLogs.data?.items || []).map((log) => ({
           key: log.id,
@@ -153,10 +143,19 @@ export function AdminAuditLog() {
             </div>,
             <SeverityPill severity={auditSeverityLevel(log.severity)}>{auditSeverityLabel(log.severity)}</SeverityPill>,
             log.actor || '-',
-            <span className="admin-log-target" title={log.target || undefined}>{log.target || '-'}</span>
+            <span className="admin-log-target">{log.target || '-'}{log.target && <InfoTip text={log.target} />}</span>
           ]
         }))}
       />
+      {auditLogs.data && auditLogs.data.total_pages > 1 && (
+        <div className="admin-audit-pagination">
+          <PaginationControls
+            page={auditLogs.data.page}
+            totalPages={auditLogs.data.total_pages}
+            onPageChange={setAuditPage}
+          />
+        </div>
+      )}
     </section>
   );
 }
@@ -177,18 +176,18 @@ function defaultAuditFilters(): AuditLogFilters {
 
 function updateAuditFilter(
   setFilters: Dispatch<SetStateAction<AuditLogFilters>>,
-  setCursor: Dispatch<SetStateAction<string>>,
+  setPage: Dispatch<SetStateAction<number>>,
   patch: Partial<AuditLogFilters>
 ) {
   setFilters((current) => ({ ...current, ...patch }));
-  setCursor('');
+  setPage(1);
 }
 
-function buildAuditLogQuery(filters: AuditLogFilters, cursor: string) {
-  const params = new URLSearchParams({ limit: '10' });
-  if (cursor) {
-    params.set('cursor', cursor);
-  }
+function buildAuditLogQuery(filters: AuditLogFilters, page: number, perPage: number) {
+  const params = new URLSearchParams({
+    page: String(page),
+    per_page: String(perPage)
+  });
   if (filters.category !== 'all') {
     params.set('category', filters.category);
   }

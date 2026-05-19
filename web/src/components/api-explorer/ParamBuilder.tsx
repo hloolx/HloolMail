@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { Plus, Trash2, ToggleLeft, ToggleRight } from 'lucide-react';
-import { dissolveElement } from '../../lib/dissolve';
+import { runDeleteEffect } from '../../lib/feedback';
 
 /* ------------------------------------------------------------------ */
 /* Types                                                               */
@@ -316,7 +316,7 @@ function QueryForm({
             type="button"
             onClick={async (e) => {
               const rowEl = (e.currentTarget as HTMLElement).closest('.group') as HTMLElement | null;
-              if (rowEl) await dissolveElement(rowEl, { duration: 300, blockSize: 4, direction: 'out' });
+              await runDeleteEffect(rowEl, { duration: 300 });
               onRemove(row.id);
             }}
             disabled={disabled}
@@ -415,7 +415,7 @@ function JsonForm({
             type="button"
             onClick={async (e) => {
               const rowEl = (e.currentTarget as HTMLElement).closest('.group') as HTMLElement | null;
-              if (rowEl) await dissolveElement(rowEl, { duration: 300, blockSize: 4, direction: 'out' });
+              await runDeleteEffect(rowEl, { duration: 300 });
               onRemove(row.id);
             }}
             disabled={disabled}

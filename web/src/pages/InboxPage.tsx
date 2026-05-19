@@ -13,8 +13,8 @@ import { useVisibleRefetchInterval } from '../hooks/useVisibleRefetchInterval';
 import { copy } from '../lib/clipboard';
 import { domainModeLabel, extractCode, relativeTime } from '../lib/display';
 import { sseStream } from '../lib/sse';
-import { dissolveContainer, dissolveElement } from '../lib/dissolve';
-import { EmptyState, IconButton, PaginationControls } from '../components/shared';
+import { notifySuccess, runDeleteContainerEffect, runDeleteEffect } from '../lib/feedback';
+import { EmptyState, IconButton, InfoTip, PaginationControls } from '../components/shared';
 import { MessageDrawer } from './MessageDrawer';
 
 const MAILBOX_PAGE_SIZE = 8;
@@ -63,6 +63,7 @@ export function InboxPage() {
   const mailboxesInterval = useVisibleRefetchInterval(10000);
   const emailsInterval = useVisibleRefetchInterval(5000);
   const generateRequestRef = useRef({ prefix: '', domain: '' });
+  const generateButtonRef = useRef<HTMLButtonElement | null>(null);
   const domains = useQuery({
     queryKey: ['domains-available', apiKey],
     queryFn: () => api<DomainAvailability>('/api/domains/available', { apiKey }),
@@ -134,7 +135,7 @@ export function InboxPage() {
       setMailboxSearch('');
       queryClient.invalidateQueries({ queryKey: ['mailboxes'] });
       queryClient.invalidateQueries({ queryKey: ['mailbox-stats'] });
-      toast.success(data.reuse ? text.inbox.emailReuse : text.toast.emailGenerated);
+      notifySuccess(data.reuse ? text.inbox.emailReuse : text.toast.emailGenerated, { origin: generateButtonRef.current });
     },
     onError: (error) => toast.error(error.message)
   });
@@ -146,7 +147,7 @@ export function InboxPage() {
       queryClient.invalidateQueries({ queryKey: ['mailbox-stats'] });
       setSelectedID('');
       setEmailPage(1);
-      toast.success(text.toast.inboxCleared);
+      notifySuccess(text.toast.inboxCleared, { burst: false });
     },
     onError: (error) => toast.error(error.message)
   });
@@ -162,7 +163,7 @@ export function InboxPage() {
       if (mailboxItems.length <= 1 && mailboxPage > 1) {
         setMailboxPage((page) => Math.max(1, page - 1));
       }
-      toast.success(text.inbox.mailboxDeleted);
+      notifySuccess(text.inbox.mailboxDeleted, { burst: false });
     },
     onError: (error) => toast.error(error.message)
   });
@@ -281,7 +282,7 @@ export function InboxPage() {
             <IconButton title={confirmClear ? `${text.inbox.confirmClear} (3s)` : text.common.clear} onClick={async () => {
               if (confirmClear) {
                 if (mailListRef.current && emailItems.length > 0) {
-                  await dissolveContainer(mailListRef.current, { duration: 700, blockSize: 6 });
+                  await runDeleteContainerEffect(mailListRef.current, { duration: 700, blockSize: 6 });
                 }
                 clear.mutate(); setConfirmClear(false);
               }
@@ -298,7 +299,7 @@ export function InboxPage() {
             {renderDomainOptions(availabilityGroups.privateDomains, text.domains.modePrivate, language)}
             {renderDomainOptions(availabilityGroups.publicDomains, text.domains.modePublic, language)}
           </select>
-          <button className="btn-primary md:col-span-2 lg:col-span-1" onClick={() => generate.mutate()} disabled={generate.isPending}>
+          <button ref={generateButtonRef} className="btn-primary md:col-span-2 lg:col-span-1" onClick={() => generate.mutate()} disabled={generate.isPending}>
             {generate.isPending ? <Loader2 size={16} className="animate-spin" /> : <MailPlus size={16} />}
             {text.inbox.generate}
           </button>
@@ -383,7 +384,7 @@ export function InboxPage() {
                           setConfirmingId(null);
                           deleteMailbox.mutate(mb, {
                             onSuccess: async () => {
-                              if (row && row.isConnected) await dissolveElement(row, { duration: 400, blockSize: 4, direction: 'out' });
+                              await runDeleteEffect(row);
                             }
                           });
                         }

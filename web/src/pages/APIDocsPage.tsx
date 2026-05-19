@@ -27,6 +27,7 @@ import { generateCode, codeGenLabel, type CodeGenLang } from '../lib/codegen';
 import { ParamBuilder } from '../components/api-explorer/ParamBuilder';
 import { ResponsePanel, type ExplorerResult } from '../components/api-explorer/ResponsePanel';
 import { ApiKeySelector } from '../components/api-explorer/ApiKeySelector';
+import { InfoTip } from '../components/shared';
 import { ConfirmModal } from '../components/api-explorer/ConfirmModal';
 import { ApiDocsHero } from './ApiDocsHero';
 import { ApiDocsHistory } from './ApiDocsHistory';
@@ -320,8 +321,7 @@ export function APIDocsPage() {
       <section className="api-docs-workspace">
         <div className="panel-header api-docs-workspace-header">
           <div>
-            <h2>{text.apiDocs.workspaceTitle}</h2>
-            <p>{text.apiDocs.workspaceDesc}</p>
+            <h2>{text.apiDocs.workspaceTitle}<InfoTip text={text.apiDocs.workspaceDesc} /></h2>
           </div>
           <div className="api-docs-explorer-badges">
             <span className={`method-badge method-${selectedEndpoint.method.toLowerCase()}`}>{selectedEndpoint.method}</span>

@@ -54,6 +54,27 @@ func (OAuthIdentity) TableName() string {
 	return "oauth_identities"
 }
 
+type PasskeyCredential struct {
+	ID           uint       `gorm:"primaryKey" json:"id"`
+	UserID       uint       `gorm:"index;not null" json:"user_id"`
+	User         User       `gorm:"foreignKey:UserID;constraint:OnUpdate:CASCADE,OnDelete:CASCADE;" json:"-"`
+	CredentialID string     `gorm:"uniqueIndex;size:512;not null" json:"credential_id"`
+	Name         string     `gorm:"size:120;not null" json:"name"`
+	Credential   string     `gorm:"type:text;not null" json:"-"`
+	LastUsedAt   *time.Time `json:"last_used_at,omitempty"`
+	CreatedAt    time.Time  `json:"created_at"`
+	UpdatedAt    time.Time  `json:"updated_at"`
+}
+
+type WebAuthnSession struct {
+	ID        string    `gorm:"primaryKey;size:64;not null" json:"id"`
+	UserID    uint      `gorm:"index;not null" json:"user_id"`
+	Kind      string    `gorm:"size:20;index;not null" json:"kind"`
+	Data      string    `gorm:"type:text;not null" json:"-"`
+	ExpiresAt time.Time `gorm:"index;not null" json:"expires_at"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
 type OAuthProviderSetting struct {
 	Provider     string    `gorm:"primaryKey;size:32;not null" json:"provider"`
 	ClientID     string    `gorm:"type:text" json:"client_id"`
@@ -89,6 +110,8 @@ type Domain struct {
 	MXAutoRetryNextAt    *time.Time      `gorm:"index" json:"mx_auto_retry_next_at,omitempty"`
 	MXAutoRetryLastAt    *time.Time      `json:"mx_auto_retry_last_at,omitempty"`
 	MXAutoRetryCount     int             `gorm:"not null" json:"mx_auto_retry_count"`
+	FirstVerifiedAt      *time.Time      `gorm:"index" json:"first_verified_at,omitempty"`
+	PendingDeleteAt      *time.Time      `gorm:"index" json:"pending_delete_at,omitempty"`
 	DomainExpiresAt      *time.Time      `json:"domain_expires_at,omitempty"`
 	MailboxCreatedCount  int64           `gorm:"not null;default:0" json:"mailbox_created_count"`
 	HealthFailureCount   int             `gorm:"not null" json:"health_failure_count"`
@@ -102,16 +125,16 @@ type Domain struct {
 	UpdatedAt            time.Time       `json:"updated_at"`
 }
 
+func (d Domain) HasCompleteVerification() bool {
+	return d.MXVerified && (!d.WildcardRequested || d.WildcardEnabled)
+}
+
 func (d Domain) IsReady() bool {
-	return d.Active && d.MXVerified && (!d.WildcardRequested || d.WildcardEnabled)
+	return d.Active && d.HasCompleteVerification()
 }
 
 func (d Domain) IsWaitingVerification() bool {
 	return d.Active && (!d.MXVerified || (d.WildcardRequested && !d.WildcardEnabled))
-}
-
-func (d Domain) PendingDeleteAt() time.Time {
-	return d.CreatedAt.Add(PendingDomainTTL)
 }
 
 type APIKey struct {
@@ -288,4 +311,14 @@ type SystemQuotaSettings struct {
 	RequirePublicDomainForQuota bool      `gorm:"not null;default:false" json:"require_public_domain_for_quota"`
 	CreatedAt                   time.Time `json:"created_at"`
 	UpdatedAt                   time.Time `json:"updated_at"`
+}
+
+type LoginSettings struct {
+	ID                 uint      `gorm:"primaryKey" json:"id"`
+	TurnstileEnabled   bool      `gorm:"not null;default:false" json:"turnstile_enabled"`
+	TurnstileSiteKey   string    `gorm:"type:text" json:"turnstile_site_key"`
+	TurnstileSecretKey string    `gorm:"type:text" json:"-"`
+	PasskeyEnabled     bool      `gorm:"not null;default:false" json:"passkey_enabled"`
+	CreatedAt          time.Time `json:"created_at"`
+	UpdatedAt          time.Time `json:"updated_at"`
 }

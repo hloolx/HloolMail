@@ -10,7 +10,7 @@ import (
 	"gptmail/internal/models"
 )
 
-func TestAdminAuditLogsFilterAndCursor(t *testing.T) {
+func TestAdminAuditLogsFilterAndPagination(t *testing.T) {
 	db := httpTestDB(t)
 	now := time.Now().UTC()
 	logs := []models.AuditLog{
@@ -53,29 +53,34 @@ func TestAdminAuditLogsFilterAndCursor(t *testing.T) {
 	})
 	headers := map[string]string{"X-Admin-Token": "test-admin-token"}
 
-	first := perform(router, http.MethodGet, "/api/admin/audit-logs?category=security&limit=1", nil, headers)
+	// Page 1: category=security, per_page=1 — expect 2 total, first item is newest
+	first := perform(router, http.MethodGet, "/api/admin/audit-logs?category=security&per_page=1&page=1", nil, headers)
 	if first.Code != http.StatusOK {
 		t.Fatalf("first audit page = %d: %s", first.Code, first.Body.String())
 	}
 	var firstBody struct {
-		Data adminAuditLogsResponse `json:"data"`
+		Data auditLogListResponse `json:"data"`
 	}
 	if err := json.Unmarshal(first.Body.Bytes(), &firstBody); err != nil {
 		t.Fatal(err)
 	}
+	if firstBody.Data.Total != 2 {
+		t.Fatalf("expected total=2, got %d", firstBody.Data.Total)
+	}
 	if len(firstBody.Data.Items) != 1 || firstBody.Data.Items[0].Action != "api_key.reveal" {
 		t.Fatalf("unexpected first page: %+v", firstBody.Data.Items)
 	}
-	if firstBody.Data.NextCursor == "" {
-		t.Fatal("expected next cursor")
+	if firstBody.Data.Page != 1 || firstBody.Data.TotalPages != 2 {
+		t.Fatalf("unexpected page info: page=%d totalPages=%d", firstBody.Data.Page, firstBody.Data.TotalPages)
 	}
 
-	second := perform(router, http.MethodGet, "/api/admin/audit-logs?category=security&limit=1&cursor="+firstBody.Data.NextCursor, nil, headers)
+	// Page 2: same filter, should get user.delete
+	second := perform(router, http.MethodGet, "/api/admin/audit-logs?category=security&per_page=1&page=2", nil, headers)
 	if second.Code != http.StatusOK {
 		t.Fatalf("second audit page = %d: %s", second.Code, second.Body.String())
 	}
 	var secondBody struct {
-		Data adminAuditLogsResponse `json:"data"`
+		Data auditLogListResponse `json:"data"`
 	}
 	if err := json.Unmarshal(second.Body.Bytes(), &secondBody); err != nil {
 		t.Fatal(err)
@@ -83,15 +88,10 @@ func TestAdminAuditLogsFilterAndCursor(t *testing.T) {
 	if len(secondBody.Data.Items) != 1 || secondBody.Data.Items[0].Action != "user.delete" {
 		t.Fatalf("unexpected second page: %+v", secondBody.Data.Items)
 	}
-}
 
-func TestAdminAuditLogsRejectsInvalidCursor(t *testing.T) {
-	db := httpTestDB(t)
-	router := testRouterWithConfig(t, db, func(cfg *config.Config) {
-		cfg.AdminToken = "test-admin-token"
-	})
-	response := perform(router, http.MethodGet, "/api/admin/audit-logs?cursor=not-a-cursor", nil, map[string]string{"X-Admin-Token": "test-admin-token"})
-	if response.Code != http.StatusBadRequest {
-		t.Fatalf("invalid cursor response = %d: %s", response.Code, response.Body.String())
+	// Invalid page defaults to 1
+	invalid := perform(router, http.MethodGet, "/api/admin/audit-logs?page=not-a-number", nil, headers)
+	if invalid.Code != http.StatusOK {
+		t.Fatalf("invalid page response = %d: %s", invalid.Code, invalid.Body.String())
 	}
 }

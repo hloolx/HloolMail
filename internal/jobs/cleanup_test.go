@@ -93,7 +93,7 @@ func TestRunExpiredMessageCleanupUsesSetBasedDelete(t *testing.T) {
 	}
 }
 
-func TestRunCleanupRemovesExpiredWaitingDomains(t *testing.T) {
+func TestRunPendingDomainCleanupUsesExplicitDeleteDeadline(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	if err != nil {
 		t.Fatal(err)
@@ -102,52 +102,130 @@ func TestRunCleanupRemovesExpiredWaitingDomains(t *testing.T) {
 		t.Fatal(err)
 	}
 	now := time.Now()
-	oldPending := models.Domain{
-		Domain:    "old-pending.test",
-		Mode:      models.DomainModePrivate,
-		Active:    true,
-		CreatedAt: now.Add(-3 * time.Hour),
+	expiredAt := now.Add(-time.Minute)
+	firstVerifiedAt := now.Add(-24 * time.Hour)
+	legacyOldUnhealthy := models.Domain{
+		Domain:     "legacy-old-unhealthy.test",
+		Mode:       models.DomainModePrivate,
+		Active:     true,
+		MXVerified: false,
+		CreatedAt:  now.Add(-30 * 24 * time.Hour),
 	}
-	oldWildcardPending := models.Domain{
-		Domain:            "old-wildcard.test",
-		Mode:              models.DomainModePrivate,
-		Active:            true,
-		MXVerified:        true,
-		WildcardRequested: true,
-		CreatedAt:         now.Add(-3 * time.Hour),
+	expiredNeverVerified := models.Domain{
+		Domain:          "expired-never-verified.test",
+		Mode:            models.DomainModePrivate,
+		Active:          true,
+		PendingDeleteAt: &expiredAt,
+		CreatedAt:       now.Add(-30 * time.Minute),
 	}
-	freshPending := models.Domain{
-		Domain:    "fresh-pending.test",
-		Mode:      models.DomainModePrivate,
-		Active:    true,
-		CreatedAt: now.Add(-30 * time.Minute),
+	previouslyVerifiedNowUnhealthy := models.Domain{
+		Domain:          "previously-verified-unhealthy.test",
+		Mode:            models.DomainModePrivate,
+		Active:          true,
+		MXVerified:      false,
+		FirstVerifiedAt: &firstVerifiedAt,
+		PendingDeleteAt: &expiredAt,
+		CreatedAt:       now.Add(-30 * 24 * time.Hour),
 	}
 	ready := models.Domain{
-		Domain:     "ready.test",
-		Mode:       models.DomainModePublic,
-		Active:     true,
-		MXVerified: true,
-		CreatedAt:  now.Add(-3 * time.Hour),
+		Domain:          "ready.test",
+		Mode:            models.DomainModePublic,
+		Active:          true,
+		MXVerified:      true,
+		FirstVerifiedAt: &firstVerifiedAt,
+		CreatedAt:       now.Add(-3 * time.Hour),
 	}
-	if err := db.Create(&[]models.Domain{oldPending, oldWildcardPending, freshPending, ready}).Error; err != nil {
+	if err := db.Create(&[]models.Domain{legacyOldUnhealthy, expiredNeverVerified, previouslyVerifiedNowUnhealthy, ready}).Error; err != nil {
 		t.Fatal(err)
 	}
-	if err := RunCleanup(db, now); err != nil {
+	if err := RunPendingDomainCleanup(db, now); err != nil {
 		t.Fatal(err)
 	}
-	for _, domainName := range []string{"old-pending.test", "old-wildcard.test"} {
+	for _, domainName := range []string{"expired-never-verified.test"} {
 		var count int64
 		db.Model(&models.Domain{}).Where("domain = ?", domainName).Count(&count)
 		if count != 0 {
 			t.Fatalf("expected %s to be deleted, count=%d", domainName, count)
 		}
 	}
-	for _, domainName := range []string{"fresh-pending.test", "ready.test"} {
+	for _, domainName := range []string{"legacy-old-unhealthy.test", "previously-verified-unhealthy.test", "ready.test"} {
 		var count int64
 		db.Model(&models.Domain{}).Where("domain = ?", domainName).Count(&count)
 		if count != 1 {
 			t.Fatalf("expected %s to remain, count=%d", domainName, count)
 		}
+	}
+}
+
+func TestRunPendingDomainCleanupKeepsDomainsWithBusinessData(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.AutoMigrate(&models.User{}, &models.Domain{}, &models.Mailbox{}, &models.Message{}, &models.Notification{}); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	expiredAt := now.Add(-time.Minute)
+	user := models.User{
+		Email:        "owner@example.test",
+		PasswordHash: "hash",
+		Role:         models.UserRoleUser,
+		Enabled:      true,
+	}
+	if err := db.Create(&user).Error; err != nil {
+		t.Fatal(err)
+	}
+	withMailbox := models.Domain{Domain: "with-mailbox.test", Mode: models.DomainModePrivate, Active: true, PendingDeleteAt: &expiredAt}
+	withMessage := models.Domain{Domain: "with-message.test", Mode: models.DomainModePrivate, Active: true, PendingDeleteAt: &expiredAt}
+	withoutData := models.Domain{Domain: "without-data.test", Mode: models.DomainModePrivate, Active: true, PendingDeleteAt: &expiredAt}
+	if err := db.Create(&[]models.Domain{withMailbox, withMessage, withoutData}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.First(&withMailbox, "domain = ?", withMailbox.Domain).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.First(&withMessage, "domain = ?", withMessage.Domain).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&models.Mailbox{
+		OwnerID:   user.ID,
+		Email:     "box@with-mailbox.test",
+		LocalPart: "box",
+		Host:      "with-mailbox.test",
+		DomainID:  withMailbox.ID,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&models.Message{
+		ID:              "message-domain",
+		Recipient:       "inbox@with-message.test",
+		RecipientLocal:  "inbox",
+		RecipientDomain: "with-message.test",
+		RootDomain:      "with-message.test",
+		DomainID:        &withMessage.ID,
+		FromAddress:     "sender@example.test",
+		Subject:         "hello",
+		ExpiresAt:       now.Add(time.Hour),
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	if err := RunPendingDomainCleanup(db, now); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, domainName := range []string{"with-mailbox.test", "with-message.test"} {
+		var count int64
+		db.Model(&models.Domain{}).Where("domain = ?", domainName).Count(&count)
+		if count != 1 {
+			t.Fatalf("expected %s to remain, count=%d", domainName, count)
+		}
+	}
+	var deleted int64
+	db.Model(&models.Domain{}).Where("domain = ?", "without-data.test").Count(&deleted)
+	if deleted != 0 {
+		t.Fatalf("expected domain without business data to be deleted, count=%d", deleted)
 	}
 }
 

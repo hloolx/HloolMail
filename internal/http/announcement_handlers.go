@@ -111,7 +111,7 @@ func (h *Handler) adminListAnnouncements(c *gin.Context) {
 		ReaderCount int64 `json:"reader_count"`
 	}
 	var announcements []announcementWithCount
-	if err := h.DB.Unscoped().Model(&models.Announcement{}).
+	if err := h.DB.Model(&models.Announcement{}).
 		Select("announcements.*, (SELECT COUNT(*) FROM announcement_reads WHERE announcement_reads.announcement_id = announcements.id) as reader_count").
 		Order("created_at desc").
 		Find(&announcements).Error; err != nil {

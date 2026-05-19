@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 
-const pages = ['dashboard', 'inbox', 'domain-management', 'api-keys', 'api-docs', 'users', 'admin', 'admin-oauth'] as const;
+const pages = ['dashboard', 'inbox', 'domain-management', 'api-keys', 'api-docs', 'users', 'admin', 'admin-oauth', 'announcements'] as const;
 
 export type Page = (typeof pages)[number];
 export type ThemeMode = 'system' | 'light' | 'dark';

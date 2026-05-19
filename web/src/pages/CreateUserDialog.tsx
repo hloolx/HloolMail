@@ -5,26 +5,21 @@ import { X } from 'lucide-react';
 import type { User } from '../api';
 import { useText } from '../locales';
 import { IconButton, InfoTip, LoadingIndicator } from '../components/shared';
-import { type UserForm, formFromUser, validateEmail } from './userFormHelpers';
+import { type UserForm, emptyCreateForm, validateEmail } from './userFormHelpers';
 
-export function EditUserDialog({
-  currentUser,
-  user,
+export function CreateUserDialog({
   isPending,
   onClose,
   onSubmit
 }: {
-  currentUser: User;
-  user: User;
   isPending: boolean;
   onClose: () => void;
   onSubmit: (form: UserForm, origin: HTMLElement | null) => void;
 }) {
   const text = useText();
-  const [form, setForm] = useState<UserForm>(() => formFromUser(user));
+  const [form, setForm] = useState<UserForm>(() => emptyCreateForm());
   const [emailError, setEmailError] = useState('');
   const submitButtonRef = useRef<HTMLButtonElement | null>(null);
-  const isSelf = currentUser.id === user.id;
 
   useEffect(() => {
     const handler = (event: KeyboardEvent) => {
@@ -47,11 +42,11 @@ export function EditUserDialog({
 
   return createPortal(
     <div className="modal-backdrop" role="presentation" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
-      <section className="modal-panel user-edit-modal" role="dialog" aria-modal="true" aria-labelledby="edit-user-title">
+      <section className="modal-panel user-edit-modal" role="dialog" aria-modal="true" aria-labelledby="create-user-title">
         <div className="modal-header">
           <div>
-            <h2 id="edit-user-title">{text.users.editTitle}</h2>
-            <p>{user.email}</p>
+            <h2 id="create-user-title">{text.users.createTitle}</h2>
+            <p>{text.users.desc}</p>
           </div>
           <IconButton title={text.common.close} onClick={onClose}>
             <X size={16} />
@@ -60,33 +55,20 @@ export function EditUserDialog({
         <form className="user-form" onSubmit={submit}>
           <label className="user-form-field">
             <span>{text.users.email}</span>
-            <input className="input" value={form.email} onChange={(event) => set('email', event.target.value)} />
+            <input className="input" value={form.email} onChange={(event) => set('email', event.target.value)} placeholder="user@example.com" />
             {emailError && <span className="field-error">{emailError}</span>}
           </label>
           <label className="user-form-field">
-            <span>{text.users.newPassword}</span>
-            <input className="input" value={form.password} onChange={(event) => set('password', event.target.value)} placeholder={text.users.passwordPlaceholderEdit} type="password" />
+            <span>{text.users.password}</span>
+            <input className="input" value={form.password} onChange={(event) => set('password', event.target.value)} placeholder={text.users.passwordPlaceholder} type="password" />
           </label>
           <label className="user-form-field">
             <span>{text.users.role}</span>
-            <select className="input" value={form.role} disabled={isSelf} onChange={(event) => set('role', event.target.value as User['role'])}>
+            <select className="input" value={form.role} onChange={(event) => set('role', event.target.value as User['role'])}>
               <option value="user">{text.role.user}</option>
               <option value="admin">{text.role.admin}</option>
             </select>
           </label>
-          <div className="toggle-row">
-            <span className="toggle-row-label">{text.users.enabled}</span>
-            <button
-              type="button"
-              className={`toggle-switch ${form.enabled ? 'on' : ''}`}
-              disabled={isSelf}
-              onClick={() => set('enabled', !form.enabled)}
-              role="switch"
-              aria-checked={form.enabled}
-            >
-              <span className="toggle-switch-knob" />
-            </button>
-          </div>
           <div className="user-limit-grid">
             <label className="user-form-field">
               <span>{text.users.dailyLimit}<InfoTip text={text.users.dailyLimitHint} /></span>
@@ -97,12 +79,12 @@ export function EditUserDialog({
               <input className="input" type="number" min={0} value={form.total_limit} onChange={(event) => set('total_limit', event.target.value)} />
             </label>
           </div>
-          {isSelf && <div className="flex items-center gap-1"><InfoTip text={text.users.selfEditNote} /></div>}
+          <div className="flex items-center gap-1"><InfoTip text={text.users.quotaNote} /></div>
           <div className="modal-actions">
             <button className="btn-secondary" type="button" onClick={onClose}>{text.common.cancel}</button>
             <button ref={submitButtonRef} className="btn-primary" type="submit" disabled={isPending}>
               {isPending && <LoadingIndicator />}
-              {text.users.save}
+              {text.users.createTitle}
             </button>
           </div>
         </form>

@@ -4,7 +4,7 @@ import { copy } from '../lib/clipboard';
 import { extractCode } from '../lib/display';
 import { useCopyState } from '../hooks/useCopyState';
 import { useText } from '../locales';
-import { EmptyState, IconButton } from '../components/shared';
+import { EmptyState, IconButton, LoadingState } from '../components/shared';
 
 function injectApiKeyIntoHtml(html: string, apiKey: string): string {
   if (!apiKey) return html;
@@ -20,7 +20,7 @@ function injectApiKeyIntoHtml(html: string, apiKey: string): string {
 export function MessageDrawer({ message, loading, apiKey }: { message?: MessageDetail; loading: boolean; apiKey: string }) {
   const text = useText();
   const [codeCopied, markCodeCopied] = useCopyState();
-  if (loading) return <aside className="panel mail-detail-panel min-h-96">{text.common.loading}</aside>;
+  if (loading) return <aside className="panel mail-detail-panel min-h-96"><LoadingState label={text.common.loading} /></aside>;
   if (!message) return <aside className="panel mail-detail-panel min-h-96 text-sm text-[var(--muted)]">{text.inbox.selectMessage}</aside>;
   const hasHtml = Boolean(message.html_content?.trim());
   return (

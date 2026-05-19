@@ -31,6 +31,7 @@ export type Domain = {
   mx_auto_retry_next_at?: string;
   mx_auto_retry_last_at?: string;
   mx_auto_retry_count?: number;
+  first_verified_at?: string;
   pending_delete_at?: string;
   last_mx_check_at?: string;
   last_mx_records?: string;

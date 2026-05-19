@@ -1,7 +1,7 @@
 import type { MouseEvent as ReactMouseEvent } from 'react';
 import { toast } from 'sonner';
 import { currentText } from '../locales';
-import { launchSuccessBurst } from './confetti';
+import { notifySuccess } from './feedback';
 import type { SuccessBurstOptions } from './confetti';
 
 export type CopyOptions = SuccessBurstOptions & {
@@ -51,9 +51,9 @@ export async function copy(value: string, options: CopyOptions = {}) {
     toast.error(text.common.copyFailed);
     return false;
   }
-  toast.success(options.toastMessage || text.common.copied);
-  if (burstOptions) {
-    launchSuccessBurst(burstOptions);
-  }
+  notifySuccess(options.toastMessage || text.common.copied, {
+    ...burstOptions,
+    burst: Boolean(burstOptions)
+  });
   return true;
 }

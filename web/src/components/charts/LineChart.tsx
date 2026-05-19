@@ -1,6 +1,7 @@
 import { useRef, useState } from 'react';
 import type React from 'react';
 import { Activity } from 'lucide-react';
+import { LoadingState } from '../shared';
 
 function formatChartLabel(label: string): string {
   // Expects "YYYY-MM-DD" format; extracts "MM-DD"
@@ -32,7 +33,7 @@ export function LineChart({
   if (loading) {
     return (
       <div className="chart-empty chart-loading">
-        <div className="chart-skeleton" aria-busy="true" />
+        <LoadingState label="Loading" />
       </div>
     );
   }

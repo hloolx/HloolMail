@@ -1,6 +1,6 @@
 import { useEffect } from 'react';
+import { AnimatePresence, motion } from 'framer-motion';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { toast } from 'sonner';
 import { api } from './api';
 import type { InstallStatus } from './api';
 import type { MeResponse } from './types';
@@ -10,7 +10,7 @@ import { CenteredState, ErrorBoundary } from './components/shared';
 import { Console } from './components/layout/Console';
 import { InstallPage } from './pages/InstallPage';
 import { LandingPage } from './pages/LandingPage';
-import { launchSuccessBurst } from './lib/confetti';
+import { notifySuccess } from './lib/feedback';
 
 export default function App() {
   return (
@@ -22,17 +22,17 @@ export default function App() {
 
 function AppContent() {
   const queryClient = useQueryClient();
-  const { theme, language } = useAppStore();
+  const { theme, language, page, awayMailCount, awayAnnouncementCount } = useAppStore();
   const text = useText();
-  const installStatus = useQuery({
-    queryKey: ['install-status'],
-    queryFn: () => api<InstallStatus>('/api/install/status'),
-    retry: false
-  });
   const me = useQuery({
     queryKey: ['me'],
     queryFn: () => api<MeResponse>('/api/auth/me'),
-    enabled: Boolean(installStatus.data?.installed),
+    retry: false
+  });
+  const installStatus = useQuery({
+    queryKey: ['install-status'],
+    queryFn: () => api<InstallStatus>('/api/install/status'),
+    enabled: !me.isError && me.data?.installed === false,
     retry: false
   });
   const skipInstall = typeof window !== 'undefined' && sessionStorage.getItem('hlool_skip_install') === '1';
@@ -55,6 +55,16 @@ function AppContent() {
   }, [language]);
 
   useEffect(() => {
+    const unreadCount = awayMailCount + awayAnnouncementCount;
+    const pageTitle = !me.isError && me.data?.installed === false
+      ? text.install.title
+      : me.isError || !me.data?.user
+        ? text.login.title
+        : text.page[page];
+    document.title = `${unreadCount > 0 ? `(${unreadCount}) ` : ''}${pageTitle} | HLOOL Mail`;
+  }, [awayAnnouncementCount, awayMailCount, me.data?.installed, me.data?.user, me.isError, page, text]);
+
+  useEffect(() => {
     if (skipInstall && me.data?.user) {
       sessionStorage.removeItem('hlool_skip_install');
     }
@@ -70,29 +80,41 @@ function AppContent() {
       ? text.profile.boundToast.replace('{provider}', providerName)
       : text.profile.oauthRegistered.replace('{provider}', providerName);
 
-    toast.success(label);
-    launchSuccessBurst({ label });
+    notifySuccess(label);
     queryClient.invalidateQueries({ queryKey: ['me'] });
     queryClient.invalidateQueries({ queryKey: ['user-oauth-identities'] });
   }, [me.data?.user, queryClient, text]);
 
-  if (installStatus.isLoading) {
-    return <CenteredState>{text.loading.checkingInstall}</CenteredState>;
-  }
+  const bootLoading = me.isLoading || (!me.isError && me.data?.installed === false && installStatus.isLoading);
 
-  if (!installStatus.data?.installed) {
-    return <InstallPage status={installStatus.data} onDone={() => queryClient.invalidateQueries({ queryKey: ['install-status'] })} />;
-  }
-
-  if (me.isLoading) {
-    return <CenteredState>{text.loading.restoringLogin}</CenteredState>;
-  }
-
-  if (me.isError || !me.data?.user) {
-    return <LandingPage status={installStatus.data} onDone={() => queryClient.invalidateQueries({ queryKey: ['me'] })} />;
-  }
-
-  return <Console user={me.data.user} />;
+  return (
+    <AnimatePresence mode="wait" initial={false}>
+      {bootLoading ? (
+        <CenteredState key="loader">{text.loading.starting}</CenteredState>
+      ) : (
+        <motion.div
+          key="app-content"
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          transition={{ duration: 0.35, ease: [0.22, 1, 0.36, 1] }}
+        >
+          {!me.isError && me.data?.installed === false ? (
+            <InstallPage
+              status={installStatus.data}
+              onDone={() => {
+                queryClient.invalidateQueries({ queryKey: ['me'] });
+                queryClient.invalidateQueries({ queryKey: ['install-status'] });
+              }}
+            />
+          ) : me.isError || !me.data?.user ? (
+            <LandingPage onDone={() => queryClient.invalidateQueries({ queryKey: ['me'] })} />
+          ) : (
+            <Console user={me.data.user} />
+          )}
+        </motion.div>
+      )}
+    </AnimatePresence>
+  );
 }
 
 type OAuthFeedback = {

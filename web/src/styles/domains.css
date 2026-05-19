@@ -56,7 +56,7 @@
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 0.18rem;
   border: 1px solid var(--border);
-  border-radius: 999px;
+  border-radius: 0.5rem;
   background: color-mix(in srgb, var(--soft) 80%, var(--panel));
   padding: 0.18rem;
 }
@@ -76,13 +76,13 @@
 .segment-choice {
   display: inline-flex;
   min-width: 0;
-  height: 2.25rem;
+  height: 2rem;
   align-items: center;
   justify-content: center;
   gap: 0.38rem;
-  border-radius: 999px;
+  border-radius: 0.4rem;
   color: var(--muted);
-  font-size: 0.86rem;
+  font-size: 0.82rem;
   font-weight: 700;
   transition: background-color 180ms ease, color 180ms ease, box-shadow 180ms ease;
 }

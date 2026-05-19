@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { AlertTriangle, Clock3, Plus, RefreshCw, Trash2, X } from 'lucide-react';
 import { toast } from 'sonner';
@@ -8,9 +8,9 @@ import type { DomainCheckResult } from '../types';
 import { useText } from '../locales';
 import type { Language } from '../store';
 import { useAppStore } from '../store';
-import { dissolveElement } from '../lib/dissolve';
+import { notifySuccess, runDeleteEffect } from '../lib/feedback';
 import { boolBadge, domainModeLabel, formatDomainExpiry } from '../lib/display';
-import { DataTable, EmptyState, IconButton } from '../components/shared';
+import { DataTable, EmptyState, IconButton, InfoTip } from '../components/shared';
 import { AddDomainDialog, formatRelativeTime, invalidateDomainQueries, isCheckReady, pendingDeleteAt } from './AddDomainDialog';
 
 export function DomainManagementPage({ user }: { user: User }) {
@@ -19,6 +19,7 @@ export function DomainManagementPage({ user }: { user: User }) {
   const language = useAppStore((state) => state.language);
   const [addOpen, setAddOpen] = useState(false);
   const [confirmDeleteId, setConfirmDeleteId] = useState<number | null>(null);
+  const feedbackOriginRef = useRef<HTMLElement | null>(null);
   const domains = useQuery({ queryKey: ['domains-all'], queryFn: () => api<Domain[]>('/api/domains'), retry: false, staleTime: 30_000 });
   const managedDomains = (domains.data || []).filter(isReadyDomain);
   const waitingDomains = (domains.data || []).filter((domain) => isWaitingDomain(domain) && canDeleteWaitingDomain(domain, user));
@@ -50,34 +51,46 @@ export function DomainManagementPage({ user }: { user: User }) {
     onSuccess: ({ total, failed, success }) => {
       invalidateDomainQueries(queryClient);
       if (total === 0) {
-        toast.success(text.domains.refreshNone);
+        notifySuccess(text.domains.refreshNone, { origin: feedbackOriginRef.current });
       } else if (failed > 0) {
         toast.error(text.domains.refreshPartial.replace('{success}', String(success)).replace('{total}', String(total)));
       } else {
-        toast.success(text.domains.refreshAllDone.replace('{total}', String(total)));
+        notifySuccess(text.domains.refreshAllDone.replace('{total}', String(total)), { origin: feedbackOriginRef.current });
       }
+      feedbackOriginRef.current = null;
     },
-    onError: (error) => toast.error(error.message)
+    onError: (error) => {
+      feedbackOriginRef.current = null;
+      toast.error(error.message);
+    }
   });
   const updateDomain = useMutation({
     mutationFn: ({ id, mode }: { id: number; mode: Domain['mode'] }) => patchJSON(`/api/domains/${id}`, { mode }),
     onSuccess: () => {
       invalidateDomainQueries(queryClient);
-      toast.success(text.domains.domainUpdated);
+      notifySuccess(text.domains.domainUpdated, { origin: feedbackOriginRef.current });
+      feedbackOriginRef.current = null;
     },
-    onError: (error) => toast.error(error.message)
+    onError: (error) => {
+      feedbackOriginRef.current = null;
+      toast.error(error.message);
+    }
   });
   const checkWaitingMX = useMutation({
     mutationFn: (domain: string) => postJSON<DomainCheckResult>('/api/domains/check-mx', { domain }),
     onSuccess: (result) => {
       invalidateDomainQueries(queryClient);
       if (isCheckReady(result)) {
-        toast.success(result.check_message || text.domains.mxWorkingToast);
+        notifySuccess(result.check_message || text.domains.mxWorkingToast, { origin: feedbackOriginRef.current });
       } else {
         toast.error(result.check_message || text.domains.mxNotReadyToast);
       }
+      feedbackOriginRef.current = null;
     },
-    onError: (error) => toast.error(error.message)
+    onError: (error) => {
+      feedbackOriginRef.current = null;
+      toast.error(error.message);
+    }
   });
   const deleteWaitingDomain = useMutation({
     mutationFn: (domain: Domain) => api(`/api/domains/${domain.id}`, { method: 'DELETE' }),
@@ -86,7 +99,7 @@ export function DomainManagementPage({ user }: { user: User }) {
       invalidateDomainQueries(queryClient);
       queryClient.invalidateQueries({ queryKey: ['admin-stats'] });
       queryClient.invalidateQueries({ queryKey: ['admin-domain-health'] });
-      toast.success(text.domains.domainDeleted);
+      notifySuccess(text.domains.domainDeleted, { burst: false });
     },
     onError: (error) => {
       setConfirmDeleteId(null);
@@ -99,9 +112,13 @@ export function DomainManagementPage({ user }: { user: User }) {
       invalidateDomainQueries(queryClient);
       queryClient.invalidateQueries({ queryKey: ['admin-stats'] });
       queryClient.invalidateQueries({ queryKey: ['admin-domain-health'] });
-      toast.success(text.domains.reactivated);
+      notifySuccess(text.domains.reactivated, { origin: feedbackOriginRef.current });
+      feedbackOriginRef.current = null;
     },
-    onError: (error) => toast.error(error.message)
+    onError: (error) => {
+      feedbackOriginRef.current = null;
+      toast.error(error.message);
+    }
   });
 
   // Reset delete confirmation when data reloads (e.g. after another delete)
@@ -114,15 +131,17 @@ export function DomainManagementPage({ user }: { user: User }) {
       <section className="panel">
         <div className="panel-header">
           <div>
-            <h2>{text.domains.manageTitle}</h2>
-            <p>{text.domains.manageDesc}</p>
+            <h2>{text.domains.manageTitle}<InfoTip text={text.domains.manageDesc} /></h2>
           </div>
           <div className="domain-management-actions">
             <button className="btn-primary" onClick={() => setAddOpen(true)}>
               <Plus size={16} />
               {text.domains.addButton}
             </button>
-            <IconButton title={text.domains.refreshAll} onClick={() => refreshAllDomains.mutate()} disabled={refreshAllDomains.isPending || !managedDomains.length} className={refreshAllDomains.isPending ? 'is-pending' : ''}>
+            <IconButton title={text.domains.refreshAll} onClick={(event) => {
+              feedbackOriginRef.current = event.currentTarget;
+              refreshAllDomains.mutate();
+            }} disabled={refreshAllDomains.isPending || !managedDomains.length} className={refreshAllDomains.isPending ? 'is-pending' : ''}>
               <RefreshCw size={16} />
             </IconButton>
           </div>
@@ -133,12 +152,13 @@ export function DomainManagementPage({ user }: { user: User }) {
           <EmptyState label={text.domains.domainsError} />
         ) : (
           <DataTable
+            ariaLabel={text.domains.manageTitle}
             columns={[
-              { key: 'domain', header: text.domains.domain },
-              { key: 'effective', header: text.domains.effective },
-              { key: 'mode', header: text.domains.mode },
-              { key: 'expiry', header: text.domains.expiry },
-              { key: 'mail', header: text.domains.mail },
+              { key: 'domain', header: text.domains.domain, minWidth: '14rem' },
+              { key: 'effective', header: text.domains.effective, align: 'center', width: '8rem' },
+              { key: 'mode', header: text.domains.mode, align: 'center', width: '10rem' },
+              { key: 'expiry', header: text.domains.expiry, width: '8rem' },
+              { key: 'mail', header: text.domains.mail, align: 'right', width: '6rem' },
             ]}
             rows={managedDomains.map((domain) => {
               const canEdit = user.role === 'admin' || domain.owner_id === user.id;
@@ -148,10 +168,16 @@ export function DomainManagementPage({ user }: { user: User }) {
                   <span className="domain-name-cell font-medium" style={{ display: 'inline-block', maxWidth: '100%' }}>{domain.domain}</span>,
                   domainHealthBadge(domain, text),
                   <div className="segmented-control">
-                    <button type="button" className={`segment-choice ${domain.mode === 'private' ? 'segment-choice-active' : ''}`} style={{ fontSize: '0.75rem' }} disabled={!canEdit} onClick={() => updateDomain.mutate({ id: domain.id, mode: 'private' })}>
+                    <button type="button" className={`segment-choice ${domain.mode === 'private' ? 'segment-choice-active' : ''}`} style={{ fontSize: '0.75rem' }} disabled={!canEdit} onClick={(event) => {
+                      feedbackOriginRef.current = event.currentTarget;
+                      updateDomain.mutate({ id: domain.id, mode: 'private' });
+                    }}>
                       {text.domains.modePrivate}
                     </button>
-                    <button type="button" className={`segment-choice ${domain.mode === 'public' ? 'segment-choice-active' : ''}`} style={{ fontSize: '0.75rem' }} disabled={!canEdit} onClick={() => updateDomain.mutate({ id: domain.id, mode: 'public' })}>
+                    <button type="button" className={`segment-choice ${domain.mode === 'public' ? 'segment-choice-active' : ''}`} style={{ fontSize: '0.75rem' }} disabled={!canEdit} onClick={(event) => {
+                      feedbackOriginRef.current = event.currentTarget;
+                      updateDomain.mutate({ id: domain.id, mode: 'public' });
+                    }}>
                       {text.domains.modePublic}
                     </button>
                   </div>,
@@ -168,34 +194,42 @@ export function DomainManagementPage({ user }: { user: User }) {
         <section className="panel domain-waiting-panel">
           <div className="panel-header">
             <div>
-              <h2>{text.domains.waitingTitle}</h2>
-              <p>{text.domains.waitingDesc}</p>
+              <h2>{text.domains.waitingTitle}<InfoTip text={text.domains.waitingDesc} /></h2>
             </div>
           </div>
           <DataTable
+            ariaLabel={text.domains.waitingTitle}
             columns={[
-              { key: 'domain', header: text.domains.domain },
-              { key: 'status', header: text.domains.status },
-              { key: 'mode', header: text.domains.mode },
-              { key: 'autoDelete', header: text.domains.autoDelete },
-              { key: 'actions', header: text.domains.actions },
+              { key: 'domain', header: text.domains.domain, minWidth: '14rem' },
+              { key: 'status', header: text.domains.status, align: 'center', width: '12rem' },
+              { key: 'mode', header: text.domains.mode, width: '8rem' },
+              { key: 'autoDelete', header: text.domains.autoDelete, minWidth: '12rem' },
+              { key: 'actions', header: text.domains.actions, align: 'right', minWidth: '13rem' },
             ]}
             rows={waitingDomains.map((domain) => {
               const isConfirming = confirmDeleteId === domain.id;
               const busy = checkWaitingMX.isPending || deleteWaitingDomain.isPending;
+              const pendingDelete = pendingDeleteAt(domain);
+              const protectedByVerification = Boolean(domain.first_verified_at);
               return {
                 key: domain.id,
                 cells: [
                   <span className="domain-name-cell font-medium" style={{ display: 'inline-block', maxWidth: '100%' }}>{domain.domain}</span>,
                   <span className={`status-pill domain-status-tooltip-wrap ${domain.mx_verified ? 'status-warn' : 'status-bad'}`}>
                     {domain.mx_verified ? <Clock3 size={13} /> : <X size={13} />}
-                    {domain.mx_verified ? text.domains.randomSubdomainNotReady : text.domains.mxNotReady}
-                    <DomainStatusTooltip domain={domain} />
+                    {protectedByVerification ? text.domains.dnsIssue : (domain.mx_verified ? text.domains.randomSubdomainNotReady : text.domains.mxNotReady)}
+                    <InfoTip text={domainStatusInfo(domain)} />
                   </span>,
                   domainModeLabel(domain.mode, language),
-                  <span title={formatDateTime(pendingDeleteAt(domain), language)}>{formatAutoDeleteTime(domain, text.domains.aboutToDelete)}</span>,
+                  <span>
+                    {pendingDelete ? formatAutoDeleteTime(domain, text.domains.aboutToDelete) : text.domains.dnsIssueNeedsAction}
+                    {pendingDelete && <InfoTip text={formatDateTime(pendingDelete, language)} />}
+                  </span>,
                   <div className="table-actions">
-                    <button className="btn-ghost" onClick={() => checkWaitingMX.mutate(domain.domain)} disabled={busy}>
+                    <button className="btn-ghost" onClick={(event) => {
+                      feedbackOriginRef.current = event.currentTarget;
+                      checkWaitingMX.mutate(domain.domain);
+                    }} disabled={busy}>
                       {text.domains.recheck}
                     </button>
                     {isConfirming ? (
@@ -205,7 +239,7 @@ export function DomainManagementPage({ user }: { user: User }) {
                         </button>
                         <button className="btn-ghost" aria-label={text.domains.deleteConfirm} onClick={async (e) => {
                           const row = (e.currentTarget as HTMLElement).closest('tr') as HTMLElement | null;
-                          if (row) await dissolveElement(row, { duration: 400, blockSize: 4, direction: 'out' });
+                          await runDeleteEffect(row);
                           deleteWaitingDomain.mutate(domain);
                         }} disabled={deleteWaitingDomain.isPending}>
                           <Trash2 size={14} />
@@ -229,17 +263,17 @@ export function DomainManagementPage({ user }: { user: User }) {
         <section className="panel">
           <div className="panel-header">
             <div>
-              <h2>{text.domains.inactiveTitle}</h2>
-              <p>{text.domains.inactiveDesc}</p>
+              <h2>{text.domains.inactiveTitle}<InfoTip text={text.domains.inactiveDesc} /></h2>
             </div>
           </div>
           <DataTable
+            ariaLabel={text.domains.inactiveTitle}
             columns={[
-              { key: 'domain', header: text.domains.domain },
-              { key: 'status', header: text.domains.status },
-              { key: 'mode', header: text.domains.mode },
-              { key: 'expiry', header: text.domains.expiry },
-              { key: 'actions', header: text.domains.actions },
+              { key: 'domain', header: text.domains.domain, minWidth: '14rem' },
+              { key: 'status', header: text.domains.status, align: 'center', width: '8rem' },
+              { key: 'mode', header: text.domains.mode, width: '8rem' },
+              { key: 'expiry', header: text.domains.expiry, width: '8rem' },
+              { key: 'actions', header: text.domains.actions, align: 'right', width: '9rem' },
             ]}
             rows={inactiveDomains.map((domain) => ({
               key: domain.id,
@@ -253,7 +287,10 @@ export function DomainManagementPage({ user }: { user: User }) {
                 formatDomainExpiry(domain.domain_expires_at, language),
                 <button
                   className="btn-ghost"
-                  onClick={() => reactivateDomain.mutate(domain)}
+                  onClick={(event) => {
+                    feedbackOriginRef.current = event.currentTarget;
+                    reactivateDomain.mutate(domain);
+                  }}
                   disabled={reactivateDomain.isPending}
                 >
                   <RefreshCw size={14} />
@@ -294,43 +331,27 @@ function domainHealthBadge(domain: Domain, text: ReturnType<typeof useText>) {
       <span className="status-pill status-warn domain-status-tooltip-wrap">
         <AlertTriangle size={13} />
         {text.domains.expiring}
-        <DomainStatusTooltip domain={domain} />
+        <InfoTip text={domainStatusInfo(domain)} />
       </span>
     );
   }
   return (
     <span className="domain-status-tooltip-wrap">
       {boolBadge(true)}
-      <DomainStatusTooltip domain={domain} />
+      <InfoTip text={domainStatusInfo(domain)} />
     </span>
   );
 }
 
-function DomainStatusTooltip({ domain }: { domain: Domain }) {
-  const language = useAppStore((state) => state.language);
-  if (!domain.last_mx_check_at && !domain.last_check_message) return null;
-  return (
-    <div className="domain-status-tooltip">
-      {domain.last_mx_check_at && (
-        <div className="tooltip-row">
-          <span className="tooltip-label">{language === 'en-US' ? 'Last check' : '上次检测'}</span>
-          <span>{formatDateTime(domain.last_mx_check_at, language)}</span>
-        </div>
-      )}
-      {domain.last_check_message && (
-        <div className="tooltip-row">
-          <span className="tooltip-label">{language === 'en-US' ? 'Message' : '信息'}</span>
-          <span>{domain.last_check_message}</span>
-        </div>
-      )}
-      {domain.mx_verified && (
-        <div className="tooltip-row tooltip-row-ok">
-          <span className="tooltip-label">{language === 'en-US' ? 'Status' : '状态'}</span>
-          <span>{language === 'en-US' ? 'MX verified' : 'MX 已生效'}</span>
-        </div>
-      )}
-    </div>
-  );
+function domainStatusInfo(domain: Domain) {
+  const parts: string[] = [];
+  if (domain.last_mx_check_at) {
+    parts.push(`${formatDateTime(domain.last_mx_check_at)}`);
+  }
+  if (domain.last_check_message) {
+    parts.push(domain.last_check_message);
+  }
+  return parts.join(' · ');
 }
 
 function formatDateTime(value?: string, language?: Language) {
@@ -340,4 +361,3 @@ function formatDateTime(value?: string, language?: Language) {
   const locale = language === 'en-US' ? 'en-US' : 'zh-CN';
   return date.toLocaleString(locale, { hour12: false, month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
 }
-

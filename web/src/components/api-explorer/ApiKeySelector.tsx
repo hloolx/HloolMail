@@ -1,10 +1,10 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { Loader2 } from 'lucide-react';
 import { toast } from 'sonner';
 import type { APIKey } from '../../api';
 import { api } from '../../api';
 import { useText } from '../../locales';
+import { LoadingIndicator } from '../shared';
 
 export type ApiKeySelectorProps = {
   value: string;
@@ -125,7 +125,7 @@ export function ApiKeySelector({ value, onChange, placeholder }: ApiKeySelectorP
           />
           {isLoading && (
             <span className="api-key-selector-loader" aria-hidden="true">
-              <Loader2 size={16} className="animate-spin" />
+              <LoadingIndicator />
             </span>
           )}
         </div>
@@ -155,8 +155,7 @@ export function ApiKeySelector({ value, onChange, placeholder }: ApiKeySelectorP
 
       {revealLoadingId && (
         <p className="api-key-selector-note api-key-selector-loading">
-          <Loader2 size={14} className="animate-spin" />
-          {text.apiDocs.apiKeyRevealing}
+          <LoadingIndicator size={14} label={text.apiDocs.apiKeyRevealing} />
         </p>
       )}
       {showUnavailable && (

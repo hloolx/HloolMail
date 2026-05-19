@@ -1,16 +1,28 @@
-import { useState, useRef } from 'react';
+import { useState, useRef, useEffect, useCallback } from 'react';
 import type { FormEvent } from 'react';
 import { useMutation, useQuery } from '@tanstack/react-query';
-import { ArrowRight, Check, CircleUserRound, Code2, Github, Globe2, Inbox, KeyRound, MailPlus, Network, Share2, ShieldCheck, Sparkles, Terminal, Users, Zap } from 'lucide-react';
+import { ArrowRight, Check, CircleUserRound, Code2, Fingerprint, Github, Globe2, Inbox, KeyRound, MailPlus, Network, Share2, ShieldCheck, Sparkles, Terminal, Users, Zap } from 'lucide-react';
 import { toast } from 'sonner';
 import type { InstallStatus, User } from '../api';
 import { api, postJSON } from '../api';
-import type { OAuthProvider } from '../types';
+import type { OAuthProvider, PublicLoginSettings } from '../types';
 import { useText } from '../locales';
 import { useCountUp } from '../hooks/useCountUp';
 import { HeaderSettings } from '../components/layout/HeaderSettings';
 import { AppLogo } from '../components/shared/AppLogo';
-import { launchSuccessBurst } from '../lib/confetti';
+import { InfoTip, LoadingIndicator } from '../components/shared';
+import { notifySuccess } from '../lib/feedback';
+import { loginWithPasskey } from '../lib/passkeys';
+
+declare global {
+  interface Window {
+    turnstile?: {
+      render: (container: string | HTMLElement, options: { sitekey: string; callback?: (token: string) => void; 'error-callback'?: () => void; 'expired-callback'?: () => void; theme?: string }) => string;
+      reset: (widgetId: string) => void;
+      remove: (widgetId: string) => void;
+    };
+  }
+}
 
 export function LandingPage({ status, onDone }: { status?: InstallStatus; onDone: () => void }) {
   const text = useText();
@@ -28,6 +40,7 @@ export function LandingPage({ status, onDone }: { status?: InstallStatus; onDone
     .replace('{domains}', hostedDomains.toLocaleString());
   const authPanelRef = useRef<HTMLElement>(null);
   const authSubmitRef = useRef<HTMLButtonElement>(null);
+  const passkeySubmitRef = useRef<HTMLButtonElement>(null);
   const [mode, setMode] = useState<'login' | 'register'>('login');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -38,13 +51,75 @@ export function LandingPage({ status, onDone }: { status?: InstallStatus; onDone
     retry: false,
     staleTime: 60_000
   });
+  const loginSettings = useQuery({
+    queryKey: ['login-settings'],
+    queryFn: () => api<PublicLoginSettings>('/api/auth/login-settings'),
+    retry: false,
+    staleTime: 60_000
+  });
+  const [turnstileToken, setTurnstileToken] = useState('');
+  const turnstileWidgetId = useRef<string | null>(null);
+  const turnstileContainerRef = useRef<HTMLDivElement>(null);
+
+  const turnstileEnabled = loginSettings.data?.turnstile_enabled && loginSettings.data?.turnstile_site_key;
+  const turnstileSiteKey = loginSettings.data?.turnstile_site_key || '';
+  const passkeyEnabled = !!loginSettings.data?.passkey_enabled;
+
+  const resetTurnstile = useCallback(() => {
+    if (turnstileWidgetId.current && window.turnstile) {
+      window.turnstile.reset(turnstileWidgetId.current);
+    }
+    setTurnstileToken('');
+  }, []);
+
+  useEffect(() => {
+    if (!turnstileEnabled) return;
+    if (document.querySelector('script[src*="turnstile"]')) {
+      if (window.turnstile && turnstileContainerRef.current && !turnstileWidgetId.current) {
+        turnstileWidgetId.current = window.turnstile.render(turnstileContainerRef.current, {
+          sitekey: turnstileSiteKey,
+          callback: (token: string) => setTurnstileToken(token),
+          'error-callback': () => setTurnstileToken(''),
+          'expired-callback': () => setTurnstileToken(''),
+          theme: 'auto'
+        });
+      }
+      return;
+    }
+    const script = document.createElement('script');
+    script.src = 'https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit';
+    script.async = true;
+    script.defer = true;
+    script.onload = () => {
+      if (window.turnstile && turnstileContainerRef.current) {
+        turnstileWidgetId.current = window.turnstile.render(turnstileContainerRef.current, {
+          sitekey: turnstileSiteKey,
+          callback: (token: string) => setTurnstileToken(token),
+          'error-callback': () => setTurnstileToken(''),
+          'expired-callback': () => setTurnstileToken(''),
+          theme: 'auto'
+        });
+      }
+    };
+    document.head.appendChild(script);
+    return () => {
+      if (turnstileWidgetId.current && window.turnstile) {
+        window.turnstile.remove(turnstileWidgetId.current);
+        turnstileWidgetId.current = null;
+      }
+    };
+  }, [turnstileEnabled, turnstileSiteKey]);
+
   const login = useMutation({
-    mutationFn: () => postJSON<User>('/api/auth/login', { email, password }),
+    mutationFn: () => postJSON<User>('/api/auth/login', { email, password, turnstile_token: turnstileToken }),
     onSuccess: () => {
-      toast.success(text.toast.loginDone);
+      notifySuccess(text.toast.loginDone, { origin: authSubmitRef.current });
       onDone();
     },
-    onError: (error) => toast.error(error.message)
+    onError: (error) => {
+      resetTurnstile();
+      toast.error(error.message);
+    }
   });
   const register = useMutation({
     mutationFn: () => {
@@ -54,17 +129,30 @@ export function LandingPage({ status, onDone }: { status?: InstallStatus; onDone
       if (password !== confirmPassword) {
         throw new Error(text.login.passwordMismatch);
       }
-      return postJSON<User>('/api/auth/register', { email, password });
+      return postJSON<User>('/api/auth/register', { email, password, turnstile_token: turnstileToken });
     },
     onSuccess: () => {
-      launchSuccessBurst({ origin: authSubmitRef.current, label: text.login.registerDone });
-      toast.success(text.login.registerDone);
+      notifySuccess(text.login.registerDone, { origin: authSubmitRef.current });
       onDone();
     },
-    onError: (error) => toast.error(error.message)
+    onError: (error) => {
+      resetTurnstile();
+      toast.error(error.message);
+    }
+  });
+  const passkeyLogin = useMutation({
+    mutationFn: () => {
+      if (!email.trim()) throw new Error(text.login.emailRequired);
+      return loginWithPasskey(email.trim());
+    },
+    onSuccess: () => {
+      notifySuccess(text.toast.loginDone, { origin: passkeySubmitRef.current });
+      onDone();
+    },
+    onError: (error) => toast.error(error.message),
   });
   const isRegister = mode === 'register';
-  const pending = login.isPending || register.isPending;
+  const pending = login.isPending || register.isPending || passkeyLogin.isPending;
   const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (isRegister) {
@@ -117,10 +205,10 @@ export function LandingPage({ status, onDone }: { status?: InstallStatus; onDone
 
         <section id="auth-panel" ref={authPanelRef} className="auth-panel" aria-label={isRegister ? text.login.registerTitle : text.login.title}>
           <div className="auth-tabs" role="tablist">
-            <button className={!isRegister ? 'auth-tab-active' : ''} type="button" role="tab" aria-selected={!isRegister} tabIndex={!isRegister ? 0 : -1} onClick={() => setMode('login')}>
+            <button className={!isRegister ? 'auth-tab-active' : ''} type="button" role="tab" aria-selected={!isRegister} tabIndex={!isRegister ? 0 : -1} onClick={() => { setMode('login'); resetTurnstile(); }}>
               {text.login.loginTab}
             </button>
-            <button className={isRegister ? 'auth-tab-active' : ''} type="button" role="tab" aria-selected={isRegister} tabIndex={isRegister ? 0 : -1} onClick={() => setMode('register')}>
+            <button className={isRegister ? 'auth-tab-active' : ''} type="button" role="tab" aria-selected={isRegister} tabIndex={isRegister ? 0 : -1} onClick={() => { setMode('register'); resetTurnstile(); }}>
               {text.login.registerTab}
             </button>
           </div>
@@ -133,20 +221,32 @@ export function LandingPage({ status, onDone }: { status?: InstallStatus; onDone
             <input id="auth-email" className="input" value={email} onChange={(event) => setEmail(event.target.value)} placeholder={text.login.email} type="email" autoComplete="email" />
             <label htmlFor="auth-password" className="sr-only">{text.login.password}</label>
             <input id="auth-password" className="input" value={password} onChange={(event) => setPassword(event.target.value)} placeholder={text.login.password} type="password" autoComplete={isRegister ? 'new-password' : 'current-password'} />
-            {isRegister && (
-              <span className="auth-password-hint">{text.login.passwordHint}</span>
-            )}
+            {isRegister && <InfoTip text={text.login.passwordHint} />}
             <div className={`auth-confirm-wrapper${isRegister ? '' : ' auth-confirm-collapsed'}`}>
               <label htmlFor="auth-confirm-password" className="sr-only">{text.login.confirmPassword}</label>
               <input id="auth-confirm-password" className="input" value={confirmPassword} onChange={(event) => setConfirmPassword(event.target.value)} placeholder={text.login.confirmPassword} type="password" autoComplete="new-password" />
             </div>
-            <button ref={authSubmitRef} className="btn-primary auth-submit" type="submit" disabled={pending}>
+            {turnstileEnabled && (
+              <div ref={turnstileContainerRef} style={{ display: 'flex', justifyContent: 'center', minHeight: 65 }} />
+            )}
+            <button ref={authSubmitRef} className="btn-primary auth-submit" type="submit" disabled={pending || (!!turnstileEnabled && !turnstileToken)}>
               {pending ? (
-                <span className="auth-submit-loading">{isRegister ? text.login.registerPending : text.login.loginPending}</span>
+                <LoadingIndicator className="auth-submit-loading" label={isRegister ? text.login.registerPending : text.login.loginPending} />
               ) : (
                 <>{isRegister ? text.login.registerSubmit : text.login.submit}<ArrowRight size={16} /></>
               )}
             </button>
+            {!isRegister && passkeyEnabled && (
+              <button
+                className="btn-secondary auth-submit"
+                type="button"
+                ref={passkeySubmitRef}
+                disabled={pending}
+                onClick={() => passkeyLogin.mutate()}
+              >
+                {passkeyLogin.isPending ? <LoadingIndicator className="auth-submit-loading" label={text.login.passkeyPending} /> : <><Fingerprint size={16} />{text.login.passkeySubmit}</>}
+              </button>
+            )}
           </form>
           {(oauthProviders.data || []).length > 0 && (
             <div className="oauth-login-box">

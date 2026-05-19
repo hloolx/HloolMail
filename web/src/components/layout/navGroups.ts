@@ -1,4 +1,4 @@
-import { BookOpen, Globe2, Inbox, KeyRound, LayoutDashboard, LogIn, Shield, UserCog } from 'lucide-react';
+import { BookOpen, Globe2, Inbox, KeyRound, LayoutDashboard, LogIn, Megaphone, Shield, UserCog } from 'lucide-react';
 import type { User } from '../../api';
 import { currentText } from '../../locales';
 import type { Page } from '../../store';
@@ -34,7 +34,8 @@ export function navGroups(user: User, text = currentText()): { title: string; it
       items: [
         { page: 'users' as Page, label: text.page.users, icon: UserCog },
         { page: 'admin-oauth' as Page, label: text.page['admin-oauth'], icon: LogIn },
-        { page: 'admin' as Page, label: text.page.admin, icon: Shield }
+        { page: 'admin' as Page, label: text.page.admin, icon: Shield },
+        { page: 'announcements' as Page, label: text.page.announcements, icon: Megaphone }
       ]
     });
   }

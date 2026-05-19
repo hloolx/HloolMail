@@ -1,4 +1,4 @@
-import type { Domain, PublicDomainItem, User } from '../api';
+import type { Domain, PaginatedResponse, PublicDomainItem, User } from '../api';
 
 export type Stats = {
   messages: number;
@@ -135,10 +135,7 @@ export type AuditLog = {
   created_at: string;
 };
 
-export type AuditLogPage = {
-  items: AuditLog[];
-  next_cursor?: string;
-};
+export type AuditLogPage = PaginatedResponse<AuditLog>;
 
 export type OAuthProvider = {
   provider: 'github' | 'linuxdo' | string;
@@ -214,4 +211,21 @@ export type BatchDomainResponse = {
 export type MeResponse = {
   installed: boolean;
   user: User | null;
+};
+
+export type LoginSettings = {
+  id: number;
+  turnstile_enabled: boolean;
+  turnstile_site_key: string;
+  turnstile_secret_key: string;
+  passkey_enabled: boolean;
+  updated_at?: string;
+};
+
+export type PublicLoginSettings = {
+  installed: boolean;
+  turnstile_enabled?: boolean;
+  turnstile_site_key?: string;
+  passkey_enabled?: boolean;
+  oauth_providers?: OAuthProvider[];
 };

@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import type { MouseEvent } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Copy, KeyRound, Loader2, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
@@ -6,7 +7,7 @@ import type { APIKey, User } from '../api';
 import { api, patchJSON, postJSON } from '../api';
 import { useText } from '../locales';
 import { copy } from '../lib/clipboard';
-import { dissolveElement } from '../lib/dissolve';
+import { notifySuccess, runDeleteEffect } from '../lib/feedback';
 import { formatAPIKeyExpiry, relativeTime } from '../lib/display';
 import { ConfirmModal, DataTable, IconButton, QuotaThermometer } from '../components/shared';
 import { CreateAPIKeyDialog } from './CreateAPIKeyDialog';
@@ -21,6 +22,7 @@ export function APIKeysPage({ user }: { user: User }) {
   const [selectedKeyIds, setSelectedKeyIds] = useState<number[]>([]);
   const createTriggerRef = useRef<HTMLButtonElement | null>(null);
   const deleteTriggerRef = useRef<HTMLButtonElement | null>(null);
+  const feedbackOriginRef = useRef<HTMLElement | null>(null);
   const keys = useQuery({ queryKey: ['api-keys'], queryFn: () => api<APIKey[]>('/api/api-keys'), retry: false, staleTime: 30_000 });
   const keyList = keys.data || [];
   const selectedKeys = keyList.filter((key) => selectedKeyIds.includes(key.id));
@@ -38,9 +40,13 @@ export function APIKeysPage({ user }: { user: User }) {
     mutationFn: (key: APIKey) => patchJSON(`/api/api-keys/${key.id}`, { enabled: !key.enabled }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['api-keys'] });
-      toast.success(text.toast.apiKeyUpdated);
+      notifySuccess(text.toast.apiKeyUpdated, { origin: feedbackOriginRef.current });
+      feedbackOriginRef.current = null;
     },
-    onError: (error) => toast.error(error.message)
+    onError: (error) => {
+      feedbackOriginRef.current = null;
+      toast.error(error.message);
+    }
   });
   const deleteKeys = useMutation({
     mutationFn: (targets: APIKey[]) =>
@@ -49,16 +55,16 @@ export function APIKeysPage({ user }: { user: User }) {
       setDeleteTargets([]);
       setSelectedKeyIds([]);
       queryClient.invalidateQueries({ queryKey: ['api-keys'] });
-      toast.success(text.toast.apiKeyDeleted);
+      notifySuccess(text.toast.apiKeyDeleted, { burst: false });
     },
     onError: (error) => toast.error(error.message)
   });
 
-  const handleCopyKey = async (key: APIKey) => {
+  const handleCopyKey = async (key: APIKey, event: MouseEvent<Element>) => {
     setCopyingKeyId(key.id);
     try {
       const data = await postJSON<{ plain_key: string }>(`/api/api-keys/${key.id}/reveal`, {});
-      await copy(data.plain_key, { celebrate: true, label: text.apiKeys.copiedSecret, toastMessage: text.apiKeys.copiedSecret });
+      await copy(data.plain_key, { celebrate: true, event, label: text.apiKeys.copiedSecret, toastMessage: text.apiKeys.copiedSecret });
     } catch (error) {
       toast.error(error instanceof Error ? error.message : text.apiKeys.copyUnavailable);
     } finally {
@@ -104,11 +110,14 @@ export function APIKeysPage({ user }: { user: User }) {
         </div>
         <p className="api-key-helper">{user.role === 'admin' ? text.apiKeys.adminDesc : text.apiKeys.userDesc}</p>
         <DataTable
+          ariaLabel={text.apiKeys.title}
           columns={[
             {
               key: 'select',
+              align: 'center',
+              width: '5.5rem',
               header: (
-                <label className="table-select" title={text.apiKeys.selectAll}>
+                <label className="table-select">
                   <input
                     type="checkbox"
                     checked={allKeysSelected}
@@ -124,22 +133,23 @@ export function APIKeysPage({ user }: { user: User }) {
                 </label>
               )
             },
-            { key: 'name', header: text.apiKeys.name },
-            { key: 'key', header: text.apiKeys.key },
-            { key: 'enabled', header: text.apiKeys.enabled },
-            { key: 'today', header: text.apiKeys.today },
-            { key: 'total', header: text.apiKeys.total },
-            { key: 'expires', header: text.apiKeys.expires },
-            { key: 'last-used', header: text.apiKeys.lastUsed },
-            { key: 'actions', header: text.apiKeys.actions }
+            { key: 'name', header: text.apiKeys.name, minWidth: '9rem' },
+            { key: 'key', header: text.apiKeys.key, minWidth: '13rem' },
+            { key: 'enabled', header: text.apiKeys.enabled, align: 'center', width: '6rem' },
+            { key: 'today', header: text.apiKeys.today, align: 'center', width: '8rem' },
+            { key: 'total', header: text.apiKeys.total, align: 'center', width: '8rem' },
+            { key: 'expires', header: text.apiKeys.expires, width: '8rem' },
+            { key: 'last-used', header: text.apiKeys.lastUsed, width: '8rem' },
+            { key: 'actions', header: text.apiKeys.actions, align: 'right', width: '5rem' }
           ]}
           emptyLabel={keys.isLoading ? text.common.loading : text.apiKeys.empty}
           rows={keyList.map((key) => {
             const maskedKey = maskAPIKey(key.key_prefix);
             return {
               key: key.id,
+              selected: selectedKeyIds.includes(key.id),
               cells: [
-                <label className="table-select" title={text.apiKeys.selectKey}>
+                <label className="table-select">
                   <input
                     type="checkbox"
                     checked={selectedKeyIds.includes(key.id)}
@@ -150,17 +160,18 @@ export function APIKeysPage({ user }: { user: User }) {
                 </label>,
                 key.name,
                 <button
-                  onClick={(event) => { event.preventDefault(); handleCopyKey(key); }}
+                  onClick={(event) => { event.preventDefault(); handleCopyKey(key, event); }}
                   disabled={copyingKeyId === key.id}
                   className={`key-copy ${copyingKeyId === key.id ? 'key-copy-loading' : ''}`}
-                  title={text.apiKeys.copySecret}
                 >
                   <span className="key-copy-mask">{maskedKey}</span>
                   {copyingKeyId === key.id ? <Loader2 size={13} className="animate-spin" /> : <Copy size={13} />}
                 </button>,
-                <button className={`key-switch ${key.enabled ? 'key-switch-on' : 'key-switch-off'}`} onClick={() => toggleKey.mutate(key)} disabled={toggleKey.isPending} role="switch" aria-checked={key.enabled}>
-                  <span className="key-switch-knob" />
-                  <span className="key-switch-label">{key.enabled ? text.common.enabled : text.common.disabled}</span>
+                <button className={`toggle-switch toggle-switch-sm ${key.enabled ? 'on' : ''}`} onClick={(event) => {
+                  feedbackOriginRef.current = event.currentTarget;
+                  toggleKey.mutate(key);
+                }} disabled={toggleKey.isPending} role="switch" aria-checked={key.enabled} aria-label={key.enabled ? text.common.enabled : text.common.disabled}>
+                  <span className="toggle-switch-knob" />
                 </button>,
                 <QuotaThermometer used={key.used_today} limit={key.daily_limit} />,
                 <QuotaThermometer used={key.total_used} limit={key.total_limit} />,
@@ -203,13 +214,13 @@ export function APIKeysPage({ user }: { user: User }) {
           setDissolveTarget(null);
           await new Promise(r => requestAnimationFrame(r));
           if (targets.length === 1 && targetEl) {
-            await dissolveElement(targetEl, { duration: 400, blockSize: 4, direction: 'out' });
+            await runDeleteEffect(targetEl);
           } else if (targets.length > 1) {
             const rows = targets
               .map((key) => document.querySelector(`[data-key-id="${key.id}"]`)?.closest('tr') as HTMLElement | null)
               .filter(Boolean) as HTMLElement[];
             for (const row of rows) {
-              await dissolveElement(row, { duration: 300, blockSize: 4, direction: 'up' });
+              await runDeleteEffect(row, { duration: 300, direction: 'up' });
             }
           }
           deleteKeys.mutate(targets);
@@ -237,4 +248,3 @@ function maskAPIKey(value: string) {
   const starCount = maskedLen > 0 ? Math.max(8, maskedLen) : 8;
   return `${trimmed.slice(0, visible)}${'*'.repeat(starCount)}${suffix > 0 ? trimmed.slice(-suffix) : ''}`;
 }
-

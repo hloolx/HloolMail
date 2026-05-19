@@ -90,13 +90,79 @@ func TestRunMXAutoRetryDoesNotExpireBeforeRetryDeadline(t *testing.T) {
 	}
 }
 
+func TestRunMXAutoRetryDeletesOnlyExpiredNeverVerifiedPendingDomain(t *testing.T) {
+	db := mxRetryTestDB(t)
+	now := time.Date(2026, 5, 18, 8, 0, 0, 0, time.UTC)
+	expiredAt := now.Add(-time.Minute)
+	d := createRetryDomain(t, db, now, expiredAt)
+	probeCalled := false
+	checker := domain.DNSChecker{
+		DB:          db,
+		Config:      config.Config{ExpectedMX: "mail.example.test"},
+		ProbeRunner: mxRetryProbeRunner{t: t, called: &probeCalled},
+	}
+
+	runMXAutoRetryAt(context.Background(), checker, func() time.Time { return now })
+
+	var count int64
+	db.Model(&models.Domain{}).Where("id = ?", d.ID).Count(&count)
+	if count != 0 {
+		t.Fatalf("expired never-verified pending domain remained, count=%d", count)
+	}
+}
+
+func TestRunMXAutoRetryDoesNotDeletePreviouslyVerifiedDomain(t *testing.T) {
+	db := mxRetryTestDB(t)
+	now := time.Date(2026, 5, 18, 8, 0, 0, 0, time.UTC)
+	expiredAt := now.Add(-time.Minute)
+	d := createRetryDomain(t, db, now, expiredAt)
+	firstVerifiedAt := now.Add(-24 * time.Hour)
+	if err := db.Model(&models.Domain{}).Where("id = ?", d.ID).Updates(map[string]interface{}{
+		"first_verified_at":  &firstVerifiedAt,
+		"pending_delete_at":  nil,
+		"mx_verified":        false,
+		"last_health_status": "healthy",
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	probeCalled := false
+	checker := domain.DNSChecker{
+		DB:          db,
+		Config:      config.Config{ExpectedMX: "mail.example.test"},
+		ProbeRunner: mxRetryProbeRunner{t: t, called: &probeCalled},
+	}
+
+	runMXAutoRetryAt(context.Background(), checker, func() time.Time { return now })
+
+	var updated models.Domain
+	if err := db.First(&updated, d.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if updated.MXAutoRetryEnabled {
+		t.Fatal("expected retry to be disabled after retry window")
+	}
+	if updated.MXAutoRetryNextAt != nil {
+		t.Fatalf("expected retry next time to be cleared, got %v", updated.MXAutoRetryNextAt)
+	}
+	if updated.LastHealthStatus != DomainHealthStatusUnhealthy {
+		t.Fatalf("last health status = %q, want unhealthy", updated.LastHealthStatus)
+	}
+	var notifications int64
+	if err := db.Model(&models.Notification{}).Where("domain_id = ? AND type = ?", d.ID, "MX_FAILED").Count(&notifications).Error; err != nil {
+		t.Fatal(err)
+	}
+	if notifications != 1 {
+		t.Fatalf("notifications = %d, want 1", notifications)
+	}
+}
+
 func mxRetryTestDB(t *testing.T) *gorm.DB {
 	t.Helper()
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := db.AutoMigrate(&models.Domain{}); err != nil {
+	if err := db.AutoMigrate(&models.Domain{}, &models.Notification{}); err != nil {
 		t.Fatal(err)
 	}
 	return db
@@ -112,6 +178,7 @@ func createRetryDomain(t *testing.T, db *gorm.DB, nextAt time.Time, until time.T
 		MXAutoRetryNextAt:    &nextAt,
 		MXAutoRetryUntil:     &until,
 		MXAutoRetryStartedAt: &nextAt,
+		PendingDeleteAt:      &until,
 		CreatedAt:            nextAt.Add(-time.Hour),
 	}
 	if err := db.Create(&d).Error; err != nil {

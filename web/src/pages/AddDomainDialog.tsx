@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { AnimatePresence, motion } from 'framer-motion';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Check, Copy, Globe2, Loader2, Plus, ShieldCheck, X } from 'lucide-react';
+import { Check, Copy, Globe2, Plus, ShieldCheck, X } from 'lucide-react';
 import { toast } from 'sonner';
 import type { Domain, InstallStatus } from '../api';
 import { api, postJSON } from '../api';
@@ -11,7 +11,8 @@ import { currentText, useText } from '../locales';
 import { useCopyState } from '../hooks/useCopyState';
 import { copy } from '../lib/clipboard';
 import { domainInputWantsWildcard, normalizeDomainInput } from '../lib/domain';
-import { IconButton } from '../components/shared';
+import { notifySuccess } from '../lib/feedback';
+import { IconButton, InfoTip, LoadingIndicator } from '../components/shared';
 
 const MAX_BATCH_SIZE = 50;
 
@@ -56,6 +57,7 @@ export function AddDomainDialog({ open, onClose }: { open: boolean; onClose: () 
   const [mxCopied, markMxCopied] = useCopyState();
   const panelRef = useRef<HTMLDivElement | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const submitButtonRef = useRef<HTMLButtonElement | null>(null);
 
   const installStatus = useQuery({
     queryKey: ['install-status'],
@@ -134,9 +136,9 @@ export function AddDomainDialog({ open, onClose }: { open: boolean; onClose: () 
       const successful = created + alreadyExists;
       const failed = data.results.length - successful;
       if (successful > 0 && failed === 0) {
-        toast.success(text.domains.batchDone.replace('{count}', String(successful)));
+        notifySuccess(text.domains.batchDone.replace('{count}', String(successful)), { origin: submitButtonRef.current });
       } else if (successful > 0) {
-        toast.success(text.domains.batchPartial.replace('{created}', String(successful)).replace('{failed}', String(failed)));
+        notifySuccess(text.domains.batchPartial.replace('{created}', String(successful)).replace('{failed}', String(failed)), { origin: submitButtonRef.current });
       } else {
         toast.error(text.domains.batchAllFailed);
       }
@@ -273,6 +275,16 @@ export function AddDomainDialog({ open, onClose }: { open: boolean; onClose: () 
                       ))}
                     </div>
                   )}
+                  {results.some((r) => r.domain_record?.pending_delete_at) && (
+                    <div className="batch-failed-list">
+                      {results.filter((r) => r.domain_record?.pending_delete_at).map((r, i) => (
+                        <div key={i} className="batch-failed-row">
+                          <span className="batch-failed-domain">{r.domain || r.raw}</span>
+                          <span className="batch-failed-reason">{text.domains.pendingAutoDeleteHint.replace('{time}', formatRelativeTime(r.domain_record?.pending_delete_at))}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
               )}
 
@@ -307,7 +319,7 @@ export function AddDomainDialog({ open, onClose }: { open: boolean; onClose: () 
 
               {/* MX settings info */}
               <div className="domain-modal-section">
-                <div className="domain-modal-section-title">{text.domains.mxSettings}</div>
+                <div className="domain-modal-section-title">{text.domains.mxSettings}<InfoTip text={text.domains.batchDNSNote.replace('[[mx]]', mxTarget)} /></div>
                 <div className="mx-target-card">
                   <span>{text.domains.mxPointTo}</span>
                   <code>{mxTarget}</code>
@@ -332,8 +344,8 @@ export function AddDomainDialog({ open, onClose }: { open: boolean; onClose: () 
                   {text.domains.addMore}
                 </button>
               ) : (
-                <button className="btn-primary" onClick={() => batchCreate.mutate()} disabled={!canSubmit}>
-                  {batchCreate.isPending ? <Loader2 size={16} className="animate-spin" /> : <Globe2 size={16} />}
+                <button ref={submitButtonRef} className="btn-primary" onClick={() => batchCreate.mutate()} disabled={!canSubmit}>
+                  {batchCreate.isPending ? <LoadingIndicator /> : <Globe2 size={16} />}
                   {text.domains.batchSubmit}
                 </button>
               )}
@@ -352,11 +364,7 @@ export function invalidateDomainQueries(queryClient: ReturnType<typeof useQueryC
 }
 
 export function pendingDeleteAt(domain: Domain) {
-  if (domain.pending_delete_at) return domain.pending_delete_at;
-  if (!domain.created_at) return undefined;
-  const createdAt = new Date(domain.created_at);
-  if (Number.isNaN(createdAt.getTime())) return undefined;
-  return new Date(createdAt.getTime() + 2 * 60 * 60 * 1000).toISOString();
+  return domain.pending_delete_at;
 }
 
 export function formatRelativeTime(value?: string, pastLabel = ''): string {

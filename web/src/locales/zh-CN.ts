@@ -1,7 +1,6 @@
 const zhCN = {
   loading: {
-    checkingInstall: '正在检查安装状态',
-    restoringLogin: '正在恢复登录状态'
+    starting: '正在启动 HLOOL Mail'
   },
   page: {
     inbox: '收件箱',
@@ -12,8 +11,9 @@ const zhCN = {
     'api-keys': 'API 密钥',
     'api-docs': 'API 文档',
     users: '用户与额度',
-    'admin-oauth': '第三方登录',
-    admin: '管理后台'
+    'admin-oauth': '登录设置',
+    admin: '管理后台',
+    announcements: '公告通知'
   },
   nav: {
     mail: '邮件',
@@ -74,7 +74,13 @@ const zhCN = {
     unbind: '解绑',
     unbound: '已解绑第三方账号',
     boundToast: '已绑定 {provider}',
-    oauthRegistered: '已通过 {provider} 创建账号'
+    oauthRegistered: '已通过 {provider} 创建账号',
+    passkeys: '通行密钥',
+    addPasskey: '添加通行密钥',
+    noPasskeys: '还没有绑定通行密钥',
+    passkeysDisabled: '管理员尚未开启通行密钥登录',
+    passkeyBound: '通行密钥已绑定',
+    passkeyDeleted: '通行密钥已删除'
   },
   toast: {
     apiKeyDeleted: 'API key 已删除',
@@ -204,6 +210,9 @@ const zhCN = {
     registerSubmit: '创建账号',
     registerPending: '注册中...',
     loginPending: '登录中...',
+    passkeySubmit: '使用通行密钥登录',
+    passkeyPending: '验证通行密钥中...',
+    emailRequired: '请先输入邮箱',
     passwordMismatch: '两次输入的密码不一致',
     registerDone: '注册成功',
     skipToContent: '跳到主要内容',
@@ -362,7 +371,7 @@ const zhCN = {
     reactivated: '域名已重新激活',
 
     waitingTitle: '等待验证',
-    waitingDesc: '这些域名还没有通过 MX 验证，可手动检测；未验证域名会在提交后 2 小时自动删除。',
+    waitingDesc: '这些域名需要处理 DNS。只有新提交且从未验证成功的域名会在到期后自动清理。',
     randomSubdomainNotReady: '随机子域名未生效',
     mxNotReady: '未生效',
     mxNotReadyToast: 'MX 还未生效',
@@ -436,6 +445,10 @@ const zhCN = {
 
     autoRetryOn: '后台将每 10 分钟检测一次，已重试 {count} 次；下次检测：{next}；预计自动删除：{autoDelete}。',
     autoRetryOff: '如果 DNS 服务商需要传播时间，可以让后台每 10 分钟自动检测一次。未验证域名会在 {autoDeleteTime} 自动删除。',
+    pendingAutoDeleteHint: '请在 {time} 内完成 MX 验证，否则该域名会被自动清理。',
+    dnsIssue: 'DNS 异常',
+    dnsIssueNeedsAction: '需处理 DNS',
+    noAutoDelete: '不会自动删除',
 
     domainLoadError: '域名信息尚未加载完成，请重新打开弹窗后再试',
     autoRetryTimedOut: '等待验证已超时，域名已自动删除',
@@ -637,13 +650,21 @@ const zhCN = {
       settingsError: 'DNS 检测设置加载失败，请刷新后重试',
       settingsErrorHint: '加载失败',
       enabled: '启用',
+      enabledDesc: '开启后自动定时检测所有域名的 DNS 解析状态',
       checkInactive: '检测停用域名',
+      checkInactiveDesc: '开启后同时检测已停用的域名，否则仅检测启用的域名',
       interval: '间隔(分钟)',
+      intervalDesc: '两次自动检测之间的间隔时间，单位分钟',
       timeout: '超时(ms)',
+      timeoutDesc: '单个 DNS 查询的超时时间，单位毫秒',
       concurrency: '并发数',
+      concurrencyDesc: '同时进行 DNS 查询的最大并发数量',
       failureThreshold: '失败阈值',
+      failureThresholdDesc: '连续失败达到此次数后，域名将被标记为异常',
       recoveryThreshold: '恢复阈值',
+      recoveryThresholdDesc: '连续成功达到此次数后，异常域名将恢复为正常',
       resolvers: 'Resolvers',
+      resolversDesc: 'DNS 解析服务器列表，每行一个，格式为 IP:Port',
       colTime: '时间',
       colTrigger: '触发',
       colStatus: '状态',
@@ -716,9 +737,6 @@ const zhCN = {
       title: '最近关键审计',
       desc: '默认只看安全与配置变更，高频活动可通过筛选查看',
       empty: '暂无审计日志',
-      loadMore: '加载更多',
-      older: '更早',
-      reset: '重置',
       all: '全部',
       filterCategory: '范围',
       filterSeverity: '级别',
@@ -775,7 +793,7 @@ const zhCN = {
       userDailyPublicMailboxLimitHint: '每用户每天可创建的公开域名邮箱数量，不影响私有域名',
       requirePublicDomainForQuota: '上传公开域名后才有额度',
       requirePublicDomainForQuotaHint: '开启后，用户必须至少拥有一个公开域名才能创建公开域名邮箱',
-      save: '保存额度设置',
+      save: '保存',
       saved: '额度设置已保存'
     },
     validation: {
@@ -810,6 +828,41 @@ const zhCN = {
     discard: '放弃修改',
     editing_hint: '请先保存或取消当前编辑'
   },
+  loginSettings: {
+    title: '登录设置',
+    desc: '管理第三方登录与安全验证配置',
+    save: '保存',
+    saved: '登录设置已保存',
+    load_error: '登录设置加载失败'
+  },
+  turnstile: {
+    title: '人机验证',
+    description: 'Cloudflare Turnstile 无感人机验证，有效防止暴力破解和恶意注册，对真实用户无感知。',
+    benefit1: '防止自动化的登录爆破攻击',
+    benefit2: '阻挡机器人批量注册',
+    benefit3: '无需用户交互，无感验证体验',
+    benefit4: 'Cloudflare 提供，永久免费',
+    site_key: 'Site Key',
+    site_key_hint: 'Turnstile 站点密钥（前台使用）',
+    secret_key: 'Secret Key',
+    secret_key_hint: 'Turnstile 密钥（后台验证）',
+    secret_stored: '已存储（显示为占位符），如需更换请输入新值',
+    apply: '去 Cloudflare 申请',
+    apply_url: 'https://dash.cloudflare.com/',
+    enabled: '已启用',
+    disabled: '未启用'
+  },
+  passkey: {
+    title: '通行密钥',
+    description: '基于 WebAuthn 标准的 Passkey 通行密钥，用户可使用指纹、面部识别或硬件密钥登录，无需记忆密码。',
+    benefit1: '无需记忆密码，指纹/面部/硬件密钥一键登录',
+    benefit2: '基于 FIDO2/WebAuthn 标准，防钓鱼攻击',
+    benefit3: '私钥永不离设备，比密码更安全',
+    benefit4: 'Chrome/Edge/Safari/Firefox 全平台支持',
+    enabled: '已启用',
+    disabled: '未启用',
+    bindHint: '用户在个人设置中绑定通行密钥'
+  },
   notifications: {
     title: '通知',
     unread: '{count} 条未读',
@@ -829,11 +882,14 @@ const zhCN = {
     }
   },
   announcements: {
+    pageTitle: '公告通知',
+    pageDesc: '发布和管理系统公告，所有用户可见',
     title: '公告',
     read: '已读',
     unreadCount: '{count} 条未读公告',
     noAnnouncements: '暂无公告',
     newAnnouncement: '新建公告',
+    createHint: '填写标题和内容后发布，支持 Markdown 格式',
     createAnnouncement: '发布公告',
     deleteAnnouncement: '删除公告',
     deleteConfirm: '确定要删除这条公告吗？删除后无法恢复。',
@@ -846,6 +902,8 @@ const zhCN = {
     loadError: '公告加载失败',
     createError: '公告发布失败',
     deleteError: '公告删除失败',
+    listTitle: '公告列表',
+    listDesc: '已发布的公告及阅读统计',
     readerCount: '{count} 人已读',
     markRead: '标记已读',
     expand: '展开全文',

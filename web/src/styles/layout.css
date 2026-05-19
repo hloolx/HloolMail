@@ -1335,6 +1335,12 @@
   color: var(--muted);
 }
 
+.profile-muted {
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 650;
+}
+
 .profile-badge {
   flex: 0 0 auto;
   border-radius: 999px;
@@ -1352,6 +1358,10 @@
 
 .profile-unbind-btn {
   color: var(--bad);
+}
+
+.profile-add-passkey {
+  justify-content: center;
 }
 
 @media (max-width: 520px) {

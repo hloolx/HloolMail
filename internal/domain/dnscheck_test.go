@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"gptmail/internal/config"
 	"gptmail/internal/models"
@@ -87,6 +88,48 @@ func TestCheckDoesNotOverwriteConcurrentDomainUpdate(t *testing.T) {
 	}
 }
 
+func TestCheckRecoverySetsFirstVerifiedAndClearsPendingDelete(t *testing.T) {
+	db := domainTestDB(t)
+	pendingDeleteAt := time.Now().Add(time.Hour)
+	d := models.Domain{
+		Domain:            "recover.test",
+		Mode:              models.DomainModePrivate,
+		Active:            true,
+		VerificationToken: "probe-token",
+		PendingDeleteAt:   &pendingDeleteAt,
+	}
+	if err := db.Create(&d).Error; err != nil {
+		t.Fatal(err)
+	}
+	checker := DNSChecker{
+		DB:     db,
+		Config: config.Config{ExpectedMX: "mail.example.com"},
+		ProbeRunner: staticProbeRunner{result: CheckResult{
+			MXVerified: true,
+			DNSStatus:  DNSStatusVerified,
+			MXRecords:  []string{"mail.example.com"},
+		}},
+	}
+
+	if _, err := checker.Check(context.Background(), d.Domain); err != nil {
+		t.Fatal(err)
+	}
+
+	var updated models.Domain
+	if err := db.First(&updated, d.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if updated.FirstVerifiedAt == nil {
+		t.Fatal("expected first_verified_at to be set")
+	}
+	if updated.PendingDeleteAt != nil {
+		t.Fatalf("expected pending_delete_at to be cleared, got %v", updated.PendingDeleteAt)
+	}
+	if !updated.MXVerified || updated.LastHealthStatus != "healthy" {
+		t.Fatalf("expected healthy verified domain, got mx=%v status=%q", updated.MXVerified, updated.LastHealthStatus)
+	}
+}
+
 type failingReader struct{}
 
 func (failingReader) Read([]byte) (int, error) {
@@ -108,4 +151,13 @@ func (r blockingProbeRunner) CheckMX(ctx context.Context, host string, expectedM
 	case <-r.release:
 		return r.result, r.err
 	}
+}
+
+type staticProbeRunner struct {
+	result CheckResult
+	err    error
+}
+
+func (r staticProbeRunner) CheckMX(context.Context, string, string, CheckOptions) (CheckResult, error) {
+	return r.result, r.err
 }

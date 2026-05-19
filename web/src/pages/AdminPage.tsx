@@ -1,15 +1,15 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { useEffect, useMemo, useState } from 'react';
-import { Database, Eye, Globe2, Inbox, KeyRound, Megaphone, Play, RefreshCw, Save, ShieldAlert, Trash2, Users } from 'lucide-react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { Database, Globe2, Inbox, KeyRound, Play, RefreshCw, Save, ShieldAlert, Users } from 'lucide-react';
 import { toast } from 'sonner';
-import type { AdminAnnouncement, SystemQuotaSettings } from '../api';
 import { api, patchJSON, postJSON } from '../api';
+import type { PaginatedResponse } from '../api';
 import type { AdminDomainHealth, AdminQuotaAlert, AdminStats, DomainCheckRun, DomainCheckRunsPage, DomainCheckSettings } from '../types';
 import { domainModeLabel, formatDomainExpiry, relativeTime } from '../lib/display';
+import { notifySuccess } from '../lib/feedback';
 import { useAppStore } from '../store';
 import { currentText, useText } from '../locales';
-import { DataTable, Metric, PaginationControls, StatusPill } from '../components/shared';
-import { simpleMarkdownToHTML } from '../lib/markdown';
+import { DataTable, InfoTip, Metric, PaginationControls, StatusPill } from '../components/shared';
 import { AdminAuditLog } from './AdminAuditLog';
 
 export function AdminPage() {
@@ -18,11 +18,28 @@ export function AdminPage() {
   const language = useAppStore((state) => state.language);
   const setPage = useAppStore((state) => state.setPage);
   const [dnsCheckPage, setDnsCheckPage] = useState(1);
+  const [domainHealthPage, setDomainHealthPage] = useState(1);
+  const [quotaAlertsPage, setQuotaAlertsPage] = useState(1);
+  const saveDnsSettingsButtonRef = useRef<HTMLButtonElement | null>(null);
+  const runDnsCheckButtonRef = useRef<HTMLButtonElement | null>(null);
+  const domainHealthFeedbackOriginRef = useRef<HTMLElement | null>(null);
   const dnsCheckPerPage = 10;
+  const domainHealthPerPage = 10;
+  const quotaAlertsPerPage = 8;
 
   const stats = useQuery({ queryKey: ['admin-stats'], queryFn: () => api<AdminStats>('/api/admin/stats'), retry: false, staleTime: 30_000 });
-  const domainHealth = useQuery({ queryKey: ['admin-domain-health'], queryFn: () => api<AdminDomainHealth[]>('/api/admin/domain-health'), retry: false, staleTime: 30_000 });
-  const quotaAlerts = useQuery({ queryKey: ['admin-quota-alerts'], queryFn: () => api<AdminQuotaAlert[]>('/api/admin/quota-alerts'), retry: false, staleTime: 30_000 });
+  const domainHealth = useQuery({
+    queryKey: ['admin-domain-health', domainHealthPage],
+    queryFn: () => api<PaginatedResponse<AdminDomainHealth>>(`/api/admin/domain-health?page=${domainHealthPage}&per_page=${domainHealthPerPage}`),
+    retry: false,
+    staleTime: 30_000
+  });
+  const quotaAlerts = useQuery({
+    queryKey: ['admin-quota-alerts', quotaAlertsPage],
+    queryFn: () => api<PaginatedResponse<AdminQuotaAlert>>(`/api/admin/quota-alerts?page=${quotaAlertsPage}&per_page=${quotaAlertsPerPage}`),
+    retry: false,
+    staleTime: 30_000
+  });
   const domainCheckSettings = useQuery({
     queryKey: ['admin-domain-check-settings'],
     queryFn: () => api<DomainCheckSettings>('/api/admin/domain-check-settings'),
@@ -37,41 +54,6 @@ export function AdminPage() {
     staleTime: 30_000,
     refetchInterval: (query) => query.state.data?.runs?.some((run: DomainCheckRun) => run.status === 'running') ? 5000 : false
   });
-  const quotaSettings = useQuery({
-    queryKey: ['admin-quota-settings'],
-    queryFn: () => api<SystemQuotaSettings>('/api/admin/quota-settings'),
-    retry: false,
-    staleTime: 30_000
-  });
-  const [quotaForm, setQuotaForm] = useState({
-    public_domain_mailbox_limit: '0',
-    user_daily_public_mailbox_limit: '0',
-    require_public_domain_for_quota: false
-  });
-
-  useEffect(() => {
-    const qs = quotaSettings.data;
-    if (!qs) return;
-    setQuotaForm({
-      public_domain_mailbox_limit: String(qs.public_domain_mailbox_limit),
-      user_daily_public_mailbox_limit: String(qs.user_daily_public_mailbox_limit),
-      require_public_domain_for_quota: qs.require_public_domain_for_quota
-    });
-  }, [quotaSettings.data]);
-
-  const saveQuotaSettings = useMutation({
-    mutationFn: () => patchJSON<SystemQuotaSettings>('/api/admin/quota-settings', {
-      public_domain_mailbox_limit: toPositiveInt64(quotaForm.public_domain_mailbox_limit, 0),
-      user_daily_public_mailbox_limit: toPositiveInt64(quotaForm.user_daily_public_mailbox_limit, 0),
-      require_public_domain_for_quota: quotaForm.require_public_domain_for_quota
-    }),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['admin-quota-settings'] });
-      toast.success(text.admin.quotaSettings.saved);
-    },
-    onError: (error) => toast.error(error.message)
-  });
-
   const [settingsForm, setSettingsForm] = useState({
     enabled: true,
     interval_minutes: '30',
@@ -81,55 +63,6 @@ export function AdminPage() {
     check_inactive: false,
     failure_threshold: '2',
     recovery_threshold: '1'
-  });
-
-  // Announcement management state
-  const [announcementTitle, setAnnouncementTitle] = useState('');
-  const [announcementContent, setAnnouncementContent] = useState('');
-  const [announcementPreview, setAnnouncementPreview] = useState(false);
-
-  const adminAnnouncements = useQuery({
-    queryKey: ['admin-announcements'],
-    queryFn: () => api<AdminAnnouncement[]>('/api/admin/announcements'),
-    retry: false
-  });
-
-  const createAnnouncement = useMutation({
-    mutationFn: () => {
-      if (!announcementTitle.trim()) throw new Error('Title is required');
-      return postJSON<AdminAnnouncement>('/api/admin/announcements', {
-        title: announcementTitle.trim(),
-        content: announcementContent.trim()
-      });
-    },
-    onSuccess: () => {
-      setAnnouncementTitle('');
-      setAnnouncementContent('');
-      setAnnouncementPreview(false);
-      queryClient.invalidateQueries({ queryKey: ['admin-announcements'] });
-      queryClient.invalidateQueries({ queryKey: ['announcements'] });
-      queryClient.invalidateQueries({ queryKey: ['announcements-unread-count'] });
-      toast.success(text.announcements.created);
-    },
-    onError: (error) => toast.error(error.message)
-  });
-
-  const deleteAnnouncement = useMutation({
-    mutationFn: (id: number) => {
-      if (!window.confirm(text.announcements.deleteConfirm)) {
-        throw new Error('Canceled');
-      }
-      return api(`/api/admin/announcements/${id}`, { method: 'DELETE' });
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['admin-announcements'] });
-      queryClient.invalidateQueries({ queryKey: ['announcements'] });
-      queryClient.invalidateQueries({ queryKey: ['announcements-unread-count'] });
-      toast.success(text.announcements.deleted);
-    },
-    onError: (error) => {
-      if (error.message !== 'Canceled') toast.error(error.message);
-    }
   });
 
   useEffect(() => {
@@ -154,7 +87,6 @@ export function AdminPage() {
     queryClient.invalidateQueries({ queryKey: ['admin-audit-logs'] });
     queryClient.invalidateQueries({ queryKey: ['admin-domain-check-settings'] });
     queryClient.invalidateQueries({ queryKey: ['admin-domain-check-runs'] });
-    queryClient.invalidateQueries({ queryKey: ['admin-announcements'] });
     queryClient.invalidateQueries({ queryKey: ['admin-quota-settings'] });
   };
 
@@ -189,7 +121,7 @@ export function AdminPage() {
     },
     onSuccess: () => {
       refreshAdminData();
-      toast.success(text.admin.dnsCheck.saved);
+      notifySuccess(text.admin.dnsCheck.saved, { origin: saveDnsSettingsButtonRef.current });
     },
     onError: (error) => toast.error(error.message)
   });
@@ -198,7 +130,7 @@ export function AdminPage() {
     mutationFn: () => postJSON<{ run: DomainCheckRun; reused: boolean }>('/api/admin/domain-check-runs', {}),
     onSuccess: (result) => {
       refreshAdminData();
-      toast.success(result.reused ? text.admin.dnsCheck.alreadyRunning : text.admin.dnsCheck.started);
+      notifySuccess(result.reused ? text.admin.dnsCheck.alreadyRunning : text.admin.dnsCheck.started, { origin: runDnsCheckButtonRef.current });
     },
     onError: (error) => toast.error(error.message)
   });
@@ -208,9 +140,13 @@ export function AdminPage() {
     onSuccess: () => {
       refreshAdminData();
       queryClient.invalidateQueries({ queryKey: ['domains-all'] });
-      toast.success(text.admin.domainHealth.recheckDone);
+      notifySuccess(text.admin.domainHealth.recheckDone, { origin: domainHealthFeedbackOriginRef.current });
+      domainHealthFeedbackOriginRef.current = null;
     },
-    onError: (error) => toast.error(error.message)
+    onError: (error) => {
+      domainHealthFeedbackOriginRef.current = null;
+      toast.error(error.message);
+    }
   });
 
   const disableDomain = useMutation({
@@ -223,9 +159,11 @@ export function AdminPage() {
     onSuccess: () => {
       refreshAdminData();
       queryClient.invalidateQueries({ queryKey: ['domains-all'] });
-      toast.success(text.admin.domainHealth.disableDone);
+      notifySuccess(text.admin.domainHealth.disableDone, { origin: domainHealthFeedbackOriginRef.current });
+      domainHealthFeedbackOriginRef.current = null;
     },
     onError: (error) => {
+      domainHealthFeedbackOriginRef.current = null;
       if (error.message !== 'Canceled') toast.error(error.message);
     }
   });
@@ -240,14 +178,17 @@ export function AdminPage() {
     onSuccess: () => {
       refreshAdminData();
       queryClient.invalidateQueries({ queryKey: ['domains-all'] });
-      toast.success(text.admin.domainHealth.makePrivateDone);
+      notifySuccess(text.admin.domainHealth.makePrivateDone, { origin: domainHealthFeedbackOriginRef.current });
+      domainHealthFeedbackOriginRef.current = null;
     },
     onError: (error) => {
+      domainHealthFeedbackOriginRef.current = null;
       if (error.message !== 'Canceled') toast.error(error.message);
     }
   });
 
-  const healthRows = (domainHealth.data || []).slice(0, 10);
+  const healthPage = domainHealth.data;
+  const quotaPage = quotaAlerts.data;
   const risks = useMemo(
     () => stats.data ? configRisks(stats.data) : [],
     [stats.data]
@@ -263,7 +204,6 @@ export function AdminPage() {
       <div className="admin-page-header">
         <div>
           <h1>{text.admin.title}</h1>
-          <p>{text.admin.desc}</p>
         </div>
         <button className="btn-secondary" onClick={refreshAdminData} disabled={isLoading} aria-label={text.admin.refresh}>
           <RefreshCw size={16} className={isLoading ? 'animate-spin' : ''} aria-hidden="true" />
@@ -281,8 +221,7 @@ export function AdminPage() {
       <section className="panel" id="admin-system-status">
         <div className="panel-header">
           <div>
-            <h2>{text.admin.systemStatus.title}</h2>
-            <p>{text.admin.systemStatus.desc}</p>
+            <h2>{text.admin.systemStatus.title}<InfoTip text={text.admin.systemStatus.desc} /></h2>
           </div>
         </div>
         <div className="admin-status-grid">
@@ -314,50 +253,6 @@ export function AdminPage() {
         </div>
       </section>
 
-      <section className="panel" id="admin-quota-settings">
-        <div className="panel-header admin-panel-header">
-          <div>
-            <h2>{text.admin.quotaSettings.title}</h2>
-            <p>{text.admin.quotaSettings.desc}</p>
-          </div>
-          <div className="table-actions">
-            <button
-              className="btn-secondary"
-              onClick={() => saveQuotaSettings.mutate()}
-              disabled={saveQuotaSettings.isPending || quotaSettings.isError}
-              aria-label={text.admin.quotaSettings.save}
-            >
-              <Save size={15} aria-hidden="true" />
-              {text.admin.quotaSettings.save}
-            </button>
-          </div>
-        </div>
-        <div className="admin-dns-settings">
-          <label className="grid gap-1 text-sm">
-            <span className="text-[var(--muted)]">{text.admin.quotaSettings.publicDomainMailboxLimit}</span>
-            <input className="input" type="number" min="0" value={quotaForm.public_domain_mailbox_limit} onChange={(event) => setQuotaForm((current) => ({ ...current, public_domain_mailbox_limit: event.target.value }))} />
-            <small className="text-[var(--muted)]">{text.admin.quotaSettings.publicDomainMailboxLimitHint}</small>
-          </label>
-          <label className="grid gap-1 text-sm">
-            <span className="text-[var(--muted)]">{text.admin.quotaSettings.userDailyPublicMailboxLimit}</span>
-            <input className="input" type="number" min="0" value={quotaForm.user_daily_public_mailbox_limit} onChange={(event) => setQuotaForm((current) => ({ ...current, user_daily_public_mailbox_limit: event.target.value }))} />
-            <small className="text-[var(--muted)]">{text.admin.quotaSettings.userDailyPublicMailboxLimitHint}</small>
-          </label>
-          <label className="grid gap-1 text-sm">
-            <span className="text-[var(--muted)]">{text.admin.quotaSettings.requirePublicDomainForQuota}</span>
-            <div className="segmented-control">
-              <button type="button" className={`segment-choice ${!quotaForm.require_public_domain_for_quota ? 'segment-choice-active' : ''}`} onClick={() => setQuotaForm((current) => ({ ...current, require_public_domain_for_quota: false }))} aria-pressed={!quotaForm.require_public_domain_for_quota}>
-                {text.common.disabled}
-              </button>
-              <button type="button" className={`segment-choice ${quotaForm.require_public_domain_for_quota ? 'segment-choice-active' : ''}`} onClick={() => setQuotaForm((current) => ({ ...current, require_public_domain_for_quota: true }))} aria-pressed={quotaForm.require_public_domain_for_quota}>
-                {text.common.enabled}
-              </button>
-            </div>
-            <small className="text-[var(--muted)]">{text.admin.quotaSettings.requirePublicDomainForQuotaHint}</small>
-          </label>
-        </div>
-      </section>
-
       <section className="panel" id="admin-dns-check">
         <div className="panel-header admin-panel-header">
           <div>
@@ -369,6 +264,7 @@ export function AdminPage() {
           </div>
           <div className="table-actions">
             <button
+              ref={saveDnsSettingsButtonRef}
               className="btn-secondary"
               onClick={() => saveDomainCheckSettings.mutate()}
               disabled={saveDomainCheckSettings.isPending || domainCheckSettings.isError}
@@ -379,6 +275,7 @@ export function AdminPage() {
               {text.admin.dnsCheck.save}
             </button>
             <button
+              ref={runDnsCheckButtonRef}
               className="btn-secondary"
               onClick={() => runDomainCheck.mutate()}
               disabled={runDomainCheck.isPending || hasRunningCheck}
@@ -397,64 +294,102 @@ export function AdminPage() {
         )}
         <div className="admin-dns-grid">
           <div className="admin-dns-settings">
-            <div className="segmented-control">
-              <span className="text-sm text-[var(--muted)]">{text.admin.dnsCheck.enabled}</span>
-              <div style={{ display: 'flex', gap: 0 }}>
-                <button type="button" className={`segment-choice ${!settingsForm.enabled ? 'segment-choice-active' : ''}`} onClick={() => setSettingsForm((current) => ({ ...current, enabled: false }))} aria-pressed={!settingsForm.enabled}>
-                  {text.common.disabled}
+            <div className="dns-form-row">
+              <div className="toggle-row">
+                <span className="toggle-row-label">
+                  {text.admin.dnsCheck.enabled}
+                  <InfoTip text={text.admin.dnsCheck.enabledDesc} />
+                </span>
+                <button
+                  type="button"
+                  className={`toggle-switch ${settingsForm.enabled ? 'on' : ''}`}
+                  onClick={() => setSettingsForm((current) => ({ ...current, enabled: !current.enabled }))}
+                  role="switch"
+                  aria-checked={settingsForm.enabled}
+                >
+                  <span className="toggle-switch-knob" />
                 </button>
-                <button type="button" className={`segment-choice ${settingsForm.enabled ? 'segment-choice-active' : ''}`} onClick={() => setSettingsForm((current) => ({ ...current, enabled: true }))} aria-pressed={settingsForm.enabled}>
-                  {text.common.enabled}
+              </div>
+              <div className="toggle-row">
+                <span className="toggle-row-label">
+                  {text.admin.dnsCheck.checkInactive}
+                  <InfoTip text={text.admin.dnsCheck.checkInactiveDesc} />
+                </span>
+                <button
+                  type="button"
+                  className={`toggle-switch ${settingsForm.check_inactive ? 'on' : ''}`}
+                  onClick={() => setSettingsForm((current) => ({ ...current, check_inactive: !current.check_inactive }))}
+                  role="switch"
+                  aria-checked={settingsForm.check_inactive}
+                >
+                  <span className="toggle-switch-knob" />
                 </button>
               </div>
             </div>
-            <div className="segmented-control">
-              <span className="text-sm text-[var(--muted)]">{text.admin.dnsCheck.checkInactive}</span>
-              <div style={{ display: 'flex', gap: 0 }}>
-                <button type="button" className={`segment-choice ${!settingsForm.check_inactive ? 'segment-choice-active' : ''}`} onClick={() => setSettingsForm((current) => ({ ...current, check_inactive: false }))} aria-pressed={!settingsForm.check_inactive}>
-                  {text.common.disabled}
-                </button>
-                <button type="button" className={`segment-choice ${settingsForm.check_inactive ? 'segment-choice-active' : ''}`} onClick={() => setSettingsForm((current) => ({ ...current, check_inactive: true }))} aria-pressed={settingsForm.check_inactive}>
-                  {text.common.enabled}
-                </button>
-              </div>
+
+            <div className="dns-form-row">
+              <label className="dns-form-field">
+                <span className="dns-field-label">
+                  {text.admin.dnsCheck.interval}
+                  <InfoTip text={text.admin.dnsCheck.intervalDesc} />
+                </span>
+                <input className="input" type="number" min="1" value={settingsForm.interval_minutes} onChange={(event) => setSettingsForm((current) => ({ ...current, interval_minutes: event.target.value }))} />
+              </label>
+              <label className="dns-form-field">
+                <span className="dns-field-label">
+                  {text.admin.dnsCheck.timeout}
+                  <InfoTip text={text.admin.dnsCheck.timeoutDesc} />
+                </span>
+                <input className="input" type="number" min="500" value={settingsForm.timeout_ms} onChange={(event) => setSettingsForm((current) => ({ ...current, timeout_ms: event.target.value }))} />
+              </label>
             </div>
-            <label className="grid gap-1 text-sm">
-              <span className="text-[var(--muted)]">{text.admin.dnsCheck.interval}</span>
-              <input className="input" type="number" min="1" value={settingsForm.interval_minutes} onChange={(event) => setSettingsForm((current) => ({ ...current, interval_minutes: event.target.value }))} />
-            </label>
-            <label className="grid gap-1 text-sm">
-              <span className="text-[var(--muted)]">{text.admin.dnsCheck.timeout}</span>
-              <input className="input" type="number" min="500" value={settingsForm.timeout_ms} onChange={(event) => setSettingsForm((current) => ({ ...current, timeout_ms: event.target.value }))} />
-            </label>
-            <label className="grid gap-1 text-sm">
-              <span className="text-[var(--muted)]">{text.admin.dnsCheck.concurrency}</span>
+
+            <div className="dns-form-row">
+              <label className="dns-form-field">
+                <span className="dns-field-label">
+                  {text.admin.dnsCheck.failureThreshold}
+                  <InfoTip text={text.admin.dnsCheck.failureThresholdDesc} />
+                </span>
+                <input className="input" type="number" min="1" value={settingsForm.failure_threshold} onChange={(event) => setSettingsForm((current) => ({ ...current, failure_threshold: event.target.value }))} />
+              </label>
+              <label className="dns-form-field">
+                <span className="dns-field-label">
+                  {text.admin.dnsCheck.recoveryThreshold}
+                  <InfoTip text={text.admin.dnsCheck.recoveryThresholdDesc} />
+                </span>
+                <input className="input" type="number" min="1" value={settingsForm.recovery_threshold} onChange={(event) => setSettingsForm((current) => ({ ...current, recovery_threshold: event.target.value }))} />
+              </label>
+            </div>
+
+            <label className="dns-form-field">
+              <span className="dns-field-label">
+                {text.admin.dnsCheck.concurrency}
+                <InfoTip text={text.admin.dnsCheck.concurrencyDesc} />
+              </span>
               <input className="input" type="number" min="1" value={settingsForm.max_concurrency} onChange={(event) => setSettingsForm((current) => ({ ...current, max_concurrency: event.target.value }))} />
             </label>
-            <label className="grid gap-1 text-sm">
-              <span className="text-[var(--muted)]">{text.admin.dnsCheck.failureThreshold}</span>
-              <input className="input" type="number" min="1" value={settingsForm.failure_threshold} onChange={(event) => setSettingsForm((current) => ({ ...current, failure_threshold: event.target.value }))} />
-            </label>
-            <label className="grid gap-1 text-sm">
-              <span className="text-[var(--muted)]">{text.admin.dnsCheck.recoveryThreshold}</span>
-              <input className="input" type="number" min="1" value={settingsForm.recovery_threshold} onChange={(event) => setSettingsForm((current) => ({ ...current, recovery_threshold: event.target.value }))} />
-            </label>
-            <label className="grid gap-1 text-sm">
-              <span className="text-[var(--muted)]">{text.admin.dnsCheck.resolvers}</span>
+
+            <label className="dns-form-field">
+              <span className="dns-field-label">
+                {text.admin.dnsCheck.resolvers}
+                <InfoTip text={text.admin.dnsCheck.resolversDesc} />
+              </span>
               <textarea className="input-textarea" rows={4} value={settingsForm.resolvers} onChange={(event) => setSettingsForm((current) => ({ ...current, resolvers: event.target.value }))} />
             </label>
           </div>
           <div className="admin-dns-runs">
             <DataTable
+              ariaLabel={text.admin.dnsCheck.title}
+              density="compact"
               emptyLabel={text.admin.dnsCheck.empty}
               columns={[
-                { key: 'started-at', header: text.admin.dnsCheck.colTime },
-                { key: 'trigger', header: text.admin.dnsCheck.colTrigger },
-                { key: 'status', header: text.admin.dnsCheck.colStatus },
-                { key: 'progress', header: text.admin.dnsCheck.colProgress },
-                { key: 'passed', header: text.admin.dnsCheck.colPassed },
-                { key: 'failed', header: text.admin.dnsCheck.colFailed },
-                { key: 'duration', header: text.admin.dnsCheck.colDuration }
+                { key: 'started-at', header: text.admin.dnsCheck.colTime, minWidth: '8rem' },
+                { key: 'trigger', header: text.admin.dnsCheck.colTrigger, width: '7rem' },
+                { key: 'status', header: text.admin.dnsCheck.colStatus, align: 'center', width: '7rem' },
+                { key: 'progress', header: text.admin.dnsCheck.colProgress, align: 'center', width: '7rem' },
+                { key: 'passed', header: text.admin.dnsCheck.colPassed, align: 'right', width: '5.5rem' },
+                { key: 'failed', header: text.admin.dnsCheck.colFailed, align: 'right', width: '5.5rem' },
+                { key: 'duration', header: text.admin.dnsCheck.colDuration, align: 'right', width: '6rem' }
               ]}
               rows={runRows.map((run) => ({
                 key: run.id,
@@ -484,16 +419,17 @@ export function AdminPage() {
             <button className="btn-ghost" onClick={() => setPage('domain-management')} aria-label={text.admin.domainHealth.goToDomains}>{text.admin.domainHealth.goToDomains}</button>
           </div>
           <DataTable
+            ariaLabel={text.admin.domainHealth.title}
             emptyLabel={text.admin.domainHealth.empty}
             columns={[
-              { key: 'domain', header: text.admin.domainHealth.colDomain },
-              { key: 'status', header: text.admin.domainHealth.colStatus },
-              { key: 'mode', header: text.admin.domainHealth.colMode },
-              { key: 'expires', header: text.admin.domainHealth.colExpires },
-              { key: 'messages', header: text.admin.domainHealth.colMessages },
-              { key: 'actions', header: text.admin.domainHealth.colActions }
+              { key: 'domain', header: text.admin.domainHealth.colDomain, minWidth: '14rem' },
+              { key: 'status', header: text.admin.domainHealth.colStatus, align: 'center', width: '8rem' },
+              { key: 'mode', header: text.admin.domainHealth.colMode, width: '7rem' },
+              { key: 'expires', header: text.admin.domainHealth.colExpires, width: '8rem' },
+              { key: 'messages', header: text.admin.domainHealth.colMessages, align: 'right', width: '7rem' },
+              { key: 'actions', header: text.admin.domainHealth.colActions, align: 'right', minWidth: '18rem' }
             ]}
-            rows={healthRows.map((domain) => ({
+            rows={(healthPage?.items || []).map((domain) => ({
               key: domain.id,
               cells: [
                 <div className="admin-domain-cell">
@@ -505,20 +441,30 @@ export function AdminPage() {
                 formatDomainExpiry(domain.domain_expires_at, language),
                 String(domain.message_count ?? 0),
                 <div className="table-actions">
-                  <button className="btn-ghost" onClick={() => recheckDomain.mutate(domain.domain)} disabled={recheckDomain.isPending} aria-label={`${text.admin.domainHealth.recheck} ${domain.domain}`}>
+                  <button className="btn-ghost" onClick={(event) => {
+                    domainHealthFeedbackOriginRef.current = event.currentTarget;
+                    recheckDomain.mutate(domain.domain);
+                  }} disabled={recheckDomain.isPending} aria-label={`${text.admin.domainHealth.recheck} ${domain.domain}`}>
                     <RefreshCw size={14} aria-hidden="true" />
                     {text.admin.domainHealth.recheck}
                   </button>
-                  <button className="btn-ghost" onClick={() => makePrivate.mutate(domain)} disabled={domain.mode === 'private' || makePrivate.isPending} aria-label={`${text.admin.domainHealth.makePrivate} ${domain.domain}`}>
+                  <button className="btn-ghost" onClick={(event) => {
+                    domainHealthFeedbackOriginRef.current = event.currentTarget;
+                    makePrivate.mutate(domain);
+                  }} disabled={domain.mode === 'private' || makePrivate.isPending} aria-label={`${text.admin.domainHealth.makePrivate} ${domain.domain}`}>
                     {text.admin.domainHealth.makePrivate}
                   </button>
-                  <button className="btn-ghost" onClick={() => disableDomain.mutate(domain)} disabled={!domain.active || disableDomain.isPending} aria-label={`${text.admin.domainHealth.disable} ${domain.domain}`}>
+                  <button className="btn-ghost" onClick={(event) => {
+                    domainHealthFeedbackOriginRef.current = event.currentTarget;
+                    disableDomain.mutate(domain);
+                  }} disabled={!domain.active || disableDomain.isPending} aria-label={`${text.admin.domainHealth.disable} ${domain.domain}`}>
                     {text.admin.domainHealth.disable}
                   </button>
                 </div>
               ]
             }))}
           />
+          <PaginationControls page={healthPage?.page || 1} totalPages={healthPage?.total_pages || 1} onPageChange={setDomainHealthPage} />
         </section>
 
         <section className="panel" id="admin-quota-alerts">
@@ -530,14 +476,16 @@ export function AdminPage() {
             <button className="btn-ghost" onClick={() => setPage('users')} aria-label={text.admin.quotaAlerts.goToUsers || text.admin.domainHealth.goToUsers}>{text.admin.quotaAlerts.goToUsers || text.admin.domainHealth.goToUsers}</button>
           </div>
           <DataTable
+            ariaLabel={text.admin.quotaAlerts.title}
+            density="compact"
             emptyLabel={text.admin.quotaAlerts.empty}
             columns={[
-              { key: 'target', header: text.admin.quotaAlerts.colTarget },
-              { key: 'severity', header: text.admin.quotaAlerts.colSeverity },
-              { key: 'usage', header: text.admin.quotaAlerts.colUsage },
-              { key: 'last-used', header: text.admin.quotaAlerts.colLastUsed }
+              { key: 'target', header: text.admin.quotaAlerts.colTarget, minWidth: '12rem' },
+              { key: 'severity', header: text.admin.quotaAlerts.colSeverity, align: 'center', width: '8rem' },
+              { key: 'usage', header: text.admin.quotaAlerts.colUsage, align: 'right', minWidth: '10rem' },
+              { key: 'last-used', header: text.admin.quotaAlerts.colLastUsed, width: '8rem' }
             ]}
-            rows={(quotaAlerts.data || []).slice(0, 8).map((alert) => ({
+            rows={(quotaPage?.items || []).map((alert) => ({
               key: `${alert.kind}-${alert.id}`,
               cells: [
                 <div className="admin-domain-cell">
@@ -550,110 +498,9 @@ export function AdminPage() {
               ]
             }))}
           />
+          <PaginationControls page={quotaPage?.page || 1} totalPages={quotaPage?.total_pages || 1} onPageChange={setQuotaAlertsPage} />
         </section>
       </div>
-
-      <section className="panel" id="admin-announcements">
-        <div className="panel-header admin-panel-header">
-          <div>
-            <h2>{text.announcements.title}</h2>
-            <p>{text.announcements.newAnnouncement}</p>
-          </div>
-        </div>
-
-        <div className="admin-announcement-form">
-          <label className="grid gap-1 text-sm">
-            <span className="text-[var(--muted)]">{text.common.create} {text.announcements.title}</span>
-            <input
-              className="input"
-              type="text"
-              value={announcementTitle}
-              onChange={(event) => setAnnouncementTitle(event.target.value)}
-              placeholder={text.announcements.titlePlaceholder}
-            />
-          </label>
-          <label className="grid gap-1 text-sm">
-            <span className="text-[var(--muted)]">{text.announcements.content}</span>
-            <textarea
-              className="input-textarea"
-              rows={6}
-              value={announcementContent}
-              onChange={(event) => setAnnouncementContent(event.target.value)}
-              placeholder={text.announcements.contentPlaceholder}
-            />
-          </label>
-          <div className="admin-announcement-actions">
-            <button
-              className="btn-ghost"
-              type="button"
-              onClick={() => setAnnouncementPreview((v) => !v)}
-              disabled={!announcementContent.trim()}
-              aria-label={text.announcements.preview}
-            >
-              <Eye size={14} aria-hidden="true" />
-              {text.announcements.preview}
-            </button>
-            <button
-              className="btn-secondary"
-              type="button"
-              onClick={() => createAnnouncement.mutate()}
-              disabled={!announcementTitle.trim() || createAnnouncement.isPending}
-              aria-label={text.announcements.createAnnouncement}
-            >
-              <Megaphone size={14} aria-hidden="true" />
-              {createAnnouncement.isPending ? text.common.loading : text.announcements.createAnnouncement}
-            </button>
-          </div>
-          {announcementPreview && announcementContent.trim() && (
-            <div className="admin-announcement-preview">
-              <div
-                className="message-center-markdown"
-                dangerouslySetInnerHTML={{ __html: simpleMarkdownToHTML(announcementContent) }}
-              />
-            </div>
-          )}
-        </div>
-
-        <DataTable
-          emptyLabel={text.announcements.noAnnouncements}
-          columns={[
-            { key: 'title', header: text.announcements.title },
-            { key: 'created', header: text.common.refresh },
-            { key: 'readers', header: text.announcements.read },
-            { key: 'status', header: text.common.enabled },
-            { key: 'actions', header: text.common.delete }
-          ]}
-          rows={(adminAnnouncements.data || []).slice(0, 15).map((ann) => ({
-            key: ann.id,
-            cells: [
-              <div className="admin-domain-cell">
-                <b>{ann.title}</b>
-                <small>{ann.content.slice(0, 80)}{ann.content.length > 80 ? '...' : ''}</small>
-              </div>,
-              relativeTime(ann.created_at),
-              text.announcements.readerCount.replace('{count}', String(ann.reader_count ?? 0)),
-              ann.deleted_at ? (
-                <span className="severity-pill severity-critical">{text.common.delete}</span>
-              ) : (
-                <span className="severity-pill severity-ok">{text.common.enabled}</span>
-              ),
-              <div className="table-actions">
-                {!ann.deleted_at && (
-                  <button
-                    className="btn-ghost"
-                    onClick={() => deleteAnnouncement.mutate(ann.id)}
-                    disabled={deleteAnnouncement.isPending}
-                    aria-label={text.announcements.deleteAnnouncement}
-                  >
-                    <Trash2 size={14} aria-hidden="true" />
-                    {text.announcements.deleteAnnouncement}
-                  </button>
-                )}
-              </div>
-            ]
-          }))}
-        />
-      </section>
 
       <AdminAuditLog />
     </div>
@@ -674,11 +521,6 @@ function splitResolvers(value: string) {
 function toPositiveInt(value: string, fallback: number) {
   const parsed = Number.parseInt(value, 10);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
-}
-
-function toPositiveInt64(value: string, fallback: number) {
-  const parsed = Number.parseInt(value, 10);
-  return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback;
 }
 
 function domainCheckStatusLabel(status: string) {

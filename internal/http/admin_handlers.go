@@ -1,7 +1,6 @@
 package httpapi
 
 import (
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -41,15 +40,29 @@ type adminQuotaAlert struct {
 	Reason     string     `json:"reason"`
 }
 
-type adminAuditLogsResponse struct {
+type auditLogListResponse struct {
 	Items      []models.AuditLog `json:"items"`
-	NextCursor string            `json:"next_cursor,omitempty"`
+	Total      int64             `json:"total"`
+	Page       int               `json:"page"`
+	PerPage    int               `json:"per_page"`
+	TotalPages int               `json:"total_pages"`
+}
+
+type domainHealthListResponse struct {
+	Items      []adminDomainHealthItem `json:"items"`
+	Total      int64                   `json:"total"`
+	Page       int                     `json:"page"`
+	PerPage    int                     `json:"per_page"`
+	TotalPages int                     `json:"total_pages"`
 }
 
 func (h *Handler) adminDomainHealth(c *gin.Context) {
 	if !h.requireAdmin(c) {
 		return
 	}
+	page := parsePage(c.Query("page"))
+	perPage := parseLimit(c.Query("per_page"), 10, 100)
+
 	var domains []models.Domain
 	if err := h.DB.Order("domain asc").Find(&domains).Error; err != nil {
 		fail(c, http.StatusInternalServerError, err.Error())
@@ -76,7 +89,24 @@ func (h *Handler) adminDomainHealth(c *gin.Context) {
 		}
 		return items[i].Domain.Domain < items[j].Domain.Domain
 	})
-	ok(c, items)
+
+	total := int64(len(items))
+	start := (page - 1) * perPage
+	if start >= len(items) {
+		start = 0
+	}
+	end := start + perPage
+	if end > len(items) {
+		end = len(items)
+	}
+
+	ok(c, domainHealthListResponse{
+		Items:      items[start:end],
+		Total:      total,
+		Page:       page,
+		PerPage:    perPage,
+		TotalPages: pageCount(total, perPage),
+	})
 }
 
 type domainCheckSettingsDTO struct {
@@ -275,10 +305,21 @@ func (h *Handler) getAdminDomainCheckRun(c *gin.Context) {
 	ok(c, gin.H{"run": run, "records": records})
 }
 
+type quotaAlertListResponse struct {
+	Items      []adminQuotaAlert `json:"items"`
+	Total      int64             `json:"total"`
+	Page       int               `json:"page"`
+	PerPage    int               `json:"per_page"`
+	TotalPages int               `json:"total_pages"`
+}
+
 func (h *Handler) adminQuotaAlerts(c *gin.Context) {
 	if !h.requireAdmin(c) {
 		return
 	}
+	page := parsePage(c.Query("page"))
+	perPage := parseLimit(c.Query("per_page"), 8, 100)
+
 	alerts := make([]adminQuotaAlert, 0)
 
 	var users []models.User
@@ -324,7 +365,24 @@ func (h *Handler) adminQuotaAlerts(c *gin.Context) {
 		}
 		return alerts[i].Label < alerts[j].Label
 	})
-	ok(c, alerts)
+
+	total := int64(len(alerts))
+	start := (page - 1) * perPage
+	if start >= len(alerts) {
+		start = 0
+	}
+	end := start + perPage
+	if end > len(alerts) {
+		end = len(alerts)
+	}
+
+	ok(c, quotaAlertListResponse{
+		Items:      alerts[start:end],
+		Total:      total,
+		Page:       page,
+		PerPage:    perPage,
+		TotalPages: pageCount(total, perPage),
+	})
 }
 
 func (h *Handler) domainCheckSettingsDTO(settings models.DomainCheckSettings) domainCheckSettingsDTO {
@@ -381,28 +439,32 @@ func (h *Handler) adminAuditLogs(c *gin.Context) {
 	if !h.requireAdmin(c) {
 		return
 	}
-	limit := parseLimit(c.Query("limit"), 30, 100)
+	page := parsePage(c.Query("page"))
+	perPage := parseLimit(c.Query("per_page"), 20, 100)
+
 	query := h.DB.Model(&models.AuditLog{})
 	query = filterAuditLogs(query, c)
-	if cursor := strings.TrimSpace(c.Query("cursor")); cursor != "" {
-		createdAt, id, err := parseAuditCursor(cursor)
-		if err != nil {
-			fail(c, http.StatusBadRequest, "invalid audit cursor")
-			return
-		}
-		query = query.Where("created_at < ? OR (created_at = ? AND id < ?)", createdAt, createdAt, id)
-	}
-	var logs []models.AuditLog
-	if err := query.Order("created_at desc, id desc").Limit(limit + 1).Find(&logs).Error; err != nil {
+
+	var total int64
+	if err := query.Count(&total).Error; err != nil {
 		fail(c, http.StatusInternalServerError, err.Error())
 		return
 	}
-	nextCursor := ""
-	if len(logs) > limit {
-		logs = logs[:limit]
-		nextCursor = encodeAuditCursor(logs[len(logs)-1])
+
+	var logs []models.AuditLog
+	offset := (page - 1) * perPage
+	if err := query.Order("created_at desc, id desc").Limit(perPage).Offset(offset).Find(&logs).Error; err != nil {
+		fail(c, http.StatusInternalServerError, err.Error())
+		return
 	}
-	ok(c, adminAuditLogsResponse{Items: logs, NextCursor: nextCursor})
+
+	ok(c, auditLogListResponse{
+		Items:      logs,
+		Total:      total,
+		Page:       page,
+		PerPage:    perPage,
+		TotalPages: pageCount(total, perPage),
+	})
 }
 
 func filterAuditLogs(query *gorm.DB, c *gin.Context) *gorm.DB {
@@ -463,31 +525,6 @@ func parseAuditTime(value string) (time.Time, bool) {
 		}
 	}
 	return time.Time{}, false
-}
-
-func encodeAuditCursor(log models.AuditLog) string {
-	value := log.CreatedAt.UTC().Format(time.RFC3339Nano) + "|" + strconv.FormatUint(uint64(log.ID), 10)
-	return base64.RawURLEncoding.EncodeToString([]byte(value))
-}
-
-func parseAuditCursor(value string) (time.Time, uint, error) {
-	raw, err := base64.RawURLEncoding.DecodeString(value)
-	if err != nil {
-		return time.Time{}, 0, err
-	}
-	created, idText, ok := strings.Cut(string(raw), "|")
-	if !ok {
-		return time.Time{}, 0, errors.New("cursor missing separator")
-	}
-	createdAt, err := time.Parse(time.RFC3339Nano, created)
-	if err != nil {
-		return time.Time{}, 0, err
-	}
-	id, err := strconv.ParseUint(idText, 10, 0)
-	if err != nil {
-		return time.Time{}, 0, err
-	}
-	return createdAt.UTC(), uint(id), nil
 }
 
 func classifyDomainHealth(d models.Domain, now time.Time) (string, string) {
@@ -684,4 +721,76 @@ func isSameLocalDate(dateStr string) bool {
 		return false
 	}
 	return dateStr == time.Now().Format("2006-01-02")
+}
+
+func (h *Handler) adminLoginSettings(c *gin.Context) {
+	if !h.requireAdmin(c) {
+		return
+	}
+	settings, err := db.EnsureLoginSettings(h.DB)
+	if err != nil {
+		fail(c, http.StatusInternalServerError, err.Error())
+		return
+	}
+	ok(c, loginSettingsDTO(settings))
+}
+
+func (h *Handler) patchAdminLoginSettings(c *gin.Context) {
+	if !h.requireAdmin(c) {
+		return
+	}
+	settings, err := db.EnsureLoginSettings(h.DB)
+	if err != nil {
+		fail(c, http.StatusInternalServerError, err.Error())
+		return
+	}
+	var input struct {
+		TurnstileEnabled   *bool   `json:"turnstile_enabled"`
+		TurnstileSiteKey   *string `json:"turnstile_site_key"`
+		TurnstileSecretKey *string `json:"turnstile_secret_key"`
+		PasskeyEnabled     *bool   `json:"passkey_enabled"`
+	}
+	if err := c.ShouldBindJSON(&input); err != nil {
+		fail(c, http.StatusBadRequest, "invalid json")
+		return
+	}
+	if input.TurnstileEnabled != nil {
+		settings.TurnstileEnabled = *input.TurnstileEnabled
+	}
+	if input.TurnstileSiteKey != nil {
+		settings.TurnstileSiteKey = strings.TrimSpace(*input.TurnstileSiteKey)
+	}
+	if input.TurnstileSecretKey != nil {
+		if *input.TurnstileSecretKey != "***" {
+			settings.TurnstileSecretKey = strings.TrimSpace(*input.TurnstileSecretKey)
+		}
+	}
+	if input.PasskeyEnabled != nil {
+		settings.PasskeyEnabled = *input.PasskeyEnabled
+	}
+	if settings.TurnstileEnabled && (settings.TurnstileSiteKey == "" || settings.TurnstileSecretKey == "") {
+		fail(c, http.StatusBadRequest, "turnstile site key and secret key are required when turnstile is enabled")
+		return
+	}
+	if err := h.DB.Save(settings).Error; err != nil {
+		fail(c, http.StatusInternalServerError, err.Error())
+		return
+	}
+	h.audit("login_settings.patch", actor(c), "login-settings", "")
+	ok(c, loginSettingsDTO(settings))
+}
+
+func loginSettingsDTO(settings *models.LoginSettings) gin.H {
+	secretKey := ""
+	if settings.TurnstileSecretKey != "" {
+		secretKey = "***"
+	}
+	return gin.H{
+		"id":                   settings.ID,
+		"turnstile_enabled":    settings.TurnstileEnabled,
+		"turnstile_site_key":   settings.TurnstileSiteKey,
+		"turnstile_secret_key": secretKey,
+		"passkey_enabled":      settings.PasskeyEnabled,
+		"updated_at":           settings.UpdatedAt,
+	}
 }

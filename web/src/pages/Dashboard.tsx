@@ -6,8 +6,8 @@ import { api } from '../api';
 import type { Stats, TimeseriesStats } from '../types';
 import { useText } from '../locales';
 import { useAppStore } from '../store';
-import { DataTable, EmptyState, Metric, PaginationControls } from '../components/shared';
-import type { DataTableColumn, DataTableRow } from '../components/shared/DataTable';
+import { DataTable, EmptyState, InfoTip, Metric, PaginationControls } from '../components/shared';
+import type { DataTableColumn, DataTableRow } from '../components/shared';
 import { LineChart } from '../components/charts/LineChart';
 
 export function Dashboard({ user }: { user: User }) {
@@ -48,10 +48,10 @@ export function Dashboard({ user }: { user: User }) {
   const pagedDomains = publicDomains.slice((domainPage - 1) * pageSize, domainPage * pageSize);
 
   const domainColumns: DataTableColumn[] = [
-    { key: 'domain', header: text.dashboard.tableDomain },
-    { key: 'mode', header: text.dashboard.tableMode },
-    { key: 'mail', header: text.dashboard.tableMail },
-    { key: 'action', header: text.dashboard.tableAction },
+    { key: 'domain', header: text.dashboard.tableDomain, minWidth: '14rem' },
+    { key: 'mode', header: text.dashboard.tableMode, align: 'center', width: '7rem' },
+    { key: 'mail', header: text.dashboard.tableMail, align: 'right', width: '7rem' },
+    { key: 'action', header: text.dashboard.tableAction, align: 'right', width: '9rem' },
   ];
 
   const domainRows: DataTableRow[] = pagedDomains.map((domain) => ({
@@ -61,7 +61,7 @@ export function Dashboard({ user }: { user: User }) {
         <span className="font-medium">@{domain.domain}</span>
       </div>,
       <span className="badge" key="mode">{text.dashboard.publicTag}</span>,
-      <span className="tabular-nums" key="mail" style={{ textAlign: 'right', display: 'inline-block', width: '100%' }}>
+      <span className="tabular-nums" key="mail">
         {domain.message_count ?? 0}
       </span>,
       <button className="btn-ghost" key="action" onClick={() => setPage('inbox')}>
@@ -140,8 +140,7 @@ export function Dashboard({ user }: { user: User }) {
         <section className="panel chart-panel">
           <div className="panel-header">
             <div>
-              <h2>{text.dashboard.chartMessages}</h2>
-              <p>{text.dashboard.last7Days}</p>
+              <h2>{text.dashboard.chartMessages}<InfoTip text={text.dashboard.last7Days} /></h2>
             </div>
           </div>
           <LineChart
@@ -157,8 +156,7 @@ export function Dashboard({ user }: { user: User }) {
         <section className="panel chart-panel">
           <div className="panel-header">
             <div>
-              <h2>{text.dashboard.chartDomains}</h2>
-              <p>{text.dashboard.last7Days}</p>
+              <h2>{text.dashboard.chartDomains}<InfoTip text={text.dashboard.last7Days} /></h2>
             </div>
           </div>
           <LineChart
@@ -174,8 +172,7 @@ export function Dashboard({ user }: { user: User }) {
         <section className="panel chart-panel">
           <div className="panel-header">
             <div>
-              <h2>{text.dashboard.chartApiCalls}</h2>
-              <p>{text.dashboard.last7Days}</p>
+              <h2>{text.dashboard.chartApiCalls}<InfoTip text={text.dashboard.last7Days} /></h2>
             </div>
           </div>
           <LineChart
@@ -194,8 +191,7 @@ export function Dashboard({ user }: { user: User }) {
       <section className="panel">
         <div className="panel-header">
           <div>
-            <h2>{text.dashboard.publicDomainList}</h2>
-            <p>{text.dashboard.publicDomainListDesc}</p>
+            <h2>{text.dashboard.publicDomainList}<InfoTip text={text.dashboard.publicDomainListDesc} /></h2>
           </div>
           <span className="text-xs text-[var(--muted)]">
             {publicDomains.length} {text.dashboard.publicMailboxes}
@@ -216,7 +212,7 @@ export function Dashboard({ user }: { user: User }) {
           </div>
         ) : publicDomains.length > 0 ? (
           <>
-            <DataTable columns={domainColumns} rows={domainRows} emptyLabel={text.dashboard.publicDomainEmpty} />
+            <DataTable ariaLabel={text.dashboard.publicDomainList} columns={domainColumns} rows={domainRows} emptyLabel={text.dashboard.publicDomainEmpty} />
             <PaginationControls page={domainPage} totalPages={totalPages} onPageChange={setDomainPage} />
           </>
         ) : (
