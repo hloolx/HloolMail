@@ -18,19 +18,20 @@ ENV GOPROXY=$GOPROXY
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . ./
-COPY --from=web /app/web/dist ./web/dist
-RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH:-amd64} go build -trimpath -ldflags="-s -w" -o /out/hloolmail ./cmd/server
+COPY --from=web /app/web/dist ./internal/frontend/dist
+ARG VERSION=dev
+ARG COMMIT=unknown
+ARG BUILD_TIME=unknown
+RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH:-amd64} go build -tags embed_frontend -trimpath -ldflags="-s -w -X gptmail/internal/version.Version=${VERSION} -X gptmail/internal/version.Commit=${COMMIT} -X gptmail/internal/version.BuildTime=${BUILD_TIME}" -o /out/hloolmail ./cmd/server
 
 FROM alpine:3.21
 RUN adduser -D -u 10001 app
 WORKDIR /app
 COPY --from=api /out/hloolmail /usr/local/bin/hloolmail
-COPY --from=web /app/web/dist /app/web/dist
 RUN mkdir -p /app/storage && chown -R app:app /app
 USER app
 ENV HTTP_ADDR=:3000 \
     SMTP_ADDR=:2525 \
-    FRONTEND_DIST=/app/web/dist \
     HLOOLMAIL_DEPLOYMENT=docker \
     DATABASE_DRIVER=sqlite \
     DATABASE_URL=/app/storage/gptmail.db

@@ -1,14 +1,15 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
+import { AnimatePresence, motion } from 'framer-motion';
+import { toast } from 'sonner';
 import {
-  AlertTriangle, Bot, BookOpen, Check, Clock, Code, Copy, Download, Globe, History,
-  Link2, Play, Send, Terminal, Trash2, X, ChevronDown, ChevronRight
+  AlertTriangle, Check, Code, Copy, Globe, History,
+  Play, Send, Terminal, ChevronDown
 } from 'lucide-react';
 import type { InstallStatus } from '../api';
 import { api } from '../api';
 import { useText } from '../locales';
 import { useAppStore } from '../store';
-import { useCopyState } from '../hooks/useCopyState';
 import { copy } from '../lib/clipboard';
 import {
   API_DOC_ENDPOINTS,
@@ -21,14 +22,15 @@ import {
   explorerDefaults,
   type DocEndpoint
 } from '../lib/apiDocs';
-import { downloadMarkdown } from '../lib/download';
 import { useRequestHistory } from '../hooks/useRequestHistory';
 import { generateCode, codeGenLabel, type CodeGenLang } from '../lib/codegen';
 import { ParamBuilder } from '../components/api-explorer/ParamBuilder';
 import { ResponsePanel, type ExplorerResult } from '../components/api-explorer/ResponsePanel';
 import { ApiKeySelector } from '../components/api-explorer/ApiKeySelector';
 import { ConfirmModal } from '../components/api-explorer/ConfirmModal';
-import { SseViewer } from '../components/api-explorer/SseViewer';
+import { ApiDocsHero } from './ApiDocsHero';
+import { ApiDocsHistory } from './ApiDocsHistory';
+import { ApiDocsMarkdownPreview } from './ApiDocsMarkdownPreview';
 
 function endpointKey(endpoint: DocEndpoint) {
   return `${endpoint.method} ${endpoint.path}`;
@@ -45,6 +47,19 @@ function prettyBody(raw: string) {
 function normalizePath(path: string) {
   const value = path.trim() || '/api/domains/available';
   return value.startsWith('/') ? value : `/${value}`;
+}
+
+function buildRequestURL(apiBase: string, requestPath: string, queryString: string, fallbackBase: string, fallbackPath: string): URL | null {
+  try {
+    const url = new URL(normalizePath(requestPath), (apiBase || fallbackBase).replace(/\/$/, ''));
+    const query = queryString.trim().replace(/^\?/, '');
+    if (query) {
+      new URLSearchParams(query).forEach((value, key) => url.searchParams.set(key, value));
+    }
+    return url;
+  } catch {
+    return null;
+  }
 }
 
 function requestPreview(endpoint: DocEndpoint, url: URL, apiKey: string, body: string) {
@@ -85,9 +100,6 @@ export function APIDocsPage() {
     retry: false
   });
   const markdown = docs.data || apiDocMarkdown(configuredBaseURL, config);
-  const [docsCopied, markDocsCopied] = useCopyState();
-  const [skillCopied, markSkillCopied] = useCopyState();
-  const [promptCopied, markPromptCopied] = useCopyState();
 
   const defaultEndpoint = API_DOC_ENDPOINTS[0];
   const defaultRequest = explorerDefaults(defaultEndpoint);
@@ -107,14 +119,21 @@ export function APIDocsPage() {
   const [showCodeGen, setShowCodeGen] = useState(false);
   const [codeGenLang, setCodeGenLang] = useState<CodeGenLang>('curl');
   const [confirmModalOpen, setConfirmModalOpen] = useState(false);
-  const [sseOpen, setSseOpen] = useState(false);
   const [endpointMenuOpen, setEndpointMenuOpen] = useState(false);
   const endpointSelectRef = useRef<HTMLDivElement>(null);
-  const { history, addEntry, removeEntry, restoreEntry, clearHistory } = useRequestHistory();
+  const { history, addEntry, removeEntry, restoreEntry, clearHistory, storageError } = useRequestHistory();
 
   useEffect(() => {
     setApiBase((current) => (current === browserBaseURL ? configuredBaseURL : current));
   }, [browserBaseURL, configuredBaseURL]);
+
+  useEffect(() => {
+    if (storageError) {
+      toast.warning('History storage is full or unavailable. Recent requests may not be saved.', {
+        id: 'history-storage-error',
+      });
+    }
+  }, [storageError]);
 
   useEffect(() => {
     if (!endpointMenuOpen) return;
@@ -138,18 +157,10 @@ export function APIDocsPage() {
     [defaultEndpoint, selectedKey]
   );
 
-  const previewURL = useMemo(() => {
-    try {
-      const url = new URL(normalizePath(requestPath), (apiBase || browserBaseURL).replace(/\/$/, ''));
-      const query = queryString.trim().replace(/^\?/, '');
-      if (query) {
-        new URLSearchParams(query).forEach((value, key) => url.searchParams.set(key, value));
-      }
-      return url;
-    } catch {
-      return new URL(defaultRequest.path, browserBaseURL);
-    }
-  }, [apiBase, browserBaseURL, defaultRequest.path, queryString, requestPath]);
+  const previewURL = useMemo(
+    () => buildRequestURL(apiBase, requestPath, queryString, browserBaseURL, defaultRequest.path) ?? new URL(defaultRequest.path, browserBaseURL),
+    [apiBase, browserBaseURL, defaultRequest.path, queryString, requestPath]
+  );
 
   const preview = requestPreview(selectedEndpoint, previewURL, apiKey, requestBody);
 
@@ -157,8 +168,8 @@ export function APIDocsPage() {
     const headers: Record<string, string> = {
       Accept: 'application/json, text/markdown;q=0.9, text/plain;q=0.8'
     };
-    if (selectedEndpoint.auth === 'apiKey' && apiKey.trim()) {
-      headers['X-API-Key'] = apiKey.trim();
+    if (selectedEndpoint.auth === 'apiKey') {
+      headers['X-API-Key'] = apiKey.trim() || 'YOUR_API_KEY';
     }
     if (requestBody.trim() && selectedEndpoint.method !== 'GET') {
       headers['Content-Type'] = 'application/json';
@@ -171,17 +182,22 @@ export function APIDocsPage() {
     };
   }, [selectedEndpoint, apiKey, previewURL, requestBody]);
 
+  const clearResult = useCallback(() => {
+    setResult(null);
+    setCallError('');
+    setDuration(0);
+    setResponseHeaders({});
+  }, []);
+
   function applyEndpoint(endpoint: DocEndpoint) {
     const next = explorerDefaults(endpoint);
     setSelectedKey(endpointKey(endpoint));
     setRequestPath(next.path);
     setQueryString(next.query);
     setRequestBody(next.body);
+    setApiKey('');
     setDangerConfirmed(false);
-    setResult(null);
-    setCallError('');
-    setDuration(0);
-    setResponseHeaders({});
+    clearResult();
   }
 
   function chooseEndpoint(endpoint: DocEndpoint) {
@@ -201,10 +217,8 @@ export function APIDocsPage() {
     setQueryString(entry.queryString);
     setRequestBody(entry.requestBody);
     if (entry.apiKey) setApiKey(entry.apiKey);
-    setResult(null);
-    setCallError('');
-    setDuration(0);
-    setResponseHeaders({});
+    setDangerConfirmed(false);
+    clearResult();
     setShowHistory(false);
   }
 
@@ -217,27 +231,14 @@ export function APIDocsPage() {
       setConfirmModalOpen(true);
       return;
     }
-    if (selectedEndpoint.streaming) {
-      setSseOpen(true);
-      return;
-    }
     callEndpoint();
   }
 
   async function callEndpoint() {
-    setCallError('');
-    setResult(null);
-    setDuration(0);
-    setResponseHeaders({});
+    clearResult();
 
-    let url: URL;
-    try {
-      url = new URL(normalizePath(requestPath), (apiBase || browserBaseURL).replace(/\/$/, ''));
-      const query = queryString.trim().replace(/^\?/, '');
-      if (query) {
-        new URLSearchParams(query).forEach((value, key) => url.searchParams.set(key, value));
-      }
-    } catch {
+    const url = buildRequestURL(apiBase, requestPath, queryString, browserBaseURL, defaultRequest.path);
+    if (!url) {
       setCallError(text.apiDocs.invalidURL);
       return;
     }
@@ -314,59 +315,7 @@ export function APIDocsPage() {
 
   return (
     <div className="api-docs-page">
-      <section className="api-docs-hero">
-        <div className="api-docs-hero-copy">
-          <span className="home-kicker">
-            <BookOpen size={14} />
-            {text.page['api-docs']}
-          </span>
-          <h1>{text.apiDocs.title}</h1>
-          <p>{text.apiDocs.desc}</p>
-        </div>
-
-        <div className="api-docs-handoff-grid">
-          <article className="api-docs-handoff-card api-docs-md-card">
-            <div className="api-docs-handoff-icon">
-              <BookOpen size={18} />
-            </div>
-            <div>
-              <h2>{text.apiDocs.mdLink}</h2>
-              <p>{text.apiDocs.mdLinkHint}</p>
-              <code>{markdownURL}</code>
-              <div className="api-docs-mini-actions">
-                <button className="btn-secondary" onClick={(event) => { copy(markdownURL, { celebrate: true, event, label: text.apiDocs.docsLinkCopied }); markDocsCopied(); }}>
-                  {docsCopied ? <Check size={15} /> : <Link2 size={15} />}
-                  {docsCopied ? text.common.copied : text.common.copyMdLink}
-                </button>
-                <button className="btn-primary" onClick={() => downloadMarkdown('hlool-mail-api-docs.md', markdown)}>
-                  <Download size={15} />
-                  {text.common.exportMd}
-                </button>
-              </div>
-            </div>
-          </article>
-          <article className="api-docs-handoff-card">
-            <div className="api-docs-handoff-icon">
-              <Bot size={18} />
-            </div>
-            <div>
-              <h2>{text.apiDocs.skillLink}</h2>
-              <p>{text.apiDocs.skillLinkHint}</p>
-              <code>{skillURL}</code>
-              <div className="api-docs-mini-actions">
-                <button className="btn-secondary" onClick={(event) => { copy(skillURL, { celebrate: true, event, label: text.apiDocs.skillLinkCopied }); markSkillCopied(); }}>
-                  {skillCopied ? <Check size={15} /> : <Link2 size={15} />}
-                  {skillCopied ? text.common.copied : text.apiDocs.copySkillLink}
-                </button>
-                <button className="btn-secondary" onClick={(event) => { copy(prompt, { celebrate: true, event, label: text.apiDocs.skillPromptCopied }); markPromptCopied(); }}>
-                  {promptCopied ? <Check size={15} /> : <Copy size={15} />}
-                  {promptCopied ? text.common.copied : text.apiDocs.copySkillPrompt}
-                </button>
-              </div>
-            </div>
-          </article>
-        </div>
-      </section>
+      <ApiDocsHero markdownURL={markdownURL} skillURL={skillURL} prompt={prompt} markdown={markdown} />
 
       <section className="api-docs-workspace">
         <div className="panel-header api-docs-workspace-header">
@@ -387,10 +336,10 @@ export function APIDocsPage() {
         </div>
 
         <div className="api-docs-workspace-grid">
-          <div className="api-docs-config-panel">
-            <label className="api-docs-field">
+          <div className="api-docs-config-panel" style={{ maxHeight: 'calc(100vh - 14rem)', overflowY: 'auto' }}>
+            <label className="api-docs-field" htmlFor="explorer-api-base">
               <span>{text.apiDocs.apiBase}</span>
-              <input className="input" value={apiBase} onChange={(event) => setApiBase(event.target.value)} />
+              <input id="explorer-api-base" className="input" value={apiBase} onChange={(event) => setApiBase(event.target.value)} />
             </label>
             <div className="api-docs-field">
               <span>{text.apiDocs.apiKey}</span>
@@ -413,36 +362,46 @@ export function APIDocsPage() {
                   <span className="api-docs-endpoint-trigger-title">{endpointTitle(selectedEndpoint, language)}</span>
                   <ChevronDown size={16} className={endpointMenuOpen ? 'open' : ''} />
                 </button>
-                {endpointMenuOpen && (
-                  <div className="api-docs-endpoint-menu" role="listbox" aria-label={text.apiDocs.endpointsTitle}>
-                    {API_DOC_ENDPOINTS.map((endpoint) => {
-                      const active = selectedKey === endpointKey(endpoint);
-                      return (
-                        <button
-                          key={`${endpoint.method}-${endpoint.path}`}
-                          type="button"
-                          role="option"
-                          aria-selected={active}
-                          className={`api-docs-endpoint-option ${active ? 'active' : ''}`}
-                          onClick={() => chooseEndpoint(endpoint)}
-                        >
-                          <span className={`method-badge method-${endpoint.method.toLowerCase()}`}>{endpoint.method}</span>
-                          <span>{endpointTitle(endpoint, language)}</span>
-                          {active && <Check size={15} />}
-                        </button>
-                      );
-                    })}
-                  </div>
-                )}
+                <AnimatePresence>
+                  {endpointMenuOpen && (
+                    <motion.div
+                      className="api-docs-endpoint-menu"
+                      role="listbox"
+                      aria-label={text.apiDocs.endpointsTitle}
+                      initial={{ opacity: 0, y: -4 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      exit={{ opacity: 0, y: -4 }}
+                      transition={{ duration: 0.15 }}
+                    >
+                      {API_DOC_ENDPOINTS.map((endpoint) => {
+                        const active = selectedKey === endpointKey(endpoint);
+                        return (
+                          <button
+                            key={`${endpoint.method}-${endpoint.path}`}
+                            type="button"
+                            role="option"
+                            aria-selected={active}
+                            className={`api-docs-endpoint-option ${active ? 'active' : ''}`}
+                            onClick={() => chooseEndpoint(endpoint)}
+                          >
+                            <span className={`method-badge method-${endpoint.method.toLowerCase()}`}>{endpoint.method}</span>
+                            <span>{endpointTitle(endpoint, language)}</span>
+                            {active && <Check size={15} />}
+                          </button>
+                        );
+                      })}
+                    </motion.div>
+                  )}
+                </AnimatePresence>
               </div>
               <div className="api-docs-endpoint-summary">
                 <span className={`method-badge method-${selectedEndpoint.method.toLowerCase()}`}>{selectedEndpoint.method}</span>
                 <p>{endpointDesc(selectedEndpoint, language)}</p>
               </div>
             </div>
-            <label className="api-docs-field">
+            <label className="api-docs-field" htmlFor="explorer-path">
               <span>{text.apiDocs.path}</span>
-              <input className="input" value={requestPath} onChange={(event) => setRequestPath(event.target.value)} />
+              <input id="explorer-path" className="input" value={requestPath} onChange={(event) => setRequestPath(event.target.value)} />
             </label>
             <div className="api-docs-field api-docs-field-wide">
               <span>{text.apiDocs.queryString}</span>
@@ -454,14 +413,14 @@ export function APIDocsPage() {
             </div>
 
             {selectedEndpoint.dangerous && (
-              <label className="api-docs-danger">
-                <input type="checkbox" checked={dangerConfirmed} onChange={(event) => setDangerConfirmed(event.target.checked)} />
+              <label className="api-docs-danger" htmlFor="explorer-danger-confirm">
+                <input id="explorer-danger-confirm" type="checkbox" checked={dangerConfirmed} onChange={(event) => setDangerConfirmed(event.target.checked)} />
                 <AlertTriangle size={16} />
                 <span>{text.apiDocs.confirmDanger}</span>
               </label>
             )}
 
-            <div className="api-docs-final-url">
+            <div className="api-docs-final-url" style={{ position: 'sticky', bottom: 0, zIndex: 5 }}>
               <Globe size={14} />
               <code>{previewURL.href}</code>
               <button className="btn-icon" onClick={(event) => copy(previewURL.href, { event })} title={text.common.copy}>
@@ -502,10 +461,10 @@ export function APIDocsPage() {
                         </button>
                       ))}
                     </div>
-                    <pre><code>{generateCode(codeGenRequest, codeGenLang)}</code></pre>
+                    <pre aria-label="Generated code"><code>{generateCode(codeGenRequest, codeGenLang)}</code></pre>
                   </div>
                 ) : (
-                  <pre><code>{preview}</code></pre>
+                  <pre aria-label="Request preview"><code>{preview}</code></pre>
                 )}
               </div>
 
@@ -514,7 +473,7 @@ export function APIDocsPage() {
                   <span><Send size={15} /> {text.apiDocs.response}</span>
                   <button className="btn-primary" disabled={isCalling} onClick={handleSendClick}>
                     <Play size={15} />
-                    {selectedEndpoint.streaming ? text.apiDocs.openStream : isCalling ? text.apiDocs.sending : text.apiDocs.send}
+                    {isCalling ? text.apiDocs.sending : text.apiDocs.send}
                   </button>
                 </div>
                 <ResponsePanel
@@ -539,72 +498,19 @@ export function APIDocsPage() {
               </section>
             </div>
 
-            {showHistory && (
-              <div className="api-docs-history">
-                <div className="api-docs-history-head">
-                  <span><History size={15} /> {text.apiDocs.requestHistory}</span>
-                  <div className="api-docs-history-actions">
-                    {history.length > 0 && (
-                      <button className="btn-icon" onClick={clearHistory} title="Clear history">
-                        <Trash2 size={14} />
-                      </button>
-                    )}
-                    <button className="btn-icon" onClick={() => setShowHistory(false)}>
-                      <X size={14} />
-                    </button>
-                  </div>
-                </div>
-                {history.length === 0 ? (
-                  <div className="api-docs-history-empty">{text.apiDocs.noHistory}</div>
-                ) : (
-                  <div className="api-docs-history-list">
-                    {history.map((entry) => (
-                      <div key={entry.id} className="api-docs-history-item">
-                        <button className="api-docs-history-restore" onClick={() => restoreHistoryEntry(entry.id)}>
-                          <span className={`api-docs-history-status ${entry.status && entry.status >= 200 && entry.status < 300 ? 'ok' : entry.status ? 'bad' : ''}`}>
-                            {entry.status || '-'}
-                          </span>
-                          <span className="api-docs-history-endpoint">{entry.endpointKey}</span>
-                          <span className="api-docs-history-meta">
-                            <Clock size={12} />
-                            {entry.duration !== undefined ? `${entry.duration}ms` : '-'}
-                          </span>
-                          <ChevronRight size={14} className="api-docs-history-arrow" />
-                        </button>
-                        <button className="api-docs-history-delete" onClick={() => removeEntry(entry.id)} title="Remove">
-                          <X size={12} />
-                        </button>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-            )}
-          </div>
-        </div>
-      </section>
-
-      {sseOpen && (
-        <div className="api-docs-sse-overlay">
-          <div className="api-docs-sse-panel">
-            <SseViewer
-              url={previewURL.href}
-              headers={{ 'X-API-Key': apiKey.trim() }}
-              onClose={() => setSseOpen(false)}
+            <ApiDocsHistory
+              showHistory={showHistory}
+              history={history}
+              setShowHistory={setShowHistory}
+              clearHistory={clearHistory}
+              removeEntry={removeEntry}
+              restoreHistoryEntry={restoreHistoryEntry}
             />
           </div>
         </div>
-      )}
-
-      <section className="api-docs-preview">
-        <div className="panel-header">
-          <div>
-            <h2>{text.apiDocs.previewTitle}</h2>
-            <p>{docs.isError ? `${markdownURL} local fallback` : API_DOCS_MD_PATH}</p>
-          </div>
-        </div>
-        <pre className="api-docs-md-preview"><code>{markdown}</code></pre>
       </section>
+
+      <ApiDocsMarkdownPreview markdown={markdown} isError={docs.isError} markdownURL={markdownURL} />
 
       <ConfirmModal
         open={confirmModalOpen}

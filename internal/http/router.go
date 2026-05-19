@@ -1,8 +1,10 @@
 package httpapi
 
 import (
+	"io/fs"
 	"net/http"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -13,6 +15,7 @@ import (
 	"gptmail/internal/config"
 	"gptmail/internal/domain"
 	"gptmail/internal/events"
+	"gptmail/internal/frontend"
 	"gptmail/internal/jobs"
 )
 
@@ -47,6 +50,7 @@ type Handler struct {
 	Hub          *events.Hub
 	DomainHealth *jobs.DomainHealthJob
 	RateLimiter  *rateLimiter
+	AuditLogger  *AuditLogger
 
 	rateLimiterOnce sync.Once
 }
@@ -62,6 +66,8 @@ func NewRouter(h *Handler) *gin.Engine {
 
 	api := router.Group("/api")
 	api.GET("/health", h.perIPRateLimit(2, 5), h.health)
+	api.GET("/version", h.perIPRateLimit(0.5, 5), h.versionInfo)
+	api.GET("/version/check", h.perIPRateLimit(1.0/12, 2), h.versionCheck)
 	api.GET("/install/status", h.perIPRateLimit(1.0/3, 3), h.installStatus)
 	api.POST("/install/dns-check", h.perIPRateLimit(1.0/6, 3), h.installDNSCheck)
 	api.POST("/install", h.perIPRateLimit(1.0/3, 3), h.install)
@@ -122,6 +128,12 @@ func NewRouter(h *Handler) *gin.Engine {
 	notificationGroup.POST("/notifications/read-all", h.markAllNotificationsRead)
 	api.GET("/notification-stream", h.perAPIRateLimit(1.0/6, 3), h.notificationStream)
 
+	announcementGroup := api.Group("", h.perAPIRateLimit(0.5, 5))
+	announcementGroup.GET("/announcements", h.listAnnouncements)
+	announcementGroup.GET("/announcements/unread-count", h.unreadAnnouncementCount)
+	announcementGroup.PATCH("/announcements/:id/read", h.markAnnouncementRead)
+	api.GET("/announcement-stream", h.perAPIRateLimit(1.0/6, 3), h.announcementStream)
+
 	adminGroup := api.Group("", h.perAPIRateLimit(0.5, 5))
 	adminGroup.GET("/admin/stats", h.adminStats)
 	adminGroup.GET("/admin/domain-health", h.adminDomainHealth)
@@ -134,18 +146,31 @@ func NewRouter(h *Handler) *gin.Engine {
 	adminGroup.PATCH("/admin/oauth/providers/:provider", h.adminUpdateOAuthProvider)
 	adminGroup.GET("/admin/quota-alerts", h.adminQuotaAlerts)
 	adminGroup.GET("/admin/audit-logs", h.adminAuditLogs)
+	adminGroup.GET("/admin/announcements", h.adminListAnnouncements)
+	adminGroup.POST("/admin/announcements", h.adminCreateAnnouncement)
+	adminGroup.DELETE("/admin/announcements/:id", h.adminDeleteAnnouncement)
 
-	mountFrontend(router, h.Config.FrontendDist)
+	embeddedFrontend, hasEmbeddedFrontend := frontend.Embedded()
+	mountFrontend(router, h.Config.FrontendDist, embeddedFrontend, hasEmbeddedFrontend)
 	return router
 }
 
-func mountFrontend(router *gin.Engine, dist string) {
+func mountFrontend(router *gin.Engine, dist string, embedded fs.FS, hasEmbedded bool) {
+	if mountFrontendDir(router, dist) {
+		return
+	}
+	if hasEmbedded && mountFrontendFS(router, embedded) {
+		return
+	}
+	router.NoRoute(func(c *gin.Context) {
+		c.JSON(404, gin.H{"success": false, "error": "not found"})
+	})
+}
+
+func mountFrontendDir(router *gin.Engine, dist string) bool {
 	index := filepath.Join(dist, "index.html")
 	if _, err := os.Stat(index); err != nil {
-		router.NoRoute(func(c *gin.Context) {
-			c.JSON(404, gin.H{"success": false, "error": "not found"})
-		})
-		return
+		return false
 	}
 	assets := filepath.Join(dist, "assets")
 	if _, err := os.Stat(assets); err == nil {
@@ -169,4 +194,51 @@ func mountFrontend(router *gin.Engine, dist string) {
 		}
 		c.File(index)
 	})
+	return true
+}
+
+func mountFrontendFS(router *gin.Engine, embedded fs.FS) bool {
+	if _, err := fs.Stat(embedded, "index.html"); err != nil {
+		return false
+	}
+	if _, err := fs.Stat(embedded, "assets"); err == nil {
+		if assets, subErr := fs.Sub(embedded, "assets"); subErr == nil {
+			router.StaticFS("/assets", noDirFS{http.FS(assets)})
+		}
+	}
+	frontendFiles := noDirFS{http.FS(embedded)}
+	router.NoRoute(func(c *gin.Context) {
+		if strings.HasPrefix(c.Request.URL.Path, "/api/") {
+			c.JSON(404, gin.H{"success": false, "error": "api route not found"})
+			return
+		}
+		requestPath := strings.TrimPrefix(c.Request.URL.Path, "/")
+		if requestPath != "" {
+			relativePath := path.Clean(requestPath)
+			if fs.ValidPath(relativePath) {
+				if info, err := fs.Stat(embedded, relativePath); err == nil && !info.IsDir() {
+					serveFrontendFSFile(c, frontendFiles, relativePath)
+					return
+				}
+			}
+		}
+		serveFrontendFSFile(c, frontendFiles, "index.html")
+	})
+	return true
+}
+
+func serveFrontendFSFile(c *gin.Context, fileSystem http.FileSystem, name string) {
+	file, err := fileSystem.Open(name)
+	if err != nil {
+		c.Status(http.StatusNotFound)
+		return
+	}
+	defer file.Close()
+
+	info, err := file.Stat()
+	if err != nil || info.IsDir() {
+		c.Status(http.StatusNotFound)
+		return
+	}
+	http.ServeContent(c.Writer, c.Request, path.Base(name), info.ModTime(), file)
 }

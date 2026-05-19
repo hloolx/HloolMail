@@ -18,7 +18,7 @@ func TestRunCleanupRemovesExpiredMessages(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := db.AutoMigrate(&models.Domain{}, &models.Message{}); err != nil {
+	if err := db.AutoMigrate(&models.Domain{}, &models.Message{}, &models.AuditLog{}); err != nil {
 		t.Fatal(err)
 	}
 	now := time.Now()
@@ -98,7 +98,7 @@ func TestRunCleanupRemovesExpiredWaitingDomains(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := db.AutoMigrate(&models.Domain{}, &models.Message{}); err != nil {
+	if err := db.AutoMigrate(&models.Domain{}, &models.Message{}, &models.AuditLog{}); err != nil {
 		t.Fatal(err)
 	}
 	now := time.Now()
@@ -147,6 +147,43 @@ func TestRunCleanupRemovesExpiredWaitingDomains(t *testing.T) {
 		db.Model(&models.Domain{}).Where("domain = ?", domainName).Count(&count)
 		if count != 1 {
 			t.Fatalf("expected %s to remain, count=%d", domainName, count)
+		}
+	}
+}
+
+func TestRunAuditLogCleanupUsesSeparateRetentionWindows(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.AutoMigrate(&models.AuditLog{}); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	logs := []models.AuditLog{
+		{Category: "activity", Severity: "info", Action: "mailbox.create", Actor: "user@example.com", Target: "old", CreatedAt: now.AddDate(0, 0, -31)},
+		{Category: "activity", Severity: "info", Action: "mailbox.create", Actor: "user@example.com", Target: "fresh", CreatedAt: now.AddDate(0, 0, -7)},
+		{Category: "security", Severity: "warning", Action: "api_key.reveal", Actor: "admin@example.com", Target: "old", CreatedAt: now.AddDate(0, 0, -181)},
+		{Category: "security", Severity: "warning", Action: "api_key.reveal", Actor: "admin@example.com", Target: "fresh", CreatedAt: now.AddDate(0, 0, -60)},
+	}
+	if err := db.Create(&logs).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	if err := RunAuditLogCleanup(db, now, 180, 30); err != nil {
+		t.Fatal(err)
+	}
+
+	var remaining []models.AuditLog
+	if err := db.Order("target asc").Find(&remaining).Error; err != nil {
+		t.Fatal(err)
+	}
+	if len(remaining) != 2 {
+		t.Fatalf("remaining logs = %d, want 2: %+v", len(remaining), remaining)
+	}
+	for _, log := range remaining {
+		if log.Target != "fresh" {
+			t.Fatalf("unexpected remaining log: %+v", log)
 		}
 	}
 }

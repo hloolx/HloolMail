@@ -1,23 +1,16 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import type { FormEvent } from 'react';
-import { createPortal } from 'react-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { AlertTriangle, Loader2, Pencil, Search, ShieldAlert, Trash2, UserCog, X } from 'lucide-react';
+import { Loader2, Pencil, Search, Trash2, UserCog } from 'lucide-react';
 import { toast } from 'sonner';
 import type { User } from '../api';
 import { api, patchJSON, postJSON } from '../api';
 import { roleText, useText } from '../locales';
+import { dissolveElement } from '../lib/dissolve';
 import { boolBadge, relativeTime } from '../lib/display';
-import { DataTable, IconButton } from '../components/shared';
-
-type UserForm = {
-  email: string;
-  password: string;
-  role: User['role'];
-  enabled: boolean;
-  daily_limit: string;
-  total_limit: string;
-};
+import { ConfirmModal, DataTable, IconButton } from '../components/shared';
+import { EditUserDialog } from './EditUserDialog';
+import { type UserForm, buildCreatePayload, buildUpdatePayload, emptyCreateForm, validateEmail } from './userFormHelpers';
 
 export function UsersPage({ currentUser }: { currentUser: User }) {
   const queryClient = useQueryClient();
@@ -29,7 +22,9 @@ export function UsersPage({ currentUser }: { currentUser: User }) {
   const [editingUser, setEditingUser] = useState<User | null>(null);
   const [disableTarget, setDisableTarget] = useState<User | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<User | null>(null);
-  const users = useQuery({ queryKey: ['users'], queryFn: () => api<User[]>('/api/users'), retry: false });
+  const [dissolveTarget, setDissolveTarget] = useState<HTMLElement | null>(null);
+  const [emailError, setEmailError] = useState('');
+  const users = useQuery({ queryKey: ['users'], queryFn: () => api<User[]>('/api/users'), retry: false, staleTime: 30_000 });
 
   const filteredUsers = useMemo(() => {
     const term = search.trim().toLowerCase();
@@ -53,6 +48,7 @@ export function UsersPage({ currentUser }: { currentUser: User }) {
     onSuccess: () => {
       invalidateUserViews();
       setForm(emptyCreateForm());
+      setEmailError('');
       toast.success(text.toast.userCreated);
     },
     onError: (error) => toast.error(error.message)
@@ -83,12 +79,17 @@ export function UsersPage({ currentUser }: { currentUser: User }) {
     onSuccess: () => {
       invalidateUserViews();
       setDeleteTarget(null);
-      toast.success('用户已删除');
+      toast.success(text.toast.userDeleted);
     },
     onError: (error) => toast.error(error.message)
   });
 
-  const set = (key: keyof UserForm, value: string | boolean) => setForm((current) => ({ ...current, [key]: value }));
+  const set = (key: keyof UserForm, value: string | boolean) => {
+    setForm((current) => ({ ...current, [key]: value }));
+    if (key === 'email') {
+      setEmailError(validateEmail(value as string, text));
+    }
+  };
 
   return (
     <>
@@ -107,9 +108,10 @@ export function UsersPage({ currentUser }: { currentUser: User }) {
             <label className="user-form-field">
               <span>{text.users.email}</span>
               <input className="input" value={form.email} onChange={(event) => set('email', event.target.value)} placeholder="user@example.com" />
+              {emailError && <span className="field-error">{emailError}</span>}
             </label>
             <label className="user-form-field">
-              <span>密码</span>
+              <span>{text.users.password}</span>
               <input className="input" value={form.password} onChange={(event) => set('password', event.target.value)} placeholder={text.users.passwordPlaceholder} type="password" />
             </label>
             <label className="user-form-field">
@@ -121,15 +123,17 @@ export function UsersPage({ currentUser }: { currentUser: User }) {
             </label>
             <div className="user-limit-grid">
               <label className="user-form-field">
-                <span>日额度</span>
+                <span>{text.users.dailyLimit}</span>
                 <input className="input" type="number" min={0} value={form.daily_limit} onChange={(event) => set('daily_limit', event.target.value)} />
+                <small className="field-hint">{text.users.dailyLimitHint}</small>
               </label>
               <label className="user-form-field">
-                <span>总额度</span>
+                <span>{text.users.totalLimit}</span>
                 <input className="input" type="number" min={0} value={form.total_limit} onChange={(event) => set('total_limit', event.target.value)} />
+                <small className="field-hint">{text.users.totalLimitHint}</small>
               </label>
             </div>
-            <p className="user-form-note">额度填 0 表示不限制；普通用户生成邮箱会消耗额度，管理员不消耗。</p>
+            <p className="user-form-note">{text.users.quotaNote}</p>
             <button className="btn-primary" type="submit" disabled={create.isPending}>
               {create.isPending ? <Loader2 size={16} className="animate-spin" /> : <UserCog size={16} />}
               {text.users.createTitle}
@@ -146,22 +150,26 @@ export function UsersPage({ currentUser }: { currentUser: User }) {
             <div className="users-filters">
               <label className="users-search">
                 <Search size={15} />
-                <input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="搜索邮箱" />
+                <input value={search} onChange={(event) => setSearch(event.target.value)} placeholder={text.users.searchPlaceholder} />
               </label>
               <select className="input" value={roleFilter} onChange={(event) => setRoleFilter(event.target.value as typeof roleFilter)}>
-                <option value="all">全部角色</option>
+                <option value="all">{text.users.allRoles}</option>
                 <option value="admin">{text.role.admin}</option>
                 <option value="user">{text.role.user}</option>
               </select>
               <select className="input" value={statusFilter} onChange={(event) => setStatusFilter(event.target.value as typeof statusFilter)}>
-                <option value="all">全部状态</option>
+                <option value="all">{text.users.allStatuses}</option>
                 <option value="enabled">{text.common.enabled}</option>
                 <option value="disabled">{text.common.disabled}</option>
               </select>
             </div>
           </div>
           <DataTable
-            emptyLabel={users.isLoading ? '加载中...' : '暂无用户'}
+            emptyLabel={
+              users.isLoading ? text.common.loading
+              : users.isError ? text.users.errorLoading
+              : text.users.empty
+            }
             columns={[
               { key: 'email', header: text.users.email },
               { key: 'role', header: text.users.role },
@@ -169,24 +177,28 @@ export function UsersPage({ currentUser }: { currentUser: User }) {
               { key: 'today-usage', header: text.users.todayUsage },
               { key: 'total-usage', header: text.users.totalUsage },
               { key: 'last-used', header: text.users.lastUsed },
-              { key: 'actions', header: '操作' }
+              { key: 'actions', header: text.users.actions }
             ]}
             rows={filteredUsers.map((user) => ({
               key: user.id,
               cells: [
                 <div className="admin-domain-cell">
                   <b>{user.email}</b>
-                  {user.id === currentUser.id && <small>当前账号</small>}
+                  {user.id === currentUser.id && <small>{text.users.currentUser}</small>}
                 </div>,
                 roleText(user.role, text),
                 boolBadge(user.enabled),
-                user.daily_limit ? `${user.used_today}/${user.daily_limit}` : `${user.used_today}/不限`,
-                user.total_limit ? `${user.total_used}/${user.total_limit}` : `${user.total_used}/不限`,
+                user.daily_limit
+                  ? <><b>{user.used_today}</b><span className="usage-muted">/{user.daily_limit}</span></>
+                  : <><b>{user.used_today}</b><span className="usage-muted">/{text.users.unlimited}</span></>,
+                user.total_limit
+                  ? <><b>{user.total_used}</b><span className="usage-muted">/{user.total_limit}</span></>
+                  : <><b>{user.total_used}</b><span className="usage-muted">/{text.users.unlimited}</span></>,
                 user.last_used_at ? relativeTime(user.last_used_at) : '-',
                 <div className="table-actions">
                   <button className="btn-ghost" onClick={() => setEditingUser(user)}>
                     <Pencil size={14} />
-                    编辑
+                    {text.users.edit}
                   </button>
                   {user.enabled ? (
                     <button className="btn-ghost" disabled={user.id === currentUser.id || toggleUser.isPending} onClick={() => setDisableTarget(user)}>
@@ -197,9 +209,12 @@ export function UsersPage({ currentUser }: { currentUser: User }) {
                       {text.common.enabled}
                     </button>
                   )}
-                  <button className="btn-ghost" disabled={user.id === currentUser.id || deleteUser.isPending} onClick={() => setDeleteTarget(user)}>
+                  <button className="btn-ghost" disabled={user.id === currentUser.id || deleteUser.isPending} onClick={(e) => {
+                    setDissolveTarget((e.currentTarget as HTMLElement).closest('tr'));
+                    setDeleteTarget(user);
+                  }}>
                     <Trash2 size={14} />
-                    删除
+                    {text.common.delete}
                   </button>
                 </div>
               ]
@@ -219,196 +234,48 @@ export function UsersPage({ currentUser }: { currentUser: User }) {
       )}
 
       {disableTarget && (
-        <ConfirmDisableUserDialog
-          user={disableTarget}
-          isPending={toggleUser.isPending}
-          onClose={() => setDisableTarget(null)}
+        <ConfirmModal
+          open
+          title={text.users.disableTitle}
+          description={[
+            text.users.disableDesc,
+            disableTarget.role === 'admin' ? text.users.adminWarning : '',
+            disableTarget.email
+          ].filter(Boolean).join('\n\n')}
+          danger
+          confirmText={text.common.disabled}
+          cancelText={text.common.cancel}
           onConfirm={() => toggleUser.mutate({ user: disableTarget, enabled: false })}
+          onCancel={() => setDisableTarget(null)}
         />
       )}
 
       {deleteTarget && (
-        <ConfirmDeleteUserDialog
-          user={deleteTarget}
-          isPending={deleteUser.isPending}
-          onClose={() => setDeleteTarget(null)}
-          onConfirm={() => deleteUser.mutate(deleteTarget)}
+        <ConfirmModal
+          open
+          title={text.users.deleteTitle}
+          description={`${text.users.deleteDesc}\n\n${deleteTarget.email}`}
+          danger
+          confirmText={text.users.confirmDelete}
+          cancelText={text.common.cancel}
+          onConfirm={async () => {
+            const target = deleteTarget;
+            const targetEl = dissolveTarget;
+            setDeleteTarget(null);
+            setDissolveTarget(null);
+            await new Promise(r => requestAnimationFrame(r));
+            if (targetEl) {
+              try {
+                await dissolveElement(targetEl, { duration: 400, blockSize: 4, direction: 'out' });
+              } catch {
+                // dissolve failed, proceed with mutation anyway
+              }
+            }
+            deleteUser.mutate(target);
+          }}
+          onCancel={() => { setDeleteTarget(null); setDissolveTarget(null); }}
         />
       )}
     </>
   );
-}
-
-function EditUserDialog({ currentUser, user, isPending, onClose, onSubmit }: { currentUser: User; user: User; isPending: boolean; onClose: () => void; onSubmit: (form: UserForm) => void }) {
-  const text = useText();
-  const [form, setForm] = useState<UserForm>(() => formFromUser(user));
-  const isSelf = currentUser.id === user.id;
-
-  useEffect(() => {
-    const handler = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') onClose();
-    };
-    window.addEventListener('keydown', handler);
-    return () => window.removeEventListener('keydown', handler);
-  }, [onClose]);
-
-  const set = (key: keyof UserForm, value: string | boolean) => setForm((current) => ({ ...current, [key]: value }));
-  const submit = (event: FormEvent) => {
-    event.preventDefault();
-    if (!isPending) onSubmit(form);
-  };
-
-  return createPortal(
-    <div className="modal-backdrop" role="presentation" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
-      <section className="modal-panel user-edit-modal" role="dialog" aria-modal="true" aria-labelledby="edit-user-title">
-        <div className="modal-header">
-          <div>
-            <h2 id="edit-user-title">编辑用户</h2>
-            <p>{user.email}</p>
-          </div>
-          <IconButton title="关闭" onClick={onClose}>
-            <X size={16} />
-          </IconButton>
-        </div>
-        <form className="user-form" onSubmit={submit}>
-          <label className="user-form-field">
-            <span>{text.users.email}</span>
-            <input className="input" value={form.email} onChange={(event) => set('email', event.target.value)} />
-          </label>
-          <label className="user-form-field">
-            <span>新密码</span>
-            <input className="input" value={form.password} onChange={(event) => set('password', event.target.value)} placeholder="留空则不修改" type="password" />
-          </label>
-          <div className="user-limit-grid">
-            <label className="user-form-field">
-              <span>{text.users.role}</span>
-              <select className="input" value={form.role} disabled={isSelf} onChange={(event) => set('role', event.target.value as User['role'])}>
-                <option value="user">{text.role.user}</option>
-                <option value="admin">{text.role.admin}</option>
-              </select>
-            </label>
-            <label className="check-row user-enabled-row">
-              <input type="checkbox" checked={form.enabled} disabled={isSelf} onChange={(event) => set('enabled', event.target.checked)} />
-              {text.users.enabled}
-            </label>
-          </div>
-          <div className="user-limit-grid">
-            <label className="user-form-field">
-              <span>日额度</span>
-              <input className="input" type="number" min={0} value={form.daily_limit} onChange={(event) => set('daily_limit', event.target.value)} />
-            </label>
-            <label className="user-form-field">
-              <span>总额度</span>
-              <input className="input" type="number" min={0} value={form.total_limit} onChange={(event) => set('total_limit', event.target.value)} />
-            </label>
-          </div>
-          {isSelf && <p className="user-form-note">当前账号不能在这里被禁用或降权，避免把自己锁在门外。</p>}
-          <div className="modal-actions">
-            <button className="btn-secondary" type="button" onClick={onClose}>取消</button>
-            <button className="btn-primary" type="submit" disabled={isPending}>
-              {isPending && <Loader2 size={16} className="animate-spin" />}
-              保存
-            </button>
-          </div>
-        </form>
-      </section>
-    </div>,
-    document.body
-  );
-}
-
-function ConfirmDisableUserDialog({ user, isPending, onClose, onConfirm }: { user: User; isPending: boolean; onClose: () => void; onConfirm: () => void }) {
-  return createPortal(
-    <div className="modal-backdrop" role="presentation" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
-      <section className="modal-panel confirm-modal" role="alertdialog" aria-modal="true" aria-labelledby="disable-user-title" aria-describedby="disable-user-desc">
-        <div className="confirm-modal-icon"><ShieldAlert size={18} /></div>
-        <div className="confirm-modal-copy">
-          <h2 id="disable-user-title">禁用用户</h2>
-          <p id="disable-user-desc">禁用后该用户无法登录，绑定的 API Key 也会因为 owner 不可用而拒绝访问。</p>
-          <code>{user.email}</code>
-        </div>
-        <div className="confirm-modal-actions">
-          <button className="btn-secondary" onClick={onClose}>取消</button>
-          <button className="btn-danger" onClick={onConfirm} disabled={isPending}>
-            {isPending && <Loader2 size={16} className="animate-spin" />}
-            禁用
-          </button>
-        </div>
-      </section>
-    </div>,
-    document.body
-  );
-}
-
-function ConfirmDeleteUserDialog({ user, isPending, onClose, onConfirm }: { user: User; isPending: boolean; onClose: () => void; onConfirm: () => void }) {
-  return createPortal(
-    <div className="modal-backdrop" role="presentation" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
-      <section className="modal-panel confirm-modal" role="alertdialog" aria-modal="true" aria-labelledby="delete-user-title" aria-describedby="delete-user-desc">
-        <div className="confirm-modal-icon"><AlertTriangle size={18} /></div>
-        <div className="confirm-modal-copy">
-          <h2 id="delete-user-title">删除用户</h2>
-          <p id="delete-user-desc">删除后该用户及关联数据将被永久移除，此操作不可撤销。仅建议在 GDPR 合规要求或用户主动请求时执行。</p>
-          <code>{user.email}</code>
-        </div>
-        <div className="confirm-modal-actions">
-          <button className="btn-secondary" onClick={onClose}>取消</button>
-          <button className="btn-danger" onClick={onConfirm} disabled={isPending}>
-            {isPending && <Loader2 size={16} className="animate-spin" />}
-            确认删除
-          </button>
-        </div>
-      </section>
-    </div>,
-    document.body
-  );
-}
-
-function emptyCreateForm(): UserForm {
-  return { email: '', password: '', role: 'user', enabled: true, daily_limit: '1000', total_limit: '0' };
-}
-
-function formFromUser(user: User): UserForm {
-  return {
-    email: user.email,
-    password: '',
-    role: user.role,
-    enabled: user.enabled,
-    daily_limit: String(user.daily_limit ?? 0),
-    total_limit: String(user.total_limit ?? 0)
-  };
-}
-
-function buildCreatePayload(form: UserForm) {
-  const payload = buildBasePayload(form);
-  if (form.password.length < 8) throw new Error('密码至少 8 位');
-  return { ...payload, password: form.password };
-}
-
-function buildUpdatePayload(form: UserForm) {
-  const payload = buildBasePayload(form) as Record<string, unknown>;
-  if (form.password.trim()) {
-    if (form.password.length < 8) throw new Error('密码至少 8 位');
-    payload.password = form.password;
-  }
-  return payload;
-}
-
-function buildBasePayload(form: UserForm) {
-  const email = form.email.trim().toLowerCase();
-  if (!email.includes('@')) throw new Error('请输入有效邮箱');
-  const daily = parseQuota(form.daily_limit, '日额度');
-  const total = parseQuota(form.total_limit, '总额度');
-  return {
-    email,
-    role: form.role,
-    enabled: form.enabled,
-    daily_limit: daily,
-    total_limit: total
-  };
-}
-
-function parseQuota(value: string, label: string) {
-  const parsed = Number(value);
-  if (!Number.isInteger(parsed) || parsed < 0) throw new Error(`${label}必须是 0 或正整数`);
-  return parsed;
 }

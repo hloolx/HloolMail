@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { Plus, Trash2, ToggleLeft, ToggleRight } from 'lucide-react';
+import { dissolveElement } from '../../lib/dissolve';
 
 /* ------------------------------------------------------------------ */
 /* Types                                                               */
@@ -220,6 +221,7 @@ export function ParamBuilder({ value, mode, onChange, disabled }: ParamBuilderPr
             type="button"
             onClick={toggleRaw}
             disabled={disabled || !isFormAvailable}
+            aria-pressed={isRaw}
             className="flex items-center gap-1.5 rounded-md border border-[var(--border)] bg-[var(--panel)] px-3 py-1.5 text-sm text-[var(--foreground)] transition-colors hover:bg-[var(--soft)] disabled:cursor-not-allowed disabled:opacity-50"
           >
             {isRaw ? (
@@ -312,7 +314,11 @@ function QueryForm({
           />
           <button
             type="button"
-            onClick={() => onRemove(row.id)}
+            onClick={async (e) => {
+              const rowEl = (e.currentTarget as HTMLElement).closest('.group') as HTMLElement | null;
+              if (rowEl) await dissolveElement(rowEl, { duration: 300, blockSize: 4, direction: 'out' });
+              onRemove(row.id);
+            }}
             disabled={disabled}
             title="Remove"
             className="shrink-0 rounded p-1 text-[var(--muted)] transition-colors hover:bg-[var(--bad)]/10 hover:text-[var(--bad)] disabled:cursor-not-allowed disabled:opacity-50"
@@ -407,7 +413,11 @@ function JsonForm({
 
           <button
             type="button"
-            onClick={() => onRemove(row.id)}
+            onClick={async (e) => {
+              const rowEl = (e.currentTarget as HTMLElement).closest('.group') as HTMLElement | null;
+              if (rowEl) await dissolveElement(rowEl, { duration: 300, blockSize: 4, direction: 'out' });
+              onRemove(row.id);
+            }}
             disabled={disabled}
             title="Remove"
             className="shrink-0 rounded p-1 text-[var(--muted)] transition-colors hover:bg-[var(--bad)]/10 hover:text-[var(--bad)] disabled:cursor-not-allowed disabled:opacity-50"

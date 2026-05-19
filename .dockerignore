@@ -16,6 +16,7 @@ coverage
 
 web/dist
 web/node_modules
+internal/frontend/dist
 
 docs
 skills

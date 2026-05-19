@@ -25,7 +25,7 @@ export function codeGenLabel(lang: CodeGenLang): string {
     case 'curl':
       return 'cURL';
     case 'fetch':
-      return 'JavaScript';
+      return 'fetch (JS)';
     case 'python':
       return 'Python';
     default:

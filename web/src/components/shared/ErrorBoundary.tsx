@@ -29,8 +29,8 @@ export class ErrorBoundary extends Component<Props, State> {
       return (
         <div className="min-h-screen bg-[var(--shell)] flex items-center justify-center p-6">
           <div className="text-center max-w-md">
-            <div className="mx-auto mb-4 w-12 h-12 rounded-full bg-red-100 dark:bg-red-900/30 flex items-center justify-center">
-              <AlertTriangle size={24} className="text-red-600 dark:text-red-400" />
+            <div className="mx-auto mb-4 w-12 h-12 rounded-full flex items-center justify-center" style={{ background: 'color-mix(in srgb, var(--bad) 10%, transparent)' }}>
+              <AlertTriangle size={24} className="w-6 h-6" style={{ color: 'var(--bad)' }} />
             </div>
             <h2 className="text-lg font-semibold mb-2">页面发生错误</h2>
             <p className="text-sm text-[var(--muted)] mb-4">{this.state.error.message}</p>

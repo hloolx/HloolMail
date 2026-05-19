@@ -1,10 +1,19 @@
 export type Int64String = `${number}`;
+export type UsageValue = Int64String | 'true' | 'false' | 'unlimited';
 
 export type ApiEnvelope<T> = {
   success: boolean;
   data: T;
   error?: unknown;
-  usage?: Record<string, Int64String>;
+  usage?: Record<string, UsageValue>;
+};
+
+export type PaginatedResponse<T> = {
+  items: T[];
+  page: number;
+  per_page: number;
+  total: number;
+  total_pages: number;
 };
 
 export type Domain = {
@@ -38,10 +47,23 @@ export type Domain = {
   updated_at: string;
 };
 
-export type DomainAvailability = {
-  public_domains: Domain[];
-  private_domains: Domain[];
+export type PublicDomainItem = {
+  id?: number;
+  domain: string;
+  mode: 'public' | 'private';
+  message_count?: number;
 };
+
+export type PublicDomainAvailability = {
+  domains: string[];
+};
+
+export type WebDomainAvailability = {
+  public_domains: PublicDomainItem[];
+  private_domains: PublicDomainItem[];
+};
+
+export type DomainAvailability = PublicDomainAvailability | WebDomainAvailability;
 
 export type MessageSummary = {
   id: string;
@@ -54,6 +76,24 @@ export type MessageSummary = {
   created_at: string;
   expires_at: string;
 };
+
+/** SSE event pushed via /api/inbox-stream — matches backend events.MessageEvent */
+export type InboxSSEEvent = {
+  id: string;
+  recipient: string;
+  subject: string;
+  from: string;
+  created_at: string;
+};
+
+/** Parse an RFC 5322 "From" value (e.g. "Name <addr>" or "addr") into parts. */
+export function parseFromAddress(from: string): { from_address: string; from_name?: string } {
+  const match = from.match(/^\s*(.+?)\s*<([^>]+)>\s*$/);
+  if (match) {
+    return { from_name: match[1].trim(), from_address: match[2].trim() };
+  }
+  return { from_address: from.trim() };
+}
 
 export type MessageDetail = {
   id: string;
@@ -125,7 +165,7 @@ export type InstallStatus = {
   site_api_calls_today?: number;
   registered_users?: number;
   hosted_domains?: number;
-  config: {
+  config?: {
     http_addr: string;
     smtp_addr: string;
     public_base_url: string;
@@ -152,6 +192,21 @@ export type InstallResult = {
   env_content: string;
   deployment_kind: string;
   config_lock_reason?: string;
+};
+
+export type Announcement = {
+  id: number;
+  title: string;
+  content: string;
+  admin_id: number;
+  read: boolean;
+  created_at: string;
+  updated_at: string;
+};
+
+export type AdminAnnouncement = Announcement & {
+  reader_count: number;
+  deleted_at?: string;
 };
 
 export type InstallDNSProbe = {

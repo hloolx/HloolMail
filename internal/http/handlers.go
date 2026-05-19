@@ -15,6 +15,7 @@ import (
 
 	domaindb "gptmail/internal/domain"
 	"gptmail/internal/models"
+	"gptmail/internal/version"
 
 	"github.com/gin-gonic/gin"
 	"github.com/microcosm-cc/bluemonday"
@@ -95,6 +96,55 @@ func (h *Handler) health(c *gin.Context) {
 	ok(c, gin.H{"status": "ok", "time": time.Now().Format(time.RFC3339)})
 }
 
+func (h *Handler) versionInfo(c *gin.Context) {
+	ok(c, gin.H{
+		"version":   version.Version,
+		"commit":    version.Commit,
+		"buildTime": version.BuildTime,
+	})
+}
+
+func (h *Handler) versionCheck(c *gin.Context) {
+	currentVersion := version.Version
+
+	latestVersion := currentVersion
+	updateAvailable := false
+	releaseURL := ""
+
+	req, err := http.NewRequestWithContext(c.Request.Context(), "GET", "https://api.github.com/repos/hloolx/HloolMail/releases/latest", nil)
+	if err == nil {
+		req.Header.Set("Accept", "application/vnd.github+json")
+		req.Header.Set("User-Agent", "hloolmail-version-check")
+		resp, fetchErr := http.DefaultClient.Do(req)
+		if fetchErr == nil {
+			defer resp.Body.Close()
+			if resp.StatusCode == 200 {
+				var release struct {
+					TagName string `json:"tag_name"`
+					HTMLURL string `json:"html_url"`
+				}
+				if json.NewDecoder(resp.Body).Decode(&release) == nil && release.TagName != "" {
+					tagVersion := strings.TrimPrefix(release.TagName, "v")
+					if tagVersion != "" && tagVersion != currentVersion && currentVersion != "dev" {
+						latestVersion = tagVersion
+						updateAvailable = true
+						releaseURL = release.HTMLURL
+					} else if tagVersion != "" {
+						latestVersion = tagVersion
+					}
+				}
+			}
+		}
+	}
+
+	ok(c, gin.H{
+		"currentVersion":  currentVersion,
+		"latestVersion":   latestVersion,
+		"updateAvailable": updateAvailable,
+		"releaseURL":      releaseURL,
+	})
+}
+
 func (h *Handler) stats(c *gin.Context) {
 	actor, allowed := h.requireActor(c)
 	if !allowed {
@@ -109,14 +159,25 @@ func (h *Handler) stats(c *gin.Context) {
 	h.scopeAPIKeys(actor).Count(&apiKeys)
 	scope.Session(&gorm.Session{}).Distinct("recipient").Count(&mailboxes)
 	h.scopeAPIUsage(actor).Where("created_at >= ?", startOfDay(time.Now())).Count(&apiUsageToday)
-	ok(c, gin.H{
+	data := gin.H{
 		"messages":        messages,
 		"domains":         domains,
 		"api_keys":        apiKeys,
 		"mailboxes":       mailboxes,
 		"public_domains":  publicDomains,
 		"api_calls_today": apiUsageToday,
-	})
+	}
+	if currentAPIKey(c) == nil {
+		var visibleDomains []models.Domain
+		if err := domainScope.Session(&gorm.Session{}).Order("domain asc").Find(&visibleDomains).Error; err != nil {
+			fail(c, http.StatusInternalServerError, err.Error())
+			return
+		}
+		data["domain_list"] = availableDomainDTOsWithCountsOrEmpty(h.DB, visibleDomains)
+		webOK(c, data)
+		return
+	}
+	publicOK(c, data)
 }
 
 func (h *Handler) statsTimeseries(c *gin.Context) {
@@ -362,6 +423,37 @@ func (h *Handler) listEmails(c *gin.Context) {
 	if currentAPIKey(c) == nil && !h.consumeUserQuota(c) {
 		return
 	}
+	paged := c.Query("page") != "" || c.Query("per_page") != ""
+	if paged {
+		page := parsePage(c.Query("page"))
+		perPage := parseLimit(c.Query("per_page"), 10, 100)
+		var total int64
+		if err := h.DB.Model(&models.Message{}).Where("recipient = ?", parts.Recipient).Count(&total).Error; err != nil {
+			fail(c, http.StatusInternalServerError, err.Error())
+			return
+		}
+		totalPages := pageCount(total, perPage)
+		if page > totalPages {
+			page = totalPages
+		}
+		var messages []models.Message
+		if err := h.DB.Where("recipient = ?", parts.Recipient).
+			Order("created_at desc").
+			Limit(perPage).
+			Offset((page - 1) * perPage).
+			Find(&messages).Error; err != nil {
+			fail(c, http.StatusInternalServerError, err.Error())
+			return
+		}
+		ok(c, paginatedResponse[messageSummary]{
+			Items:      messageSummaries(messages),
+			Page:       page,
+			PerPage:    perPage,
+			Total:      total,
+			TotalPages: totalPages,
+		})
+		return
+	}
 	limit := parseLimit(c.Query("limit"), 50, 200)
 	var messages []models.Message
 	if err := h.DB.Where("recipient = ?", parts.Recipient).
@@ -423,7 +515,11 @@ func (h *Handler) getEmail(c *gin.Context) {
 		return
 	}
 	msg.HTMLContent = htmlPolicy.Sanitize(msg.HTMLContent)
-	ok(c, msg)
+	if currentAPIKey(c) != nil {
+		publicOK(c, publicMessageDetail(msg))
+		return
+	}
+	webOK(c, webMessageDetail(msg))
 }
 
 func (h *Handler) markEmailRead(c *gin.Context) {
@@ -471,8 +567,16 @@ func (h *Handler) clearEmails(c *gin.Context) {
 }
 
 func (h *Handler) inboxStream(c *gin.Context) {
-	parts, _, allowed := h.authorizeInbox(c, c.Query("email"))
+	user, loggedIn := h.requireLogin(c)
+	if !loggedIn {
+		return
+	}
+	parts, _, allowed := h.authorizeInboxForUser(c, c.Query("email"), user)
 	if !allowed {
+		return
+	}
+	if h.Hub == nil {
+		fail(c, http.StatusServiceUnavailable, "inbox stream unavailable")
 		return
 	}
 	ch, cancel := h.Hub.Subscribe(parts.Recipient)
@@ -480,11 +584,14 @@ func (h *Handler) inboxStream(c *gin.Context) {
 	c.Writer.Header().Set("Content-Type", "text/event-stream")
 	c.Writer.Header().Set("Cache-Control", "no-cache")
 	c.Writer.Header().Set("Connection", "keep-alive")
+	c.Writer.Header().Set("X-Accel-Buffering", "no")
 	flusher, ok := c.Writer.(http.Flusher)
 	if !ok {
 		fail(c, http.StatusInternalServerError, "streaming unsupported")
 		return
 	}
+	fmt.Fprint(c.Writer, ": connected\n\n")
+	flusher.Flush()
 	ticker := time.NewTicker(25 * time.Second)
 	defer ticker.Stop()
 	for {
@@ -495,8 +602,7 @@ func (h *Handler) inboxStream(c *gin.Context) {
 			fmt.Fprint(c.Writer, ": heartbeat\n\n")
 			flusher.Flush()
 		case event := <-ch:
-			payload, _ := json.Marshal(event)
-			fmt.Fprintf(c.Writer, "event: message\ndata: %s\n\n", payload)
+			c.SSEvent("message", event)
 			flusher.Flush()
 		}
 	}
@@ -578,12 +684,16 @@ func (h *Handler) listDomains(c *gin.Context) {
 		fail(c, http.StatusInternalServerError, err.Error())
 		return
 	}
-	ok(c, domainsWithCounts(h.DB, domains))
+	webOK(c, webDomainsWithCounts(h.DB, domains))
 }
 
 type availableDomainsResponse struct {
-	PublicDomains  []domainDTO `json:"public_domains"`
-	PrivateDomains []domainDTO `json:"private_domains"`
+	PublicDomains  []availableDomainDTO `json:"public_domains"`
+	PrivateDomains []availableDomainDTO `json:"private_domains"`
+}
+
+type publicAvailableDomainsResponse struct {
+	Domains []string `json:"domains"`
 }
 
 func (h *Handler) availableDomains(c *gin.Context) {
@@ -596,15 +706,19 @@ func (h *Handler) availableDomains(c *gin.Context) {
 		fail(c, http.StatusInternalServerError, err.Error())
 		return
 	}
+	if currentAPIKey(c) != nil {
+		publicOK(c, publicAvailableDomainsResponse{Domains: domainNames(publicDomains)})
+		return
+	}
 	privateQuery := h.DB.Order("domain asc").
 		Where("mode = ? AND active = ? AND mx_verified = ? AND (wildcard_requested = ? OR wildcard_enabled = ?)",
 			models.DomainModePrivate, true, true, false, true)
 	if !actor.isAdmin() {
 		ownerID, hasOwner := actor.ownerID()
 		if !hasOwner {
-			ok(c, availableDomainsResponse{
-				PublicDomains:  domainsWithCountsOrEmpty(h.DB, publicDomains),
-				PrivateDomains: []domainDTO{},
+			webOK(c, availableDomainsResponse{
+				PublicDomains:  availableDomainDTOsWithCountsOrEmpty(h.DB, publicDomains),
+				PrivateDomains: []availableDomainDTO{},
 			})
 			return
 		}
@@ -615,9 +729,9 @@ func (h *Handler) availableDomains(c *gin.Context) {
 		fail(c, http.StatusInternalServerError, err.Error())
 		return
 	}
-	ok(c, availableDomainsResponse{
-		PublicDomains:  domainsWithCountsOrEmpty(h.DB, publicDomains),
-		PrivateDomains: domainsWithCountsOrEmpty(h.DB, privateDomains),
+	webOK(c, availableDomainsResponse{
+		PublicDomains:  availableDomainDTOsWithCountsOrEmpty(h.DB, publicDomains),
+		PrivateDomains: availableDomainDTOsWithCountsOrEmpty(h.DB, privateDomains),
 	})
 }
 
@@ -986,6 +1100,35 @@ func (h *Handler) authorizeInbox(c *gin.Context, email string) (domaindb.Recipie
 	return parts, d, false
 }
 
+func (h *Handler) authorizeInboxForUser(c *gin.Context, email string, user *models.User) (domaindb.RecipientParts, *models.Domain, bool) {
+	parts, err := domaindb.NormalizeRecipient(email)
+	if err != nil {
+		fail(c, http.StatusBadRequest, "valid email required")
+		return parts, nil, false
+	}
+	if user == nil {
+		fail(c, http.StatusUnauthorized, "login required")
+		return parts, nil, false
+	}
+	if user.Role == models.UserRoleAdmin {
+		return parts, nil, true
+	}
+	d, err := h.Resolver.ResolveDomain(parts.Recipient)
+	if err != nil {
+		fail(c, http.StatusNotFound, "domain not found or not verified")
+		return parts, nil, false
+	}
+	if d.OwnerID != nil && *d.OwnerID == user.ID {
+		return parts, d, true
+	}
+	var mailbox models.Mailbox
+	if err := h.DB.Where("email = ? AND owner_id = ?", parts.Recipient, user.ID).First(&mailbox).Error; err == nil {
+		return parts, d, true
+	}
+	fail(c, http.StatusForbidden, "邮箱访问被拒：需要是邮箱所有者或域名所有者")
+	return parts, d, false
+}
+
 func (h *Handler) canManageDomain(c *gin.Context, d models.Domain) bool {
 	user := currentUser(c)
 	if user == nil {
@@ -1131,8 +1274,28 @@ func domainWantsWildcard(rawDomain string) bool {
 	return strings.HasPrefix(strings.TrimSpace(rawDomain), "*")
 }
 
-func (h *Handler) audit(action, actor, target, metadata string) {
-	h.DB.Create(&models.AuditLog{Action: action, Actor: actor, Target: target, Metadata: metadata})
+type availableDomainDTO struct {
+	ID           uint   `json:"id"`
+	Domain       string `json:"domain"`
+	Mode         string `json:"mode"`
+	MessageCount int64  `json:"message_count"`
+}
+
+type webDomainDTO struct {
+	ID                uint       `json:"id"`
+	Domain            string     `json:"domain"`
+	Mode              string     `json:"mode"`
+	OwnerID           *uint      `json:"owner_id,omitempty"`
+	Active            bool       `json:"active"`
+	MXVerified        bool       `json:"mx_verified"`
+	WildcardEnabled   bool       `json:"wildcard_enabled"`
+	WildcardRequested bool       `json:"wildcard_requested"`
+	LastMXCheckAt     *time.Time `json:"last_mx_check_at,omitempty"`
+	DomainExpiresAt   *time.Time `json:"domain_expires_at,omitempty"`
+	MessageCount      int64      `json:"message_count"`
+	PendingDeleteAt   *time.Time `json:"pending_delete_at,omitempty"`
+	CreatedAt         time.Time  `json:"created_at"`
+	UpdatedAt         time.Time  `json:"updated_at"`
 }
 
 type domainDTO struct {
@@ -1141,13 +1304,20 @@ type domainDTO struct {
 	PendingDeleteAt *time.Time `json:"pending_delete_at,omitempty"`
 }
 
-func domainsWithCounts(db *gorm.DB, domains []models.Domain) []domainDTO {
+func domainNames(domains []models.Domain) []string {
 	if len(domains) == 0 {
-		return nil
+		return []string{}
 	}
-	domainNames := make([]string, len(domains))
-	for i, d := range domains {
-		domainNames[i] = d.Domain
+	names := make([]string, 0, len(domains))
+	for _, d := range domains {
+		names = append(names, d.Domain)
+	}
+	return names
+}
+
+func messageCountsByDomain(db *gorm.DB, domains []models.Domain) map[string]int64 {
+	if len(domains) == 0 {
+		return map[string]int64{}
 	}
 	type countResult struct {
 		RootDomain string
@@ -1156,13 +1326,69 @@ func domainsWithCounts(db *gorm.DB, domains []models.Domain) []domainDTO {
 	var counts []countResult
 	db.Model(&models.Message{}).
 		Select("root_domain, COUNT(*) as count").
-		Where("root_domain IN ?", domainNames).
+		Where("root_domain IN ?", domainNames(domains)).
 		Group("root_domain").
 		Scan(&counts)
 	countMap := make(map[string]int64, len(counts))
 	for _, c := range counts {
 		countMap[c.RootDomain] = c.Count
 	}
+	return countMap
+}
+
+func availableDomainDTOsWithCountsOrEmpty(db *gorm.DB, domains []models.Domain) []availableDomainDTO {
+	if len(domains) == 0 {
+		return []availableDomainDTO{}
+	}
+	countMap := messageCountsByDomain(db, domains)
+	out := make([]availableDomainDTO, 0, len(domains))
+	for _, d := range domains {
+		out = append(out, availableDomainDTO{
+			ID:           d.ID,
+			Domain:       d.Domain,
+			Mode:         d.Mode,
+			MessageCount: countMap[d.Domain],
+		})
+	}
+	return out
+}
+
+func webDomainsWithCounts(db *gorm.DB, domains []models.Domain) []webDomainDTO {
+	if len(domains) == 0 {
+		return []webDomainDTO{}
+	}
+	countMap := messageCountsByDomain(db, domains)
+	out := make([]webDomainDTO, 0, len(domains))
+	for _, d := range domains {
+		dto := webDomainDTO{
+			ID:                d.ID,
+			Domain:            d.Domain,
+			Mode:              d.Mode,
+			OwnerID:           d.OwnerID,
+			Active:            d.Active,
+			MXVerified:        d.MXVerified,
+			WildcardEnabled:   d.WildcardEnabled,
+			WildcardRequested: d.WildcardRequested,
+			LastMXCheckAt:     d.LastMXCheckAt,
+			DomainExpiresAt:   d.DomainExpiresAt,
+			MessageCount:      countMap[d.Domain],
+			CreatedAt:         d.CreatedAt,
+			UpdatedAt:         d.UpdatedAt,
+		}
+		if d.IsWaitingVerification() {
+			pendingDeleteAt := d.PendingDeleteAt()
+			dto.PendingDeleteAt = &pendingDeleteAt
+		}
+		out = append(out, dto)
+	}
+	return out
+}
+
+func domainsWithCounts(db *gorm.DB, domains []models.Domain) []domainDTO {
+	if len(domains) == 0 {
+		return nil
+	}
+	countMap := messageCountsByDomain(db, domains)
 	out := make([]domainDTO, 0, len(domains))
 	for _, d := range domains {
 		dto := domainDTO{Domain: d, MessageCount: countMap[d.Domain]}
@@ -1205,6 +1431,32 @@ type messageSummary struct {
 	ExpiresAt   time.Time `json:"expires_at"`
 }
 
+type publicMessageDetailDTO struct {
+	ID          string    `json:"id"`
+	Recipient   string    `json:"recipient"`
+	FromAddress string    `json:"from_address"`
+	FromName    string    `json:"from_name,omitempty"`
+	Subject     string    `json:"subject"`
+	Seen        bool      `json:"seen"`
+	TextContent string    `json:"text_content,omitempty"`
+	HeadersJSON string    `json:"headers_json,omitempty"`
+	CreatedAt   time.Time `json:"created_at"`
+	ExpiresAt   time.Time `json:"expires_at"`
+}
+
+type webMessageDetailDTO struct {
+	publicMessageDetailDTO
+	HTMLContent string `json:"html_content,omitempty"`
+}
+
+type paginatedResponse[T any] struct {
+	Items      []T   `json:"items"`
+	Page       int   `json:"page"`
+	PerPage    int   `json:"per_page"`
+	Total      int64 `json:"total"`
+	TotalPages int   `json:"total_pages"`
+}
+
 func messageSummaries(messages []models.Message) []messageSummary {
 	out := make([]messageSummary, 0, len(messages))
 	for _, msg := range messages {
@@ -1228,6 +1480,28 @@ func messageSummaries(messages []models.Message) []messageSummary {
 		})
 	}
 	return out
+}
+
+func publicMessageDetail(msg models.Message) publicMessageDetailDTO {
+	return publicMessageDetailDTO{
+		ID:          msg.ID,
+		Recipient:   msg.Recipient,
+		FromAddress: msg.FromAddress,
+		FromName:    msg.FromName,
+		Subject:     msg.Subject,
+		Seen:        msg.Seen,
+		TextContent: msg.TextContent,
+		HeadersJSON: msg.HeadersJSON,
+		CreatedAt:   msg.CreatedAt,
+		ExpiresAt:   msg.ExpiresAt,
+	}
+}
+
+func webMessageDetail(msg models.Message) webMessageDetailDTO {
+	return webMessageDetailDTO{
+		publicMessageDetailDTO: publicMessageDetail(msg),
+		HTMLContent:            msg.HTMLContent,
+	}
 }
 
 func sanitizeLocal(value string) string {
@@ -1284,6 +1558,25 @@ func parseLimit(value string, fallback, max int) int {
 	return parsed
 }
 
+func parsePage(value string) int {
+	parsed, err := strconv.Atoi(value)
+	if err != nil || parsed <= 0 {
+		return 1
+	}
+	return parsed
+}
+
+func pageCount(total int64, perPage int) int {
+	if total <= 0 || perPage <= 0 {
+		return 1
+	}
+	pages := int((total + int64(perPage) - 1) / int64(perPage))
+	if pages < 1 {
+		return 1
+	}
+	return pages
+}
+
 func stripTags(value string) string {
 	var builder strings.Builder
 	inTag := false
@@ -1313,7 +1606,7 @@ func (h *Handler) listMailboxes(c *gin.Context) {
 		return
 	}
 	var mailboxes []models.Mailbox
-	query := h.DB.Order("created_at desc")
+	query := h.DB.Model(&models.Mailbox{})
 	if !actor.isAdmin() {
 		ownerID, hasOwner := actor.ownerID()
 		if !hasOwner {
@@ -1322,7 +1615,28 @@ func (h *Handler) listMailboxes(c *gin.Context) {
 		}
 		query = query.Where("owner_id = ?", ownerID)
 	}
-	if err := query.Find(&mailboxes).Error; err != nil {
+	search := strings.ToLower(strings.TrimSpace(c.Query("q")))
+	if search != "" {
+		like := "%" + search + "%"
+		query = query.Where("LOWER(email) LIKE ? OR LOWER(local_part) LIKE ? OR LOWER(host) LIKE ?", like, like, like)
+	}
+	paged := c.Query("page") != "" || c.Query("per_page") != "" || search != ""
+	page := parsePage(c.Query("page"))
+	perPage := parseLimit(c.Query("per_page"), 10, 50)
+	total := int64(0)
+	totalPages := 1
+	if paged {
+		if err := query.Session(&gorm.Session{}).Count(&total).Error; err != nil {
+			fail(c, http.StatusInternalServerError, err.Error())
+			return
+		}
+		totalPages = pageCount(total, perPage)
+		if page > totalPages {
+			page = totalPages
+		}
+		query = query.Limit(perPage).Offset((page - 1) * perPage)
+	}
+	if err := query.Order("created_at desc").Find(&mailboxes).Error; err != nil {
 		fail(c, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -1347,6 +1661,16 @@ func (h *Handler) listMailboxes(c *gin.Context) {
 			MessageCount:  count,
 			LastMessageAt: lastAt,
 		})
+	}
+	if paged {
+		ok(c, paginatedResponse[mailboxWithCount]{
+			Items:      out,
+			Page:       page,
+			PerPage:    perPage,
+			Total:      total,
+			TotalPages: totalPages,
+		})
+		return
 	}
 	ok(c, out)
 }

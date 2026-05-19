@@ -227,9 +227,6 @@
   }
 }
 
-.api-docs-endpoints,
-.api-docs-explorer,
-.api-docs-aside,
 .api-docs-preview {
   max-width: 100%;
   min-width: 0;
@@ -238,15 +235,6 @@
   border-radius: 0.85rem;
   background: var(--panel);
   padding: 1rem;
-}
-
-.api-docs-explorer {
-  display: grid;
-  gap: 0.9rem;
-}
-
-.api-docs-explorer .panel-header {
-  margin-bottom: 0;
 }
 
 .api-docs-explorer-grid {
@@ -546,11 +534,6 @@
 .method-delete {
   background: color-mix(in srgb, var(--bad) 13%, transparent);
   color: var(--bad);
-}
-
-.api-docs-aside {
-  display: grid;
-  gap: 0.75rem;
 }
 
 .api-docs-note {

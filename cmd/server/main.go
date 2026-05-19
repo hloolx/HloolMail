@@ -51,7 +51,7 @@ func main() {
 	checker := domain.DNSChecker{DB: database, Config: cfg, ProbeRunner: domain.MiekgDNSProbeRunner{}}
 	healthJob := jobs.NewDomainHealthJob(database, checker, hub)
 
-	jobs.StartCleanup(ctx, database)
+	jobs.StartCleanup(ctx, database, cfg)
 	jobs.StartDomainHealthMonitor(ctx, healthJob)
 	jobs.StartMXAutoRetry(ctx, checker)
 	smtpServer := smtpserver.Start(ctx, smtpserver.Service{
@@ -60,6 +60,7 @@ func main() {
 		Resolver: resolver,
 		Hub:      hub,
 	})
+	auditLogger := httpapi.NewAuditLogger(database)
 
 	handler := &httpapi.Handler{
 		Config:       cfg,
@@ -71,6 +72,7 @@ func main() {
 		Hub:          hub,
 		DomainHealth: healthJob,
 		RateLimiter:  httpapi.NewRateLimiter(),
+		AuditLogger:  auditLogger,
 	}
 	server := &http.Server{
 		Addr:              cfg.HTTPAddr,
@@ -108,4 +110,9 @@ func main() {
 		}
 	}()
 	shutdowns.Wait()
+	auditShutdownCtx, cancelAuditShutdown := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancelAuditShutdown()
+	if err := auditLogger.Close(auditShutdownCtx); err != nil {
+		slog.Warn("audit logger shutdown failed", "error", err)
+	}
 }

@@ -6,6 +6,22 @@ export type Page = (typeof pages)[number];
 export type ThemeMode = 'system' | 'light' | 'dark';
 export type Language = 'zh-CN' | 'en-US';
 
+export type MailNotification = {
+  id: string;
+  from_address: string;
+  from_name?: string;
+  subject: string;
+  mailbox_email: string;
+  created_at: string;
+};
+
+export type AwaySummary = {
+  newMail: number;
+  newAnnouncements: number;
+};
+
+const MAX_MAIL_NOTIFICATIONS = 20;
+
 type AppState = {
   page: Page;
   email: string;
@@ -13,12 +29,19 @@ type AppState = {
   theme: ThemeMode;
   language: Language;
   sidebarCollapsed: boolean;
+  mailNotifications: MailNotification[];
+  awayMailCount: number;
+  awayAnnouncementCount: number;
   setPage: (page: Page) => void;
   setEmail: (email: string) => void;
   setAPIKey: (key: string) => void;
   setTheme: (theme: ThemeMode) => void;
   setLanguage: (language: Language) => void;
   toggleSidebar: () => void;
+  addMailNotification: (notification: MailNotification) => void;
+  clearMailNotifications: () => void;
+  incrementAwayCounts: (summary: AwaySummary) => void;
+  resetAwayCounts: () => void;
 };
 
 const storageKey = (key: string) => `hlool-mail.${key}`;
@@ -108,6 +131,9 @@ export const useAppStore = create<AppState>((set, get) => ({
   theme: storedTheme(),
   language: storedLanguage(),
   sidebarCollapsed: storedSidebarCollapsed(),
+  mailNotifications: [],
+  awayMailCount: 0,
+  awayAnnouncementCount: 0,
   setPage: (page) => {
     writePageHash(page);
     if (get().page !== page) {
@@ -134,6 +160,25 @@ export const useAppStore = create<AppState>((set, get) => ({
     const next = !get().sidebarCollapsed;
     writeStorage('sidebarCollapsed', String(next));
     set({ sidebarCollapsed: next });
+  },
+  addMailNotification: (notification) => {
+    const current = get().mailNotifications;
+    const exists = current.some((n) => n.id === notification.id);
+    if (exists) return;
+    const updated = [notification, ...current].slice(0, MAX_MAIL_NOTIFICATIONS);
+    const away = document.hidden ? get().awayMailCount + 1 : get().awayMailCount;
+    set({ mailNotifications: updated, awayMailCount: away });
+  },
+  clearMailNotifications: () => {
+    set({ mailNotifications: [] });
+  },
+  incrementAwayCounts: (summary) => {
+    set({
+      awayAnnouncementCount: get().awayAnnouncementCount + summary.newAnnouncements
+    });
+  },
+  resetAwayCounts: () => {
+    set({ awayMailCount: 0, awayAnnouncementCount: 0 });
   }
 }));
 

@@ -108,6 +108,8 @@ func AutoMigrate(db *gorm.DB) error {
 		&models.Message{},
 		&models.APIUsageLog{},
 		&models.Notification{},
+		&models.Announcement{},
+		&models.AnnouncementRead{},
 		&models.DomainCheckResultRecord{},
 		&models.AuditLog{},
 	)

@@ -27,7 +27,7 @@ export function Console({ user }: { user: User }) {
 
   return (
     <div className={`app-shell min-h-screen bg-[var(--shell)] text-[var(--foreground)] ${sidebarCollapsed ? 'app-shell-collapsed' : ''}`}>
-      <Topbar />
+      <Topbar user={user} />
       <Sidebar user={user} />
       <div className="content-shell">
         <main className="main-inset">

@@ -12,6 +12,7 @@
     "@tanstack/react-query": "^5.90.12",
     "canvas-confetti": "^1.9.4",
     "framer-motion": "^12.38.0",
+    "html-to-image": "^1.11.13",
     "lucide-react": "^0.468.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",

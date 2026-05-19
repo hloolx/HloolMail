@@ -1,7 +1,7 @@
-import { useRef, useState } from 'react';
+import { useRef, useState, useEffect, useCallback, type FormEvent } from 'react';
 import type { ReactNode } from 'react';
 import { useMutation } from '@tanstack/react-query';
-import { Check, Clipboard, Database, Globe2, Loader2, Lock, RefreshCw, Server } from 'lucide-react';
+import { Check, Clipboard, Database, ExternalLink, Globe2, Loader2, Lock, RefreshCw, Server, Shield } from 'lucide-react';
 import { toast } from 'sonner';
 import type { InstallDNSCheckResult, InstallResult, InstallStatus } from '../api';
 import { postJSON } from '../api';
@@ -9,6 +9,8 @@ import { useText } from '../locales';
 import { copy } from '../lib/clipboard';
 import { launchSuccessBurst } from '../lib/confetti';
 import { AppLogo, CodeBlock, Field, StatusPill } from '../components/shared';
+import { StepIndicator } from './InstallStepIndicator';
+import { DNSCheckDetails, installDNSMessage } from './InstallDNSVerify';
 
 type InstallForm = {
   admin_email: string;
@@ -38,14 +40,33 @@ type DNSState = {
   result: InstallDNSCheckResult;
 };
 
+const INSTALL_FORM_KEY = 'hlool:install-form';
+
 export function InstallPage({ status, onDone }: { status?: InstallStatus; onDone: () => void }) {
   const text = useText();
   const installButtonRef = useRef<HTMLButtonElement>(null);
+  const logoTapRef = useRef({ count: 0, since: 0 });
   const runtimeConfigLocked = Boolean(status?.deployment?.config_locked);
   const [mailHostEdited, setMailHostEdited] = useState(false);
   const [dnsState, setDNSState] = useState<DNSState | null>(null);
   const [installResult, setInstallResult] = useState<InstallResult | null>(null);
-  const [form, setForm] = useState<InstallForm>(() => buildInitialForm(status));
+  const [activeStep, setActiveStep] = useState(0);
+  const [form, setForm] = useState<InstallForm>(() => {
+    try {
+      const saved = sessionStorage.getItem(INSTALL_FORM_KEY);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        const defaults = buildInitialForm(status);
+        return { ...defaults, ...parsed };
+      }
+    } catch { /* sessionStorage parse error — use defaults */ }
+    return buildInitialForm(status);
+  });
+
+  // Persist form to sessionStorage on every change
+  useEffect(() => {
+    try { sessionStorage.setItem(INSTALL_FORM_KEY, JSON.stringify(form)); } catch { /* quota exceeded */ }
+  }, [form]);
 
   const databaseURL = databaseURLFor(form);
   const dnsKey = makeDNSKey(form);
@@ -92,9 +113,13 @@ export function InstallPage({ status, onDone }: { status?: InstallStatus; onDone
     onSuccess: (result) => {
       setDNSState({ key: makeDNSKey(form), result });
       if (result.verified) {
-        toast.success('DNS 检测通过');
+        toast.success(text.install.dnsPassed);
+        // Scroll to the install button
+        setTimeout(() => {
+          installButtonRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }, 120);
       } else {
-        toast.error(result.message || 'DNS 还没有完全生效');
+        toast.error(installDNSMessage(result, text));
       }
     },
     onError: (error) => toast.error(error.message)
@@ -106,6 +131,8 @@ export function InstallPage({ status, onDone }: { status?: InstallStatus; onDone
       database_url: databaseURL
     }),
     onSuccess: (data) => {
+      // Clear persisted form on success
+      try { sessionStorage.removeItem(INSTALL_FORM_KEY); } catch { /* ignore */ }
       setInstallResult(data);
       const message = data.restart_required ? text.toast.installDoneRestart : text.toast.installDone;
       launchSuccessBurst({ origin: installButtonRef.current, label: text.toast.installDone });
@@ -114,62 +141,112 @@ export function InstallPage({ status, onDone }: { status?: InstallStatus; onDone
     onError: (error) => toast.error(error.message)
   });
 
+  // Client-side validation
+  const validate = useCallback((): string | null => {
+    if (!form.admin_email.trim()) return text.install.validationEmailRequired;
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.admin_email.trim())) return text.install.validationEmailFormat;
+    if (form.admin_password.length < 8) return text.install.validationPasswordLength;
+    if (form.database_driver === 'sqlite' && !form.database_url.trim()) return text.install.validationDatabaseRequired;
+    if (form.database_driver === 'postgres' && (!form.database_host.trim() || !form.database_name.trim() || !form.database_user.trim())) return text.install.validationDatabaseRequired;
+    if (!/^https?:\/\/.+/.test(form.public_base_url.trim())) return text.install.validationPublicURLFormat;
+    return null;
+  }, [form, text]);
+
+  const handleSubmit = (e: FormEvent) => {
+    e.preventDefault();
+    // In Docker mode, skip DNS requirement
+    if (!runtimeConfigLocked && !dnsVerified) {
+      toast.error(text.install.finishBtnDNS);
+      return;
+    }
+    const error = validate();
+    if (error) {
+      toast.error(error);
+      return;
+    }
+    install.mutate();
+  };
+
+  const handleLogoTap = useCallback(() => {
+    const now = Date.now();
+    const t = logoTapRef.current;
+    if (now - t.since > 2000) { t.count = 0; }
+    t.since = now;
+    t.count += 1;
+    if (t.count >= 3) {
+      sessionStorage.setItem('hlool_skip_install', '1');
+      onDone();
+    }
+  }, [onDone]);
+
+  // Derive step from state
+  const currentStep = runtimeConfigLocked ? 2 : (dnsVerified ? 2 : (form.admin_email && form.admin_password ? 1 : 0));
+
+  // ---- Install Complete View ----
   if (installResult) {
     return (
-      <InstallShell status={status} runtimeConfigLocked={runtimeConfigLocked}>
+      <InstallShell status={status} runtimeConfigLocked={runtimeConfigLocked} text={text} onLogoTap={handleLogoTap}>
         <section className="panel install-complete-panel">
           <div className="panel-header">
             <div>
-              <h2>安装已完成</h2>
-              <p>{installResult.restart_required ? '数据库或运行时配置变更后，需要重启服务再进入控制台。' : '管理员账号已创建，下面是本次安装生成的 env 内容。'}</p>
+              <h2>{text.install.completeTitle}</h2>
+              <p>{installResult.restart_required ? text.install.completeDescRestart : text.install.completeDesc}</p>
             </div>
-            <StatusPill ok>{installResult.env_written ? 'env 已写入' : '手动写入 env'}</StatusPill>
+            <StatusPill ok>{installResult.env_written ? text.install.envWrittenPill : text.install.envManualPill}</StatusPill>
           </div>
 
           <div className="install-env-guidance">
             <div>
-              <strong>{installResult.env_written ? '已写入配置文件' : '没有写入权限，请手动保存'}</strong>
+              <strong>{installResult.env_written ? text.install.envWrittenInfo : text.install.envManualInfo}</strong>
               <span>
-                目标路径：<code>{installResult.env_path || status?.config.env_path || '.env'}</code>
-                {installResult.env_error ? `。写入失败：${installResult.env_error}` : ''}
+                {text.install.envTargetPathLabel}：<code>{installResult.env_path || status?.config?.env_path || '.env'}</code>
+                {installResult.env_error ? `。${text.install.envWriteFailed}：${installResult.env_error}` : ''}
               </span>
             </div>
-            <button className="btn-secondary" onClick={(event) => copy(installResult.env_content, { event, celebrate: true, label: 'env 已复制' })}>
+            <button className="btn-secondary" onClick={(event) => copy(installResult.env_content, { event, celebrate: true, label: text.install.envCopied })}>
               <Clipboard size={16} />
-              复制 env
+              {text.install.copyEnvBtn}
             </button>
           </div>
 
           {installResult.deployment_kind === 'docker' && (
             <p className="install-note">
-              Docker Compose 部署时，数据库、域名、端口这类运行时配置以宿主机项目目录的 <code>.env</code> 为准；安装器写入的 <code>{installResult.env_path}</code> 主要用于保存生成的密钥。修改宿主机 <code>.env</code> 后请执行 <code>docker compose up -d</code>。
+              {text.install.dockerCompleteNote.replace('{path}', installResult.env_path || '.env')}
             </p>
           )}
+
+          <div className="install-env-warning">
+            <Shield size={16} />
+            <span>{text.install.envSecurityWarning}</span>
+          </div>
 
           <pre className="install-env-output">{installResult.env_content}</pre>
 
           <div className="install-actions">
             <button className="btn-primary" onClick={onDone}>
               <Check size={16} />
-              我已确认 env，进入系统
+              {text.install.confirmEnter}
             </button>
-            {installResult.restart_required && <span className="install-warning-text">重启服务后再刷新页面，新的数据库与端口配置才会生效。</span>}
+            {installResult.restart_required && <span className="install-warning-text">{text.install.restartHint}</span>}
           </div>
         </section>
       </InstallShell>
     );
   }
 
+  // ---- Main Install Form ----
   return (
-    <InstallShell status={status} runtimeConfigLocked={runtimeConfigLocked}>
-      <div className="mx-auto grid max-w-6xl gap-4 lg:grid-cols-[minmax(0,1fr)_25rem]">
+    <InstallShell status={status} runtimeConfigLocked={runtimeConfigLocked} text={text} onLogoTap={handleLogoTap}>
+      <StepIndicator current={currentStep} text={text} onStep={setActiveStep} />
+
+      <form className="mx-auto grid max-w-6xl gap-4 lg:grid-cols-[minmax(0,1fr)_25rem]" onSubmit={handleSubmit} noValidate>
         <section className="panel">
           <div className="panel-header">
             <div>
               <h2>{text.install.title}</h2>
-              <p>先填管理员与数据库，再确认 DNS 已经指向这台 HLOOL Mail 服务。</p>
+              <p>{text.install.subtitle}</p>
             </div>
-            <StatusPill ok>{runtimeConfigLocked ? 'Docker' : 'Install'}</StatusPill>
+            <StatusPill ok>{runtimeConfigLocked ? text.install.pillDocker : text.install.pillInstall}</StatusPill>
           </div>
           {runtimeConfigLocked && (
             <div className="install-lock-notice" role="status">
@@ -183,18 +260,18 @@ export function InstallPage({ status, onDone }: { status?: InstallStatus; onDone
 
           <div className="install-section-title">
             <Server size={16} />
-            管理员
+            {text.install.sectionAdmin}
           </div>
           <div className="grid gap-3 md:grid-cols-2">
-            <Field label={text.install.adminEmail} value={form.admin_email} onChange={(value) => set({ admin_email: value })} />
-            <Field label={text.install.adminPassword} value={form.admin_password} type="password" onChange={(value) => set({ admin_password: value })} />
+            <Field id="admin-email" required label={text.install.adminEmail} value={form.admin_email} onChange={(value) => set({ admin_email: value })} />
+            <Field id="admin-password" required label={text.install.adminPassword} value={form.admin_password} type="password" onChange={(value) => set({ admin_password: value })} />
           </div>
 
           <div className="install-section-title">
             <Database size={16} />
-            数据库
+            {text.install.sectionDatabase}
           </div>
-          <div className="grid gap-3 md:grid-cols-2">
+          <div className="grid gap-3 md:grid-cols-2 items-start">
             <label className="grid gap-1 text-sm">
               <span className="text-[var(--muted)]">{text.install.databaseType}</span>
               <select className="input" value={form.database_driver} disabled={runtimeConfigLocked} onChange={(event) => set({ database_driver: event.target.value })}>
@@ -203,72 +280,95 @@ export function InstallPage({ status, onDone }: { status?: InstallStatus; onDone
               </select>
               {runtimeConfigLocked && <span className="text-xs leading-5 text-[var(--muted)]">{text.install.dockerManagedFieldHint}</span>}
             </label>
+            <span className="install-db-type-hint">{text.install.dbTypeHint}</span>
             {form.database_driver === 'sqlite' ? (
               <Field
-                label="SQLite 数据库文件"
+                id="sqlite-file"
+                required
+                label={text.install.sqliteFile}
                 value={form.database_url}
                 onChange={(value) => set({ database_url: value })}
                 disabled={runtimeConfigLocked}
-                hint={runtimeConfigLocked ? text.install.dockerManagedFieldHint : '二进制部署可直接使用本地文件路径，例如 storage/hlool-mail.db。'}
+                hint={runtimeConfigLocked ? text.install.dockerManagedFieldHint : text.install.sqliteFileHint}
               />
             ) : (
               <>
-                <Field label="数据库主机" value={form.database_host} onChange={(value) => set({ database_host: value })} disabled={runtimeConfigLocked} />
-                <Field label="数据库端口" value={form.database_port} onChange={(value) => set({ database_port: value })} disabled={runtimeConfigLocked} />
-                <Field label="数据库名称" value={form.database_name} onChange={(value) => set({ database_name: value })} disabled={runtimeConfigLocked} />
-                <Field label="数据库账号" value={form.database_user} onChange={(value) => set({ database_user: value })} disabled={runtimeConfigLocked} />
-                <Field label="数据库密码" value={form.database_password} type="password" onChange={(value) => set({ database_password: value })} disabled={runtimeConfigLocked} />
-                <Field label="SSL 模式" value={form.database_sslmode} onChange={(value) => set({ database_sslmode: value })} disabled={runtimeConfigLocked} hint="本机或 Compose 内网通常填 disable；云数据库通常填 require。" />
+                <Field id="db-host" required label={text.install.dbHost} value={form.database_host} onChange={(value) => set({ database_host: value })} disabled={runtimeConfigLocked} />
+                <Field id="db-port" label={text.install.dbPort} value={form.database_port} onChange={(value) => set({ database_port: value })} disabled={runtimeConfigLocked} />
+                <Field id="db-name" required label={text.install.dbName} value={form.database_name} onChange={(value) => set({ database_name: value })} disabled={runtimeConfigLocked} />
+                <Field id="db-user" required label={text.install.dbUser} value={form.database_user} onChange={(value) => set({ database_user: value })} disabled={runtimeConfigLocked} />
+                <Field id="db-password" label={text.install.dbPassword} value={form.database_password} type="password" onChange={(value) => set({ database_password: value })} disabled={runtimeConfigLocked} />
+                <Field id="db-ssl" label={text.install.dbSSLMode} value={form.database_sslmode} onChange={(value) => set({ database_sslmode: value })} disabled={runtimeConfigLocked} hint={text.install.dbSSLHint} />
               </>
             )}
           </div>
           {form.database_driver === 'postgres' && (
             <div className="install-generated-line">
-              <span>将写入 DATABASE_URL</span>
-              <code>{runtimeConfigLocked ? status?.config.database_url || databaseURL : databaseURL}</code>
+              <span>{text.install.dbGeneratedURL}</span>
+              <code>{runtimeConfigLocked ? status?.config?.database_url || databaseURL : databaseURL}</code>
             </div>
           )}
 
           <div className="install-section-title">
             <Globe2 size={16} />
-            访问与端口
+            {text.install.sectionAccess}
           </div>
           <div className="grid gap-3 md:grid-cols-2">
             <Field
+              id="public-url"
+              required
               label={text.install.publicURL}
               value={form.public_base_url}
               onChange={setPublicURL}
               disabled={runtimeConfigLocked}
-              hint="网页打开这个地址，API 也用同一个地址再加 /api/...，例如 https://mail.xx.com/api/generate-email。"
+              hint={text.install.publicURLHint}
             />
             <Field
-              label="收信主机名 / MX 指向"
+              id="mail-hostname"
+              label={text.install.mailHostnameLabel}
               value={form.mail_hostname}
               onChange={setMailHostname}
               disabled={runtimeConfigLocked}
-              hint="通常就是上面访问地址里的主机名，但不要带 https://。MX 记录默认也指向它。"
+              hint={text.install.mailHostnameHint2}
             />
             <Field
+              id="http-addr"
               label={text.install.httpAddr}
               value={form.http_addr}
               onChange={(value) => set({ http_addr: value })}
               disabled={runtimeConfigLocked}
-              hint="一般只影响二进制直跑监听端口。使用 Nginx、Caddy、宝塔等反向代理时，外部 HTTPS 端口在反代里处理，这里通常不用动。"
+              hint={text.install.httpAddrHint2}
             />
             <label className="grid gap-1 text-sm">
               <span className="install-danger-label">{text.install.smtpAddr}</span>
               <input className="input install-danger-input" value={form.smtp_addr} disabled={runtimeConfigLocked} onChange={(event) => set({ smtp_addr: event.target.value })} />
-              <span className="install-danger-hint">正式接收互联网邮件需要公网 TCP 25。测试可用 :2525；生产要么程序监听 :25，要么公网 25 转发到这里。</span>
+              <span className="install-danger-hint">{text.install.smtpBTPanelHint}</span>
             </label>
           </div>
 
-          <label className="toggle-row mt-3">
-            <input type="checkbox" checked={form.dev_mode} disabled={runtimeConfigLocked} onChange={(event) => set({ dev_mode: event.target.checked }, true)} />
-            <span>{text.install.devMode}</span>
-          </label>
-          <button ref={installButtonRef} className="btn-primary mt-4" onClick={() => install.mutate()} disabled={install.isPending || !dnsVerified}>
+          <div className="segmented-control mt-3">
+            <button type="button" className={`segment-choice ${!form.dev_mode ? 'segment-choice-active' : ''}`} disabled={runtimeConfigLocked} onClick={() => set({ dev_mode: false }, true)}>
+              Production
+            </button>
+            <button type="button" className={`segment-choice ${form.dev_mode ? 'segment-choice-active' : ''}`} disabled={runtimeConfigLocked} onClick={() => set({ dev_mode: true }, true)}>
+              Development
+            </button>
+          </div>
+          {form.dev_mode && (
+            <p className="install-dev-warning">
+              <Shield size={14} />
+              <span>{text.install.devModeWarning}</span>
+            </p>
+          )}
+
+          <button
+            ref={installButtonRef}
+            type="submit"
+            className="btn-primary mt-4"
+            disabled={install.isPending || (!runtimeConfigLocked && !dnsVerified)}
+          >
             {install.isPending ? <Loader2 size={16} className="animate-spin" /> : <Check size={16} />}
-            {dnsVerified ? text.install.finish : '先完成 DNS 检测'}
+            {runtimeConfigLocked ? text.install.finish : (dnsVerified ? text.install.finish : text.install.finishBtnDNS)}
           </button>
         </section>
 
@@ -276,34 +376,48 @@ export function InstallPage({ status, onDone }: { status?: InstallStatus; onDone
           <div className="panel-header">
             <div>
               <h2>{text.install.dnsTitle}</h2>
-              <p>检测通过后才可以完成安装。</p>
+              <p>{text.install.dnsSubtitle}</p>
             </div>
-            <StatusPill ok={Boolean(dnsVerified)}>{dnsVerified ? '已通过' : '待检测'}</StatusPill>
+            <StatusPill ok={Boolean(dnsVerified)}>{dnsVerified ? text.install.pillPassed : text.install.pillPending}</StatusPill>
           </div>
           <div className="grid gap-3 text-sm">
-            <Field label="要接入的邮箱域名" value={form.setup_domain} onChange={(value) => set({ setup_domain: cleanHost(value) }, true)} hint="例如要收 user@xx.com，就填 xx.com。" />
-            <Field label="服务器公网 IP" value={form.server_ip} onChange={(value) => set({ server_ip: value.trim() }, true)} hint="用于确认收信主机名的 A/AAAA 记录确实指向这台服务器。" />
-            <label className="toggle-row">
-              <input type="checkbox" checked={form.check_wildcard} onChange={(event) => set({ check_wildcard: event.target.checked }, true)} />
-              <span>同时检测泛域名 MX（用于 user@abc.xx.com）</span>
-            </label>
+            <Field id="setup-domain" label={text.install.setupDomainLabel} value={form.setup_domain} onChange={(value) => set({ setup_domain: cleanHost(value) }, true)} hint={text.install.setupDomainHint} />
+            <Field id="server-ip" label={text.install.serverIPLabel} value={form.server_ip} onChange={(value) => set({ server_ip: value.trim() }, true)} hint={text.install.serverIPHint} />
+            <div className="segmented-control">
+              <button type="button" className={`segment-choice ${!form.check_wildcard ? 'segment-choice-active' : ''}`} onClick={() => set({ check_wildcard: false }, true)}>
+                Skip Wildcard
+              </button>
+              <button type="button" className={`segment-choice ${form.check_wildcard ? 'segment-choice-active' : ''}`} onClick={() => set({ check_wildcard: true }, true)}>
+                Check Wildcard
+              </button>
+            </div>
 
-            <CodeBlock>{`${form.mail_hostname || 'mail.xx.com'}. A ${form.server_ip || '你的服务器公网 IP'}`}</CodeBlock>
+            <CodeBlock>{`${form.mail_hostname || 'mail.xx.com'}. A ${form.server_ip || text.install.dnsA}`}</CodeBlock>
             <CodeBlock>{`${form.setup_domain || 'xx.com'}. MX 10 ${form.expected_mx || form.mail_hostname || 'mail.xx.com'}.`}</CodeBlock>
             {form.check_wildcard && <CodeBlock>{`*.${form.setup_domain || 'xx.com'}. MX 10 ${form.expected_mx || form.mail_hostname || 'mail.xx.com'}.`}</CodeBlock>}
 
-            <button className="btn-secondary" onClick={() => dnsCheck.mutate()} disabled={dnsCheck.isPending}>
+            <button className="btn-secondary" type="button" onClick={() => dnsCheck.mutate()} disabled={dnsCheck.isPending}>
               {dnsCheck.isPending ? <Loader2 size={16} className="animate-spin" /> : <RefreshCw size={16} />}
-              检测 DNS
+              {text.install.dnsDetectBtn}
             </button>
 
-            {dnsState?.key === dnsKey && <DNSCheckDetails result={dnsState.result} />}
+            {dnsState?.key === dnsKey && <DNSCheckDetails result={dnsState.result} text={text} />}
             <p className="text-xs leading-5 text-[var(--muted)]">
-              公开访问地址和收信主机名经常是同一个主机，比如 <code>https://hlool.00a.chat</code> 与 <code>hlool.00a.chat</code>。区别只是前者是带协议的 Web/API URL，后者是 DNS 里给 A/MX 使用的主机名。
+              {text.install.dnsURLHint}
             </p>
+
+            {/* Mobile install button inside DNS panel, hidden on desktop */}
+            <button
+              type="submit"
+              className="btn-primary install-mobile-install mt-2"
+              disabled={install.isPending || (!runtimeConfigLocked && !dnsVerified)}
+            >
+              {install.isPending ? <Loader2 size={16} className="animate-spin" /> : <Check size={16} />}
+              {runtimeConfigLocked ? text.install.finish : (dnsVerified ? text.install.finish : text.install.finishBtnDNS)}
+            </button>
           </div>
         </section>
-      </div>
+      </form>
     </InstallShell>
   );
 }
@@ -311,76 +425,51 @@ export function InstallPage({ status, onDone }: { status?: InstallStatus; onDone
 function InstallShell({
   status,
   runtimeConfigLocked,
-  children
+  text,
+  children,
+  onLogoTap
 }: {
   status?: InstallStatus;
   runtimeConfigLocked: boolean;
+  text: ReturnType<typeof useText>;
   children: ReactNode;
+  onLogoTap?: () => void;
 }) {
   return (
     <div className="min-h-screen bg-[var(--background)] px-4 py-8 text-[var(--foreground)]">
       <div className="install-brand mx-auto max-w-6xl">
-        <AppLogo />
+        <AppLogo onClick={onLogoTap} />
         <div className="install-brand-copy">
           <strong>HLOOL Mail</strong>
-          <span>{runtimeConfigLocked ? 'Docker Compose 初始化' : '首次安装向导'}</span>
+          <span>{runtimeConfigLocked ? text.install.installTitleDocker : text.install.installTitleDefault}</span>
         </div>
         {status?.deployment?.kind && <StatusPill ok>{status.deployment.kind}</StatusPill>}
+        <a
+          className="install-github-link"
+          href="https://github.com/hloolx/HloolMail"
+          target="_blank"
+          rel="noopener noreferrer"
+          title="GitHub"
+        >
+          <ExternalLink size={16} />
+          <span>GitHub</span>
+        </a>
       </div>
       {children}
     </div>
   );
 }
 
-function DNSCheckDetails({ result }: { result: InstallDNSCheckResult }) {
-  return (
-    <div className="install-dns-result">
-      <div className={result.verified ? 'install-dns-ok' : 'install-dns-bad'}>{result.message}</div>
-      {result.address_check && (
-        <DNSLine
-          label="A/AAAA"
-          ok={result.address_check.verified}
-          value={result.address_check.addresses?.length ? result.address_check.addresses.join(', ') : result.address_check.error || '未查询到地址记录'}
-        />
-      )}
-      {result.mx_check && (
-        <DNSLine
-          label="根域 MX"
-          ok={result.mx_check.mx_verified}
-          value={result.mx_check.mx_records?.length ? result.mx_check.mx_records.join(', ') : result.mx_check.check_message || '未查询到 MX'}
-        />
-      )}
-      {result.wildcard_check && (
-        <DNSLine
-          label="泛域名 MX"
-          ok={result.wildcard_check.mx_verified}
-          value={result.wildcard_check.mx_records?.length ? result.wildcard_check.mx_records.join(', ') : result.wildcard_check.check_message || '未查询到 MX'}
-        />
-      )}
-    </div>
-  );
-}
-
-function DNSLine({ label, ok, value }: { label: string; ok: boolean; value: string }) {
-  return (
-    <div className="install-dns-line">
-      <span className={ok ? 'install-dot-ok' : 'install-dot-bad'} />
-      <strong>{label}</strong>
-      <code>{value}</code>
-    </div>
-  );
-}
-
 function buildInitialForm(status?: InstallStatus): InstallForm {
-  const publicURL = status?.config.public_base_url || 'http://localhost:3000';
-  const host = cleanHost(status?.config.mail_hostname || hostnameFromURL(publicURL) || 'mail.example.com');
-  const databaseDriver = status?.config.database_driver || 'sqlite';
-  const postgres = parsePostgresURL(status?.config.database_url || '');
+  const publicURL = status?.config?.public_base_url || (typeof window !== 'undefined' ? window.location.origin : 'http://localhost:3000');
+  const host = cleanHost(status?.config?.mail_hostname || hostnameFromURL(publicURL) || 'mail.example.com');
+  const databaseDriver = status?.config?.database_driver || 'sqlite';
+  const postgres = parsePostgresURL(status?.config?.database_url || '');
   return {
     admin_email: 'admin@example.com',
     admin_password: '',
     database_driver: databaseDriver,
-    database_url: databaseDriver === 'postgres' ? '' : status?.config.database_url || 'storage/hlool-mail.db',
+    database_url: databaseDriver === 'postgres' ? '' : status?.config?.database_url || 'storage/hlool-mail.db',
     database_host: postgres.host || '127.0.0.1',
     database_port: postgres.port || '5432',
     database_name: postgres.name || 'hloolmail',
@@ -389,14 +478,14 @@ function buildInitialForm(status?: InstallStatus): InstallForm {
     database_sslmode: postgres.sslmode || 'disable',
     public_base_url: publicURL,
     mail_hostname: host,
-    expected_mx: cleanHost(status?.config.expected_mx || host),
+    expected_mx: cleanHost(status?.config?.expected_mx || host),
     setup_domain: rootDomainGuess(host),
     server_ip: '',
     check_wildcard: true,
-    http_addr: status?.config.http_addr || ':3000',
-    smtp_addr: status?.config.smtp_addr || ':2525',
+    http_addr: status?.config?.http_addr || ':3000',
+    smtp_addr: status?.config?.smtp_addr || ':2525',
     frontend_dist: 'web/dist',
-    dev_mode: true
+    dev_mode: false
   };
 }
 

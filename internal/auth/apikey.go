@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"errors"
+	"strconv"
 	"strings"
 	"time"
 
@@ -182,32 +183,33 @@ func (s APIKeyService) consumeFailure(keyID uint, now time.Time) error {
 	return ErrAPIQuota
 }
 
-func UsageFor(key *models.APIKey) map[string]int64 {
+func UsageFor(key *models.APIKey) map[string]string {
 	if key == nil {
 		return nil
 	}
-	remainingToday := int64(-1)
-	if key.DailyLimit > 0 {
-		remainingToday = key.DailyLimit - key.UsedToday
-		if remainingToday < 0 {
-			remainingToday = 0
-		}
-	}
-	remainingTotal := int64(-1)
-	if key.TotalLimit > 0 {
-		remainingTotal = key.TotalLimit - key.TotalUsed
-		if remainingTotal < 0 {
-			remainingTotal = 0
-		}
-	}
-	return map[string]int64{
-		"daily_limit":     key.DailyLimit,
-		"used_today":      key.UsedToday,
+	remainingToday, dailyUnlimited := remainingQuota(key.DailyLimit, key.UsedToday)
+	remainingTotal, totalUnlimited := remainingQuota(key.TotalLimit, key.TotalUsed)
+	return map[string]string{
+		"daily_limit":     strconv.FormatInt(key.DailyLimit, 10),
+		"used_today":      strconv.FormatInt(key.UsedToday, 10),
 		"remaining_today": remainingToday,
-		"total_limit":     key.TotalLimit,
-		"total_usage":     key.TotalUsed,
+		"daily_unlimited": strconv.FormatBool(dailyUnlimited),
+		"total_limit":     strconv.FormatInt(key.TotalLimit, 10),
+		"total_usage":     strconv.FormatInt(key.TotalUsed, 10),
 		"remaining_total": remainingTotal,
+		"total_unlimited": strconv.FormatBool(totalUnlimited),
 	}
+}
+
+func remainingQuota(limit, used int64) (string, bool) {
+	if limit <= 0 {
+		return "unlimited", true
+	}
+	remaining := limit - used
+	if remaining < 0 {
+		remaining = 0
+	}
+	return strconv.FormatInt(remaining, 10), false
 }
 
 func SameLocalDay(a, b time.Time) bool {

@@ -1,38 +1,78 @@
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { Activity, AlertTriangle, ChevronDown, Globe2, Inbox, MailPlus } from 'lucide-react';
-import type { AppNotification, DomainAvailability, User } from '../api';
+import { Activity, AlertTriangle, Globe2, Inbox, MailPlus } from 'lucide-react';
+import type { AppNotification, DomainAvailability, PublicDomainItem, User } from '../api';
 import { api } from '../api';
 import type { Stats, TimeseriesStats } from '../types';
 import { useText } from '../locales';
 import { useAppStore } from '../store';
+import { DataTable, EmptyState, Metric, PaginationControls } from '../components/shared';
+import type { DataTableColumn, DataTableRow } from '../components/shared/DataTable';
 import { LineChart } from '../components/charts/LineChart';
-import { EmptyState, Metric } from '../components/shared';
 
 export function Dashboard({ user }: { user: User }) {
   const { setPage } = useAppStore();
   const text = useText();
   const [domainPage, setDomainPage] = useState(1);
   const pageSize = 10;
-  const stats = useQuery({ queryKey: ['stats'], queryFn: () => api<Stats>('/api/stats') });
-  const timeseries = useQuery({ queryKey: ['stats-timeseries'], queryFn: () => api<TimeseriesStats>('/api/stats/timeseries') });
+
+  const stats = useQuery({
+    queryKey: ['stats'],
+    queryFn: () => api<Stats>('/api/stats'),
+    staleTime: 30_000,
+  });
+
+  const timeseries = useQuery({
+    queryKey: ['stats-timeseries'],
+    queryFn: () => api<TimeseriesStats>('/api/stats/timeseries'),
+    staleTime: 30_000,
+  });
+
   const domains = useQuery({
     queryKey: ['domains-available'],
-    queryFn: () => api<DomainAvailability>('/api/domains/available')
+    queryFn: () => api<DomainAvailability>('/api/domains/available'),
+    staleTime: 30_000,
   });
+
   const notifications = useQuery({
     queryKey: ['notifications-dashboard'],
     queryFn: () => api<AppNotification[]>('/api/notifications?unread=true&limit=5'),
-    retry: false
+    retry: false,
   });
 
-  const publicDomains = domains.data?.public_domains || [];
-  const urgentNotifications = (notifications.data || []).filter((item) => item.type === 'MX_FAILED' || item.type === 'DOMAIN_EXPIRING' || item.type === 'DOMAIN_EXPIRED');
+  const publicDomains: PublicDomainItem[] = domains.data && 'public_domains' in domains.data ? domains.data.public_domains : [];
+  const urgentNotifications = (notifications.data || []).filter(
+    (item) => item.type === 'MX_FAILED' || item.type === 'DOMAIN_EXPIRING' || item.type === 'DOMAIN_EXPIRED',
+  );
   const totalPages = Math.max(1, Math.ceil(publicDomains.length / pageSize));
   const pagedDomains = publicDomains.slice((domainPage - 1) * pageSize, domainPage * pageSize);
 
+  const domainColumns: DataTableColumn[] = [
+    { key: 'domain', header: text.dashboard.tableDomain },
+    { key: 'mode', header: text.dashboard.tableMode },
+    { key: 'mail', header: text.dashboard.tableMail },
+    { key: 'action', header: text.dashboard.tableAction },
+  ];
+
+  const domainRows: DataTableRow[] = pagedDomains.map((domain) => ({
+    key: domain.id ?? domain.domain,
+    cells: [
+      <div className="dashboard-domain-cell" key="domain">
+        <span className="font-medium">@{domain.domain}</span>
+      </div>,
+      <span className="badge" key="mode">{text.dashboard.publicTag}</span>,
+      <span className="tabular-nums" key="mail" style={{ textAlign: 'right', display: 'inline-block', width: '100%' }}>
+        {domain.message_count ?? 0}
+      </span>,
+      <button className="btn-ghost" key="action" onClick={() => setPage('inbox')}>
+        <MailPlus size={14} />
+        {text.dashboard.quickGenerate}
+      </button>,
+    ],
+  }));
+
   return (
-    <div className="dashboard-home grid gap-4">
+    <div className="dashboard-home grid gap-4" role="main">
       {/* Welcome banner */}
       <section className="panel dashboard-welcome">
         <div className="dashboard-welcome-inner">
@@ -47,12 +87,33 @@ export function Dashboard({ user }: { user: User }) {
       {urgentNotifications.length > 0 && (
         <section className="dashboard-alerts">
           {urgentNotifications.slice(0, 3).map((notification) => (
-            <div className={`dashboard-alert dashboard-alert-${notification.type === 'DOMAIN_EXPIRING' ? 'warning' : 'critical'}`} key={notification.id}>
+            <div
+              className={`dashboard-alert dashboard-alert-${notification.type === 'DOMAIN_EXPIRING' ? 'warning' : 'critical'}`}
+              key={notification.id}
+            >
               <AlertTriangle size={16} />
               <span>{notification.message}</span>
             </div>
           ))}
         </section>
+      )}
+
+      {notifications.isError && (
+        <div className="dashboard-alert dashboard-alert-warning">
+          <AlertTriangle size={16} />
+          <span>{text.dashboard.notificationsError}</span>
+        </div>
+      )}
+
+      {/* Stats error banner */}
+      {stats.isError && (
+        <div className="dashboard-alert dashboard-alert-critical">
+          <AlertTriangle size={16} />
+          <span>{text.dashboard.statsError}</span>
+          <button className="btn-ghost" style={{ marginLeft: 'auto' }} onClick={() => stats.refetch()}>
+            {text.dashboard.retry}
+          </button>
+        </div>
       )}
 
       {/* Quick stats */}
@@ -63,8 +124,19 @@ export function Dashboard({ user }: { user: User }) {
         <Metric icon={Activity} label={text.dashboard.apiCalls} value={stats.data?.api_calls_today ?? 0} loading={stats.isLoading} />
       </div>
 
+      {/* Timeseries error banner */}
+      {timeseries.isError && (
+        <div className="dashboard-alert dashboard-alert-critical">
+          <AlertTriangle size={16} />
+          <span>{text.dashboard.timeseriesError}</span>
+          <button className="btn-ghost" style={{ marginLeft: 'auto' }} onClick={() => timeseries.refetch()}>
+            {text.dashboard.retry}
+          </button>
+        </div>
+      )}
+
       {/* Line charts */}
-      <div className="grid gap-4 lg:grid-cols-3">
+      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
         <section className="panel chart-panel">
           <div className="panel-header">
             <div>
@@ -72,7 +144,15 @@ export function Dashboard({ user }: { user: User }) {
               <p>{text.dashboard.last7Days}</p>
             </div>
           </div>
-          <LineChart data={timeseries.data?.messages || []} labels={timeseries.data?.days || []} color="var(--primary)" unit={text.dashboard.chartUnitMessages} />
+          <LineChart
+            data={timeseries.data?.messages || []}
+            labels={timeseries.data?.days || []}
+            color="var(--primary)"
+            unit={text.dashboard.chartUnitMessages}
+            loading={timeseries.isLoading}
+            emptyLabel={text.dashboard.chartEmptyMessages}
+            ariaLabel={text.dashboard.chartMessages}
+          />
         </section>
         <section className="panel chart-panel">
           <div className="panel-header">
@@ -81,7 +161,15 @@ export function Dashboard({ user }: { user: User }) {
               <p>{text.dashboard.last7Days}</p>
             </div>
           </div>
-          <LineChart data={timeseries.data?.domains || []} labels={timeseries.data?.days || []} color="var(--good)" unit={text.dashboard.chartUnitDomains} />
+          <LineChart
+            data={timeseries.data?.domains || []}
+            labels={timeseries.data?.days || []}
+            color="var(--good)"
+            unit={text.dashboard.chartUnitDomains}
+            loading={timeseries.isLoading}
+            emptyLabel={text.dashboard.chartEmptyDomains}
+            ariaLabel={text.dashboard.chartDomains}
+          />
         </section>
         <section className="panel chart-panel">
           <div className="panel-header">
@@ -90,7 +178,15 @@ export function Dashboard({ user }: { user: User }) {
               <p>{text.dashboard.last7Days}</p>
             </div>
           </div>
-          <LineChart data={timeseries.data?.api_calls || []} labels={timeseries.data?.days || []} color="var(--warn)" unit={text.dashboard.chartUnitCalls} />
+          <LineChart
+            data={timeseries.data?.api_calls || []}
+            labels={timeseries.data?.days || []}
+            color="var(--warn)"
+            unit={text.dashboard.chartUnitCalls}
+            loading={timeseries.isLoading}
+            emptyLabel={text.dashboard.chartEmptyApiCalls}
+            ariaLabel={text.dashboard.chartApiCalls}
+          />
         </section>
       </div>
 
@@ -105,55 +201,23 @@ export function Dashboard({ user }: { user: User }) {
             {publicDomains.length} {text.dashboard.publicMailboxes}
           </span>
         </div>
-        {publicDomains.length > 0 ? (
-          <>
-            <div className="table-wrap">
-              <table>
-                <thead>
-                  <tr>
-                    <th>{text.dashboard.tableDomain}</th>
-                    <th>{text.dashboard.tableMode}</th>
-                    <th>{text.dashboard.tableMail}</th>
-                    <th>{text.dashboard.tableAction}</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {pagedDomains.map((domain) => (
-                    <tr key={domain.id}>
-                      <td>
-                        <div className="dashboard-domain-cell">
-                          <span className="font-medium">@{domain.domain}</span>
-                          {domain.wildcard_enabled && <span className="badge">{text.dashboard.wildcardTag}</span>}
-                        </div>
-                      </td>
-                      <td><span className="badge">{text.dashboard.publicTag}</span></td>
-                      <td>{domain.message_count ?? 0}</td>
-                      <td>
-                        <button className="btn-ghost" onClick={() => setPage('inbox')}>
-                          <MailPlus size={14} />
-                          {text.dashboard.quickGenerate}
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+
+        {domains.isLoading ? (
+          <EmptyState label={text.dashboard.domainListLoading} />
+        ) : domains.isError ? (
+          <div style={{ padding: '0.75rem 0' }}>
+            <div className="dashboard-alert dashboard-alert-critical">
+              <AlertTriangle size={16} />
+              <span>{text.dashboard.domainsError}</span>
+              <button className="btn-ghost" style={{ marginLeft: 'auto' }} onClick={() => domains.refetch()}>
+                {text.dashboard.retry}
+              </button>
             </div>
-            {totalPages > 1 && (
-              <div className="pagination">
-                <button className="btn-ghost" disabled={domainPage <= 1} onClick={() => setDomainPage((p) => Math.max(1, p - 1))}>
-                  <ChevronDown className="rotate-90" size={14} />
-                  {text.dashboard.prev}
-                </button>
-                <span className="pagination-info">
-                  {text.dashboard.pageOf.replace('{current}', String(domainPage)).replace('{total}', String(totalPages))}
-                </span>
-                <button className="btn-ghost" disabled={domainPage >= totalPages} onClick={() => setDomainPage((p) => Math.min(totalPages, p + 1))}>
-                  {text.dashboard.next}
-                  <ChevronDown className="-rotate-90" size={14} />
-                </button>
-              </div>
-            )}
+          </div>
+        ) : publicDomains.length > 0 ? (
+          <>
+            <DataTable columns={domainColumns} rows={domainRows} emptyLabel={text.dashboard.publicDomainEmpty} />
+            <PaginationControls page={domainPage} totalPages={totalPages} onPageChange={setDomainPage} />
           </>
         ) : (
           <EmptyState label={text.dashboard.publicDomainEmpty} />

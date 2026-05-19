@@ -1,33 +1,38 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { useEffect, useState } from 'react';
-import { Activity, ClipboardList, Database, Globe2, Inbox, KeyRound, Play, RefreshCw, Save, ShieldAlert, Users } from 'lucide-react';
+import { useEffect, useMemo, useState } from 'react';
+import { Database, Eye, Globe2, Inbox, KeyRound, Megaphone, Play, RefreshCw, Save, ShieldAlert, Trash2, Users } from 'lucide-react';
 import { toast } from 'sonner';
+import type { AdminAnnouncement } from '../api';
 import { api, patchJSON, postJSON } from '../api';
-import type { AdminDomainHealth, AdminQuotaAlert, AdminStats, AuditLog, DomainCheckRun, DomainCheckSettings } from '../types';
+import type { AdminDomainHealth, AdminQuotaAlert, AdminStats, DomainCheckRun, DomainCheckSettings } from '../types';
 import { domainModeLabel, formatDomainExpiry, relativeTime } from '../lib/display';
 import { useAppStore } from '../store';
-import { useText } from '../locales';
+import { currentText, useText } from '../locales';
 import { DataTable, Metric, StatusPill } from '../components/shared';
+import { simpleMarkdownToHTML } from '../lib/markdown';
+import { AdminAuditLog } from './AdminAuditLog';
 
 export function AdminPage() {
   const queryClient = useQueryClient();
   const text = useText();
   const language = useAppStore((state) => state.language);
   const setPage = useAppStore((state) => state.setPage);
-  const stats = useQuery({ queryKey: ['admin-stats'], queryFn: () => api<AdminStats>('/api/admin/stats'), retry: false });
-  const domainHealth = useQuery({ queryKey: ['admin-domain-health'], queryFn: () => api<AdminDomainHealth[]>('/api/admin/domain-health'), retry: false });
-  const quotaAlerts = useQuery({ queryKey: ['admin-quota-alerts'], queryFn: () => api<AdminQuotaAlert[]>('/api/admin/quota-alerts'), retry: false });
-  const auditLogs = useQuery({ queryKey: ['admin-audit-logs'], queryFn: () => api<AuditLog[]>('/api/admin/audit-logs?limit=30'), retry: false });
+
+  const stats = useQuery({ queryKey: ['admin-stats'], queryFn: () => api<AdminStats>('/api/admin/stats'), retry: false, staleTime: 30_000 });
+  const domainHealth = useQuery({ queryKey: ['admin-domain-health'], queryFn: () => api<AdminDomainHealth[]>('/api/admin/domain-health'), retry: false, staleTime: 30_000 });
+  const quotaAlerts = useQuery({ queryKey: ['admin-quota-alerts'], queryFn: () => api<AdminQuotaAlert[]>('/api/admin/quota-alerts'), retry: false, staleTime: 30_000 });
   const domainCheckSettings = useQuery({
     queryKey: ['admin-domain-check-settings'],
     queryFn: () => api<DomainCheckSettings>('/api/admin/domain-check-settings'),
     retry: false,
+    staleTime: 30_000,
     refetchInterval: (query) => query.state.data?.last_run?.status === 'running' ? 5000 : false
   });
   const domainCheckRuns = useQuery({
     queryKey: ['admin-domain-check-runs'],
     queryFn: () => api<DomainCheckRun[]>('/api/admin/domain-check-runs?limit=10'),
     retry: false,
+    staleTime: 30_000,
     refetchInterval: (query) => query.state.data?.some((run) => run.status === 'running') ? 5000 : false
   });
   const [settingsForm, setSettingsForm] = useState({
@@ -39,6 +44,55 @@ export function AdminPage() {
     check_inactive: false,
     failure_threshold: '2',
     recovery_threshold: '1'
+  });
+
+  // Announcement management state
+  const [announcementTitle, setAnnouncementTitle] = useState('');
+  const [announcementContent, setAnnouncementContent] = useState('');
+  const [announcementPreview, setAnnouncementPreview] = useState(false);
+
+  const adminAnnouncements = useQuery({
+    queryKey: ['admin-announcements'],
+    queryFn: () => api<AdminAnnouncement[]>('/api/admin/announcements'),
+    retry: false
+  });
+
+  const createAnnouncement = useMutation({
+    mutationFn: () => {
+      if (!announcementTitle.trim()) throw new Error('Title is required');
+      return postJSON<AdminAnnouncement>('/api/admin/announcements', {
+        title: announcementTitle.trim(),
+        content: announcementContent.trim()
+      });
+    },
+    onSuccess: () => {
+      setAnnouncementTitle('');
+      setAnnouncementContent('');
+      setAnnouncementPreview(false);
+      queryClient.invalidateQueries({ queryKey: ['admin-announcements'] });
+      queryClient.invalidateQueries({ queryKey: ['announcements'] });
+      queryClient.invalidateQueries({ queryKey: ['announcements-unread-count'] });
+      toast.success(text.announcements.created);
+    },
+    onError: (error) => toast.error(error.message)
+  });
+
+  const deleteAnnouncement = useMutation({
+    mutationFn: (id: number) => {
+      if (!window.confirm(text.announcements.deleteConfirm)) {
+        throw new Error('Canceled');
+      }
+      return api(`/api/admin/announcements/${id}`, { method: 'DELETE' });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['admin-announcements'] });
+      queryClient.invalidateQueries({ queryKey: ['announcements'] });
+      queryClient.invalidateQueries({ queryKey: ['announcements-unread-count'] });
+      toast.success(text.announcements.deleted);
+    },
+    onError: (error) => {
+      if (error.message !== 'Canceled') toast.error(error.message);
+    }
   });
 
   useEffect(() => {
@@ -63,22 +117,41 @@ export function AdminPage() {
     queryClient.invalidateQueries({ queryKey: ['admin-audit-logs'] });
     queryClient.invalidateQueries({ queryKey: ['admin-domain-check-settings'] });
     queryClient.invalidateQueries({ queryKey: ['admin-domain-check-runs'] });
+    queryClient.invalidateQueries({ queryKey: ['admin-announcements'] });
   };
 
+  function validateNumberFields(): boolean {
+    const keys = ['interval_minutes', 'timeout_ms', 'max_concurrency', 'failure_threshold', 'recovery_threshold'] as const;
+    let allValid = true;
+    for (const key of keys) {
+      const parsed = Number.parseInt(settingsForm[key], 10);
+      if (!Number.isFinite(parsed) || parsed <= 0) {
+        allValid = false;
+      }
+    }
+    if (!allValid) {
+      toast.error(text.admin.validation.invalidNumber);
+    }
+    return allValid;
+  }
+
   const saveDomainCheckSettings = useMutation({
-    mutationFn: () => patchJSON<DomainCheckSettings>('/api/admin/domain-check-settings', {
-      enabled: settingsForm.enabled,
-      interval_minutes: toPositiveInt(settingsForm.interval_minutes, 30),
-      timeout_ms: toPositiveInt(settingsForm.timeout_ms, 3500),
-      max_concurrency: toPositiveInt(settingsForm.max_concurrency, 5),
-      resolvers: splitResolvers(settingsForm.resolvers),
-      check_inactive: settingsForm.check_inactive,
-      failure_threshold: toPositiveInt(settingsForm.failure_threshold, 2),
-      recovery_threshold: toPositiveInt(settingsForm.recovery_threshold, 1)
-    }),
+    mutationFn: () => {
+      if (!validateNumberFields()) throw new Error(text.admin.validation.invalidNumber);
+      return patchJSON<DomainCheckSettings>('/api/admin/domain-check-settings', {
+        enabled: settingsForm.enabled,
+        interval_minutes: toPositiveInt(settingsForm.interval_minutes, 30),
+        timeout_ms: toPositiveInt(settingsForm.timeout_ms, 3500),
+        max_concurrency: toPositiveInt(settingsForm.max_concurrency, 5),
+        resolvers: splitResolvers(settingsForm.resolvers),
+        check_inactive: settingsForm.check_inactive,
+        failure_threshold: toPositiveInt(settingsForm.failure_threshold, 2),
+        recovery_threshold: toPositiveInt(settingsForm.recovery_threshold, 1)
+      });
+    },
     onSuccess: () => {
       refreshAdminData();
-      toast.success('DNS check settings saved');
+      toast.success(text.admin.dnsCheck.saved);
     },
     onError: (error) => toast.error(error.message)
   });
@@ -87,7 +160,7 @@ export function AdminPage() {
     mutationFn: () => postJSON<{ run: DomainCheckRun; reused: boolean }>('/api/admin/domain-check-runs', {}),
     onSuccess: (result) => {
       refreshAdminData();
-      toast.success(result.reused ? 'DNS check is already running' : 'DNS check started');
+      toast.success(result.reused ? text.admin.dnsCheck.alreadyRunning : text.admin.dnsCheck.started);
     },
     onError: (error) => toast.error(error.message)
   });
@@ -97,163 +170,200 @@ export function AdminPage() {
     onSuccess: () => {
       refreshAdminData();
       queryClient.invalidateQueries({ queryKey: ['domains-all'] });
-      toast.success('域名检测已刷新');
+      toast.success(text.admin.domainHealth.recheckDone);
     },
     onError: (error) => toast.error(error.message)
   });
 
   const disableDomain = useMutation({
-    mutationFn: (domain: AdminDomainHealth) => patchJSON(`/api/domains/${domain.id}`, { active: false }),
+    mutationFn: (domain: AdminDomainHealth) => {
+      if (!window.confirm(text.admin.domainHealth.disableConfirm.replace('{domain}', domain.domain))) {
+        throw new Error('Canceled');
+      }
+      return patchJSON(`/api/domains/${domain.id}`, { active: false });
+    },
     onSuccess: () => {
       refreshAdminData();
       queryClient.invalidateQueries({ queryKey: ['domains-all'] });
-      toast.success('域名已停用');
+      toast.success(text.admin.domainHealth.disableDone);
     },
-    onError: (error) => toast.error(error.message)
+    onError: (error) => {
+      if (error.message !== 'Canceled') toast.error(error.message);
+    }
   });
 
   const makePrivate = useMutation({
-    mutationFn: (domain: AdminDomainHealth) => patchJSON(`/api/domains/${domain.id}`, { mode: 'private' }),
+    mutationFn: (domain: AdminDomainHealth) => {
+      if (!window.confirm(text.admin.domainHealth.privateConfirm.replace('{domain}', domain.domain))) {
+        throw new Error('Canceled');
+      }
+      return patchJSON(`/api/domains/${domain.id}`, { mode: 'private' });
+    },
     onSuccess: () => {
       refreshAdminData();
       queryClient.invalidateQueries({ queryKey: ['domains-all'] });
-      toast.success('域名已转为私有');
+      toast.success(text.admin.domainHealth.makePrivateDone);
     },
-    onError: (error) => toast.error(error.message)
+    onError: (error) => {
+      if (error.message !== 'Canceled') toast.error(error.message);
+    }
   });
 
   const healthRows = (domainHealth.data || []).slice(0, 10);
-  const riskItems = configRisks(stats.data);
+  const risks = useMemo(
+    () => stats.data ? configRisks(stats.data) : [],
+    [stats.data]
+  );
   const runRows = (domainCheckRuns.data || domainCheckSettings.data?.recent_runs || []).slice(0, 10);
   const lastRun = domainCheckSettings.data?.last_run;
-  const isLoading = stats.isLoading || domainHealth.isLoading || quotaAlerts.isLoading || auditLogs.isLoading || domainCheckSettings.isLoading || domainCheckRuns.isLoading;
+  const hasRunningCheck = domainCheckRuns.data?.some((run) => run.status === 'running') || lastRun?.status === 'running';
+  const isLoading = stats.isLoading || domainHealth.isLoading || quotaAlerts.isLoading || domainCheckSettings.isLoading || domainCheckRuns.isLoading;
 
   return (
-    <div className="admin-page grid gap-4">
+    <div className="admin-page grid gap-4" id="admin-top">
       <div className="admin-page-header">
         <div>
           <h1>{text.admin.title}</h1>
           <p>{text.admin.desc}</p>
         </div>
-        <button className="btn-secondary" onClick={refreshAdminData} disabled={isLoading}>
-          <RefreshCw size={16} className={isLoading ? 'animate-spin' : ''} />
-          刷新
+        <button className="btn-secondary" onClick={refreshAdminData} disabled={isLoading} aria-label={text.admin.refresh}>
+          <RefreshCw size={16} className={isLoading ? 'animate-spin' : ''} aria-hidden="true" />
+          {text.admin.refresh}
         </button>
       </div>
 
       <div className="grid gap-3 md:grid-cols-4">
         <Metric icon={Inbox} label={text.dashboard.messagesTotal} value={stats.data?.messages ?? 0} loading={stats.isLoading} />
         <Metric icon={Globe2} label={text.admin.enabledDomains} value={stats.data?.active_domains ?? 0} loading={stats.isLoading} />
-        <Metric icon={Users} label="用户" value={stats.data?.users ?? 0} loading={stats.isLoading} />
+        <Metric icon={Users} label={text.admin.userMetric} value={stats.data?.users ?? 0} loading={stats.isLoading} />
         <Metric icon={KeyRound} label={text.dashboard.apiCalls} value={stats.data?.api_usage_today ?? 0} loading={stats.isLoading} />
       </div>
 
-      <section className="panel">
+      <section className="panel" id="admin-system-status">
         <div className="panel-header">
           <div>
-            <h2>系统状态</h2>
-            <p>把配置风险和运行状态放在最前面，方便上线前扫一遍</p>
+            <h2>{text.admin.systemStatus.title}</h2>
+            <p>{text.admin.systemStatus.desc}</p>
           </div>
         </div>
         <div className="admin-status-grid">
-          <StatusPill ok={!stats.isError} loading={stats.isLoading}>Admin API</StatusPill>
-          <StatusPill ok={!stats.data?.failed_domains} loading={stats.isLoading}>Domain Health</StatusPill>
-          <StatusPill ok={!stats.isLoading} loading={stats.isLoading}>Cleanup</StatusPill>
-          <StatusPill ok={!stats.data?.admin_token_is_default} loading={stats.isLoading}>Admin Token</StatusPill>
+          <StatusPill ok={!stats.isError} loading={stats.isLoading}>{text.admin.systemStatus.adminApi}</StatusPill>
+          <StatusPill ok={!stats.data?.failed_domains} loading={stats.isLoading}>{text.admin.systemStatus.domainHealth}</StatusPill>
+          <StatusPill ok={stats.data ? true : undefined} loading={stats.isLoading}>
+            {stats.isLoading || !stats.data ? text.admin.systemStatus.cleanup : text.admin.systemStatus.cleanupUnchecked}
+          </StatusPill>
+          <StatusPill ok={!stats.data?.admin_token_is_default} loading={stats.isLoading}>{text.admin.systemStatus.adminToken}</StatusPill>
         </div>
         <div className="admin-risk-list">
-          {riskItems.length ? riskItems.map((item) => (
-            <div className={`admin-risk admin-risk-${item.level}`} key={item.title}>
-              <ShieldAlert size={16} />
+          {risks.length ? risks.map((item) => (
+            <div className={`admin-risk admin-risk-${item.level}`} key={item.title} role={item.level === 'critical' ? 'alert' : 'status'}>
+              <ShieldAlert size={16} aria-hidden="true" />
               <span>
                 <b>{item.title}</b>
                 <small>{item.desc}</small>
               </span>
             </div>
           )) : (
-            <div className="admin-risk admin-risk-ok">
+            <div className="admin-risk admin-risk-ok" role="status">
               <Database size={16} />
               <span>
-                <b>暂无明显配置风险</b>
-                <small>MX 目标：{stats.data?.expected_mx || '-'}</small>
+                <b>{text.admin.risk.none}</b>
+                <small>{text.admin.risk.mxTarget}：{stats.data?.expected_mx || '-'}</small>
               </span>
             </div>
           )}
         </div>
       </section>
 
-      <section className="panel">
+      <section className="panel" id="admin-dns-check">
         <div className="panel-header admin-panel-header">
           <div>
-            <h2>DNS 自动检测</h2>
+            <h2>{text.admin.dnsCheck.title}</h2>
             <p>
-              {lastRun ? `${domainCheckStatusLabel(lastRun.status)} · ${lastRun.checked}/${lastRun.total}` : 'No runs yet'}
-              {domainCheckSettings.data?.next_run_at ? ` · next ${relativeTime(domainCheckSettings.data.next_run_at)}` : ''}
+              {lastRun ? `${domainCheckStatusLabel(lastRun.status)} · ${lastRun.checked}/${lastRun.total}` : text.admin.dnsCheck.noRunsYet}
+              {domainCheckSettings.data?.next_run_at ? ` · ${text.admin.dnsCheck.nextRun} ${relativeTime(domainCheckSettings.data.next_run_at)}` : ''}
             </p>
           </div>
           <div className="table-actions">
-            <button className="btn-secondary" onClick={() => saveDomainCheckSettings.mutate()} disabled={saveDomainCheckSettings.isPending}>
-              <Save size={15} />
-              保存
+            <button
+              className="btn-secondary"
+              onClick={() => saveDomainCheckSettings.mutate()}
+              disabled={saveDomainCheckSettings.isPending || domainCheckSettings.isError}
+              title={domainCheckSettings.isError ? text.admin.dnsCheck.settingsError : undefined}
+              aria-label={text.admin.dnsCheck.save}
+            >
+              <Save size={15} aria-hidden="true" />
+              {text.admin.dnsCheck.save}
             </button>
-            <button className="btn-secondary" onClick={() => runDomainCheck.mutate()} disabled={runDomainCheck.isPending || lastRun?.status === 'running'}>
-              <Play size={15} />
-              立即检测
+            <button
+              className="btn-secondary"
+              onClick={() => runDomainCheck.mutate()}
+              disabled={runDomainCheck.isPending || hasRunningCheck}
+              aria-label={text.admin.dnsCheck.run}
+            >
+              <Play size={15} aria-hidden="true" />
+              {text.admin.dnsCheck.run}
             </button>
           </div>
         </div>
+        {domainCheckSettings.isError && (
+          <div className="admin-risk admin-risk-warning" style={{ marginBottom: '0.9rem' }}>
+            <ShieldAlert size={16} />
+            <span><small>{text.admin.dnsCheck.settingsError}</small></span>
+          </div>
+        )}
         <div className="admin-dns-settings">
-          <label className="admin-toggle">
-            <input
-              type="checkbox"
-              checked={settingsForm.enabled}
-              onChange={(event) => setSettingsForm((current) => ({ ...current, enabled: event.target.checked }))}
-            />
-            <span>启用</span>
-          </label>
-          <label className="admin-toggle">
-            <input
-              type="checkbox"
-              checked={settingsForm.check_inactive}
-              onChange={(event) => setSettingsForm((current) => ({ ...current, check_inactive: event.target.checked }))}
-            />
-            <span>检测停用域名</span>
-          </label>
+          <div className="segmented-control">
+            <button type="button" className={`segment-choice ${!settingsForm.enabled ? 'segment-choice-active' : ''}`} onClick={() => setSettingsForm((current) => ({ ...current, enabled: false }))} aria-pressed={!settingsForm.enabled}>
+              {text.common.disabled}
+            </button>
+            <button type="button" className={`segment-choice ${settingsForm.enabled ? 'segment-choice-active' : ''}`} onClick={() => setSettingsForm((current) => ({ ...current, enabled: true }))} aria-pressed={settingsForm.enabled}>
+              {text.common.enabled}
+            </button>
+          </div>
+          <div className="segmented-control">
+            <button type="button" className={`segment-choice ${!settingsForm.check_inactive ? 'segment-choice-active' : ''}`} onClick={() => setSettingsForm((current) => ({ ...current, check_inactive: false }))} aria-pressed={!settingsForm.check_inactive}>
+              {text.common.disabled}
+            </button>
+            <button type="button" className={`segment-choice ${settingsForm.check_inactive ? 'segment-choice-active' : ''}`} onClick={() => setSettingsForm((current) => ({ ...current, check_inactive: true }))} aria-pressed={settingsForm.check_inactive}>
+              {text.common.enabled}
+            </button>
+          </div>
           <label className="grid gap-1 text-sm">
-            <span className="text-[var(--muted)]">间隔(分钟)</span>
+            <span className="text-[var(--muted)]">{text.admin.dnsCheck.interval}</span>
             <input className="input" type="number" min="1" value={settingsForm.interval_minutes} onChange={(event) => setSettingsForm((current) => ({ ...current, interval_minutes: event.target.value }))} />
           </label>
           <label className="grid gap-1 text-sm">
-            <span className="text-[var(--muted)]">超时(ms)</span>
+            <span className="text-[var(--muted)]">{text.admin.dnsCheck.timeout}</span>
             <input className="input" type="number" min="500" value={settingsForm.timeout_ms} onChange={(event) => setSettingsForm((current) => ({ ...current, timeout_ms: event.target.value }))} />
           </label>
           <label className="grid gap-1 text-sm">
-            <span className="text-[var(--muted)]">并发数</span>
+            <span className="text-[var(--muted)]">{text.admin.dnsCheck.concurrency}</span>
             <input className="input" type="number" min="1" value={settingsForm.max_concurrency} onChange={(event) => setSettingsForm((current) => ({ ...current, max_concurrency: event.target.value }))} />
           </label>
           <label className="grid gap-1 text-sm">
-            <span className="text-[var(--muted)]">失败阈值</span>
+            <span className="text-[var(--muted)]">{text.admin.dnsCheck.failureThreshold}</span>
             <input className="input" type="number" min="1" value={settingsForm.failure_threshold} onChange={(event) => setSettingsForm((current) => ({ ...current, failure_threshold: event.target.value }))} />
           </label>
           <label className="grid gap-1 text-sm">
-            <span className="text-[var(--muted)]">恢复阈值</span>
+            <span className="text-[var(--muted)]">{text.admin.dnsCheck.recoveryThreshold}</span>
             <input className="input" type="number" min="1" value={settingsForm.recovery_threshold} onChange={(event) => setSettingsForm((current) => ({ ...current, recovery_threshold: event.target.value }))} />
           </label>
           <label className="grid gap-1 text-sm admin-resolver-field">
-            <span className="text-[var(--muted)]">Resolvers</span>
-            <textarea className="input" rows={4} value={settingsForm.resolvers} onChange={(event) => setSettingsForm((current) => ({ ...current, resolvers: event.target.value }))} />
+            <span className="text-[var(--muted)]">{text.admin.dnsCheck.resolvers}</span>
+            <textarea className="input-textarea" rows={4} value={settingsForm.resolvers} onChange={(event) => setSettingsForm((current) => ({ ...current, resolvers: event.target.value }))} />
           </label>
         </div>
         <DataTable
-          emptyLabel="暂无检测批次"
+          emptyLabel={text.admin.dnsCheck.empty}
           columns={[
-            { key: 'started-at', header: '时间' },
-            { key: 'trigger', header: '触发' },
-            { key: 'status', header: '状态' },
-            { key: 'progress', header: '进度' },
-            { key: 'passed', header: '成功' },
-            { key: 'failed', header: '失败' },
-            { key: 'duration', header: '耗时' }
+            { key: 'started-at', header: text.admin.dnsCheck.colTime },
+            { key: 'trigger', header: text.admin.dnsCheck.colTrigger },
+            { key: 'status', header: text.admin.dnsCheck.colStatus },
+            { key: 'progress', header: text.admin.dnsCheck.colProgress },
+            { key: 'passed', header: text.admin.dnsCheck.colPassed },
+            { key: 'failed', header: text.admin.dnsCheck.colFailed },
+            { key: 'duration', header: text.admin.dnsCheck.colDuration }
           ]}
           rows={runRows.map((run) => ({
             key: run.id,
@@ -270,24 +380,24 @@ export function AdminPage() {
         />
       </section>
 
-      <div className="grid gap-4 xl:grid-cols-[1.25fr_0.75fr]">
+      <div className="grid gap-4 xl:grid-cols-[1.25fr_0.75fr]" id="admin-domain-health">
         <section className="panel">
           <div className="panel-header admin-panel-header">
             <div>
-              <h2>域名健康队列</h2>
-              <p>{stats.data?.failed_domains ?? 0} 个 MX 异常，{stats.data?.stale_domains ?? 0} 个超过 24 小时未检测</p>
+              <h2>{text.admin.domainHealth.title}</h2>
+              <p>{text.admin.domainHealth.desc.replace('{failed}', String(stats.data?.failed_domains ?? 0)).replace('{stale}', String(stats.data?.stale_domains ?? 0))}</p>
             </div>
-            <button className="btn-ghost" onClick={() => setPage('domain-management')}>去域名页</button>
+            <button className="btn-ghost" onClick={() => setPage('domain-management')} aria-label={text.admin.domainHealth.goToDomains}>{text.admin.domainHealth.goToDomains}</button>
           </div>
           <DataTable
-            emptyLabel="暂无域名风险"
+            emptyLabel={text.admin.domainHealth.empty}
             columns={[
-              { key: 'domain', header: '域名' },
-              { key: 'status', header: '状态' },
-              { key: 'mode', header: '模式' },
-              { key: 'expires', header: '到期' },
-              { key: 'messages', header: '邮件' },
-              { key: 'actions', header: '操作' }
+              { key: 'domain', header: text.admin.domainHealth.colDomain },
+              { key: 'status', header: text.admin.domainHealth.colStatus },
+              { key: 'mode', header: text.admin.domainHealth.colMode },
+              { key: 'expires', header: text.admin.domainHealth.colExpires },
+              { key: 'messages', header: text.admin.domainHealth.colMessages },
+              { key: 'actions', header: text.admin.domainHealth.colActions }
             ]}
             rows={healthRows.map((domain) => ({
               key: domain.id,
@@ -301,15 +411,15 @@ export function AdminPage() {
                 formatDomainExpiry(domain.domain_expires_at, language),
                 String(domain.message_count ?? 0),
                 <div className="table-actions">
-                  <button className="btn-ghost" onClick={() => recheckDomain.mutate(domain.domain)} disabled={recheckDomain.isPending}>
-                    <RefreshCw size={14} />
-                    检测
+                  <button className="btn-ghost" onClick={() => recheckDomain.mutate(domain.domain)} disabled={recheckDomain.isPending} aria-label={`${text.admin.domainHealth.recheck} ${domain.domain}`}>
+                    <RefreshCw size={14} aria-hidden="true" />
+                    {text.admin.domainHealth.recheck}
                   </button>
-                  <button className="btn-ghost" onClick={() => makePrivate.mutate(domain)} disabled={domain.mode === 'private' || makePrivate.isPending}>
-                    私有
+                  <button className="btn-ghost" onClick={() => makePrivate.mutate(domain)} disabled={domain.mode === 'private' || makePrivate.isPending} aria-label={`${text.admin.domainHealth.makePrivate} ${domain.domain}`}>
+                    {text.admin.domainHealth.makePrivate}
                   </button>
-                  <button className="btn-ghost" onClick={() => disableDomain.mutate(domain)} disabled={!domain.active || disableDomain.isPending}>
-                    停用
+                  <button className="btn-ghost" onClick={() => disableDomain.mutate(domain)} disabled={!domain.active || disableDomain.isPending} aria-label={`${text.admin.domainHealth.disable} ${domain.domain}`}>
+                    {text.admin.domainHealth.disable}
                   </button>
                 </div>
               ]
@@ -317,21 +427,21 @@ export function AdminPage() {
           />
         </section>
 
-        <section className="panel">
+        <section className="panel" id="admin-quota-alerts">
           <div className="panel-header admin-panel-header">
             <div>
-              <h2>额度预警</h2>
-              <p>用户与 API Key 接近上限时会出现在这里</p>
+              <h2>{text.admin.quotaAlerts.title}</h2>
+              <p>{text.admin.quotaAlerts.desc}</p>
             </div>
-            <button className="btn-ghost" onClick={() => setPage('users')}>去用户页</button>
+            <button className="btn-ghost" onClick={() => setPage('users')} aria-label={text.admin.quotaAlerts.goToUsers || text.admin.domainHealth.goToUsers}>{text.admin.quotaAlerts.goToUsers || text.admin.domainHealth.goToUsers}</button>
           </div>
           <DataTable
-            emptyLabel="暂无额度预警"
+            emptyLabel={text.admin.quotaAlerts.empty}
             columns={[
-              { key: 'target', header: '对象' },
-              { key: 'severity', header: '级别' },
-              { key: 'usage', header: '用量' },
-              { key: 'last-used', header: '最近' }
+              { key: 'target', header: text.admin.quotaAlerts.colTarget },
+              { key: 'severity', header: text.admin.quotaAlerts.colSeverity },
+              { key: 'usage', header: text.admin.quotaAlerts.colUsage },
+              { key: 'last-used', header: text.admin.quotaAlerts.colLastUsed }
             ]}
             rows={(quotaAlerts.data || []).slice(0, 8).map((alert) => ({
               key: `${alert.kind}-${alert.id}`,
@@ -349,35 +459,109 @@ export function AdminPage() {
         </section>
       </div>
 
-      <section className="panel">
-        <div className="panel-header">
+      <section className="panel" id="admin-announcements">
+        <div className="panel-header admin-panel-header">
           <div>
-            <h2>最近审计日志</h2>
-            <p>记录管理动作、域名变更、API Key 和邮箱操作</p>
+            <h2>{text.announcements.title}</h2>
+            <p>{text.announcements.newAnnouncement}</p>
           </div>
-          <ClipboardList size={18} className="text-[var(--muted)]" />
         </div>
+
+        <div className="admin-announcement-form">
+          <label className="grid gap-1 text-sm">
+            <span className="text-[var(--muted)]">{text.common.create} {text.announcements.title}</span>
+            <input
+              className="input"
+              type="text"
+              value={announcementTitle}
+              onChange={(event) => setAnnouncementTitle(event.target.value)}
+              placeholder={text.announcements.titlePlaceholder}
+            />
+          </label>
+          <label className="grid gap-1 text-sm">
+            <span className="text-[var(--muted)]">{text.announcements.content}</span>
+            <textarea
+              className="input-textarea"
+              rows={6}
+              value={announcementContent}
+              onChange={(event) => setAnnouncementContent(event.target.value)}
+              placeholder={text.announcements.contentPlaceholder}
+            />
+          </label>
+          <div className="admin-announcement-actions">
+            <button
+              className="btn-ghost"
+              type="button"
+              onClick={() => setAnnouncementPreview((v) => !v)}
+              disabled={!announcementContent.trim()}
+              aria-label={text.announcements.preview}
+            >
+              <Eye size={14} aria-hidden="true" />
+              {text.announcements.preview}
+            </button>
+            <button
+              className="btn-secondary"
+              type="button"
+              onClick={() => createAnnouncement.mutate()}
+              disabled={!announcementTitle.trim() || createAnnouncement.isPending}
+              aria-label={text.announcements.createAnnouncement}
+            >
+              <Megaphone size={14} aria-hidden="true" />
+              {createAnnouncement.isPending ? text.common.loading : text.announcements.createAnnouncement}
+            </button>
+          </div>
+          {announcementPreview && announcementContent.trim() && (
+            <div className="admin-announcement-preview">
+              <div
+                className="message-center-markdown"
+                dangerouslySetInnerHTML={{ __html: simpleMarkdownToHTML(announcementContent) }}
+              />
+            </div>
+          )}
+        </div>
+
         <DataTable
-          emptyLabel="暂无审计日志"
+          emptyLabel={text.announcements.noAnnouncements}
           columns={[
-            { key: 'created-at', header: '时间' },
-            { key: 'action', header: '动作' },
-            { key: 'actor', header: '操作者' },
-            { key: 'target', header: '目标' },
-            { key: 'metadata', header: '备注' }
+            { key: 'title', header: text.announcements.title },
+            { key: 'created', header: text.common.refresh },
+            { key: 'readers', header: text.announcements.read },
+            { key: 'status', header: text.common.enabled },
+            { key: 'actions', header: text.common.delete }
           ]}
-          rows={(auditLogs.data || []).map((log) => ({
-            key: log.id,
+          rows={(adminAnnouncements.data || []).slice(0, 15).map((ann) => ({
+            key: ann.id,
             cells: [
-              relativeTime(log.created_at),
-              <code className="admin-code">{log.action}</code>,
-              log.actor || '-',
-              <span className="admin-log-target">{log.target || '-'}</span>,
-              log.metadata || '-'
+              <div className="admin-domain-cell">
+                <b>{ann.title}</b>
+                <small>{ann.content.slice(0, 80)}{ann.content.length > 80 ? '...' : ''}</small>
+              </div>,
+              relativeTime(ann.created_at),
+              text.announcements.readerCount.replace('{count}', String(ann.reader_count ?? 0)),
+              ann.deleted_at ? (
+                <span className="severity-pill severity-critical">{text.common.delete}</span>
+              ) : (
+                <span className="severity-pill severity-ok">{text.common.enabled}</span>
+              ),
+              <div className="table-actions">
+                {!ann.deleted_at && (
+                  <button
+                    className="btn-ghost"
+                    onClick={() => deleteAnnouncement.mutate(ann.id)}
+                    disabled={deleteAnnouncement.isPending}
+                    aria-label={text.announcements.deleteAnnouncement}
+                  >
+                    <Trash2 size={14} aria-hidden="true" />
+                    {text.announcements.deleteAnnouncement}
+                  </button>
+                )}
+              </div>
             ]
           }))}
         />
       </section>
+
+      <AdminAuditLog />
     </div>
   );
 }
@@ -399,17 +583,19 @@ function toPositiveInt(value: string, fallback: number) {
 }
 
 function domainCheckStatusLabel(status: string) {
+  const text = currentText();
   const labels: Record<string, string> = {
-    running: '运行中',
-    success: '完成',
-    failed: '失败',
-    canceled: '已取消'
+    running: text.admin.dnsCheck.statusRunning,
+    success: text.admin.dnsCheck.statusSuccess,
+    failed: text.admin.dnsCheck.statusFailed,
+    canceled: text.admin.dnsCheck.statusCanceled
   };
   return labels[status] || status;
 }
 
 function domainCheckDuration(run: DomainCheckRun) {
-  if (!run.finished_at) return run.status === 'running' ? '运行中' : '-';
+  const text = currentText();
+  if (!run.finished_at) return run.status === 'running' ? text.admin.dnsCheck.statusRunning : '-';
   const started = new Date(run.started_at).getTime();
   const finished = new Date(run.finished_at).getTime();
   if (!Number.isFinite(started) || !Number.isFinite(finished) || finished < started) return '-';
@@ -417,47 +603,51 @@ function domainCheckDuration(run: DomainCheckRun) {
 }
 
 function domainIssueLabel(issue: string) {
+  const text = currentText();
   const labels: Record<string, string> = {
-    healthy: '正常',
-    inactive: '已停用',
-    mx_failed: 'MX 异常',
-    domain_expired: '已过期',
-    domain_expiring: '即将到期',
-    never_checked: '未检测',
-    stale_check: '检测过期'
+    healthy: text.admin.domainHealth.issue.healthy,
+    inactive: text.admin.domainHealth.issue.inactive,
+    mx_failed: text.admin.domainHealth.issue.mxFailed,
+    domain_expired: text.admin.domainHealth.issue.expired,
+    domain_expiring: text.admin.domainHealth.issue.expiring,
+    never_checked: text.admin.domainHealth.issue.neverChecked,
+    stale_check: text.admin.domainHealth.issue.staleCheck
   };
   return labels[issue] || issue;
 }
 
 function quotaReasonLabel(reason: string) {
+  const text = currentText();
   const labels: Record<string, string> = {
-    daily_exceeded: '日额度已满',
-    daily_warning: '日额度接近',
-    total_exceeded: '总额度已满',
-    total_warning: '总额度接近'
+    daily_exceeded: text.admin.quotaAlerts.reason.dailyExceeded,
+    daily_warning: text.admin.quotaAlerts.reason.dailyWarning,
+    total_exceeded: text.admin.quotaAlerts.reason.totalExceeded,
+    total_warning: text.admin.quotaAlerts.reason.totalWarning
   };
   return labels[reason] || reason;
 }
 
 function quotaSummary(alert: AdminQuotaAlert) {
-  const daily = alert.daily_limit > 0 ? `${alert.used_today}/${alert.daily_limit}` : '日不限';
-  const total = alert.total_limit > 0 ? `${alert.total_used}/${alert.total_limit}` : '总不限';
+  const text = currentText();
+  const daily = alert.daily_limit > 0 ? `${alert.used_today}/${alert.daily_limit}` : text.admin.quotaAlerts.dailyUnlimited;
+  const total = alert.total_limit > 0 ? `${alert.total_used}/${alert.total_limit}` : text.admin.quotaAlerts.totalUnlimited;
   return `${daily} · ${total}`;
 }
 
 function configRisks(stats?: AdminStats) {
+  const text = currentText();
   if (!stats) return [];
   const risks: { level: 'warning' | 'critical' | 'ok'; title: string; desc: string }[] = [];
   if (stats.dev_mode) {
-    risks.push({ level: 'warning', title: '开发模式开启', desc: '生产环境建议关闭 DEV_MODE，避免测试域名被自动验证。' });
+    risks.push({ level: 'warning', title: text.admin.risk.devMode, desc: text.admin.risk.devModeDesc });
   }
   if (stats.admin_token_is_default) {
-    risks.push({ level: 'critical', title: 'Admin Token 使用默认值', desc: '请替换 dev-admin-token，或清空 ADMIN_TOKEN 只保留登录态管理。' });
+    risks.push({ level: 'critical', title: text.admin.risk.defaultToken, desc: text.admin.risk.defaultTokenDesc });
   } else if (stats.admin_token_enabled) {
-    risks.push({ level: 'warning', title: 'Admin Token 已启用', desc: '确认该 token 只在可信服务端使用，不要暴露给浏览器或第三方脚本。' });
+    risks.push({ level: 'warning', title: text.admin.risk.tokenEnabled, desc: text.admin.risk.tokenEnabledDesc });
   }
   if ((stats.failed_domains || 0) > 0) {
-    risks.push({ level: 'warning', title: '存在 MX 异常域名', desc: '处理健康队列中的异常域名，避免继续对外提供不可收信的域。' });
+    risks.push({ level: 'warning', title: text.admin.risk.failedDomains, desc: text.admin.risk.failedDomainsDesc });
   }
   return risks;
 }

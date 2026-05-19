@@ -45,7 +45,7 @@ flowchart LR
 
 ## Release 下载包
 
-GitHub Release 会自动打包后端可执行文件和前端静态资源 `web/dist`。下载后不需要再单独构建前端，程序会直接托管 Web 控制台。
+GitHub Release 会把前端静态资源内嵌进后端二进制。下载后不需要再单独构建或携带 `web/dist`，程序会直接托管 Web 控制台。
 
 | 文件 | 适用环境 |
 | --- | --- |
@@ -64,7 +64,6 @@ chmod +x hloolmail
 
 export HTTP_ADDR=:3000
 export SMTP_ADDR=:2525
-export FRONTEND_DIST=web/dist
 export DATABASE_DRIVER=postgres
 export DATABASE_URL='postgres://user:password@127.0.0.1:5432/hloolmail?sslmode=disable'
 export PUBLIC_BASE_URL=https://mail.example.com
@@ -74,6 +73,32 @@ export DEV_MODE=false
 
 ./hloolmail
 ```
+
+### 自定义前端
+
+高级用户可以用外部目录覆盖内置前端。把 `FRONTEND_DIST` 指向一个包含 `index.html` 和 `assets/` 的前端构建目录即可，例如：
+
+```bash
+cd web
+npm install
+npm run build
+cd ..
+
+export FRONTEND_DIST=web/dist
+./hloolmail
+```
+
+如果 `FRONTEND_DIST` 不存在或目录里没有 `index.html`，程序会自动回退到内置前端。Docker 部署也可以挂载自定义前端目录，并把 `FRONTEND_DIST` 设置为容器内路径。
+
+### 宝塔二进制部署注意
+
+宝塔面板里直接运行二进制时，程序监听 `:25` 可能会因为系统权限、面板防火墙或端口占用导致无法收信。推荐做法是让程序继续监听 `:2525`：
+
+```bash
+export SMTP_ADDR=:2525
+```
+
+然后在宝塔面板的防火墙 / 端口转发里，把公网 TCP `25` 转发到本机 `2525`。DNS 的 MX 仍然指向你的收信主机名，例如 `hlool.00a.chat`，不要把 MX 写成端口。
 
 首次打开 `http://服务器IP:3000` 或你的域名后，如果还没有管理员账号，会自动进入 Install 页面。
 
@@ -130,6 +155,42 @@ NPM_CONFIG_REGISTRY=https://registry.npmmirror.com/
 DATABASE_URL=postgres://user:password@db.example.com:5432/hloolmail?sslmode=require
 ```
 
+## 常见安装问题
+
+### PostgreSQL `permission denied for schema public`
+
+如果 Install 页面报错：
+
+```text
+数据库迁移失败：当前数据库账号没有 PostgreSQL public schema 的建表/改表权限
+```
+
+或原始错误包含：
+
+```text
+permission denied for schema public (SQLSTATE 42501)
+```
+
+这说明数据库连接已经成功，但当前业务账号没有在 `public` schema 里创建数据表的权限。用 PostgreSQL 管理员密码执行一次授权即可。宝塔 PostgreSQL 常见 `psql` 路径是 `/www/server/pgsql/bin/psql`：
+
+```bash
+/www/server/pgsql/bin/psql -U postgres -d hlooltest -c 'ALTER DATABASE "hlooltest" OWNER TO "hlooltest"; ALTER SCHEMA public OWNER TO "hlooltest"; GRANT USAGE, CREATE ON SCHEMA public TO "hlooltest";'
+```
+
+把命令里的 `hlooltest` 换成你在安装页填写的数据库名和数据库账号。如果库名和账号相同，只改一处名字即可。执行成功会看到：
+
+```text
+ALTER DATABASE
+ALTER SCHEMA
+GRANT
+```
+
+如果提示 `psql: command not found`，先查找实际路径：
+
+```bash
+find / -name psql -type f 2>/dev/null | head
+```
+
 ## 安装向导 Install Page
 
 Install 页面是否生效，取决于部署方式：
@@ -166,7 +227,6 @@ ExecStart=/opt/hloolmail/hloolmail
 Restart=always
 Environment=HTTP_ADDR=:3000
 Environment=SMTP_ADDR=:2525
-Environment=FRONTEND_DIST=web/dist
 Environment=DATABASE_DRIVER=postgres
 Environment=DATABASE_URL=postgres://user:password@127.0.0.1:5432/hloolmail?sslmode=disable
 Environment=PUBLIC_BASE_URL=https://mail.example.com

@@ -10,3 +10,6 @@ export { IconButton } from './IconButton';
 export { EmptyState } from './EmptyState';
 export { CenteredState } from './CenteredState';
 export { ErrorBoundary } from './ErrorBoundary';
+export { PaginationControls } from './PaginationControls';
+export { ConfirmModal } from './ConfirmModal';
+export { QuotaThermometer } from './QuotaThermometer';

@@ -38,23 +38,30 @@ function loadHistory(): HistoryEntry[] {
   }
 }
 
-function saveHistory(entries: HistoryEntry[]): void {
+function saveHistory(entries: HistoryEntry[]): boolean {
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(entries));
+    return true;
   } catch {
-    // Silently fail if localStorage is unavailable or full
+    return false;
   }
 }
 
 export function useRequestHistory() {
   const [history, setHistory] = useState<HistoryEntry[]>(loadHistory);
+  const [storageError, setStorageError] = useState(false);
 
   useEffect(() => {
     setHistory(loadHistory());
   }, []);
 
   useEffect(() => {
-    saveHistory(history);
+    const ok = saveHistory(history);
+    if (!ok) {
+      setStorageError(true);
+    } else {
+      setStorageError(false);
+    }
   }, [history]);
 
   const addEntry = useCallback(
@@ -96,5 +103,6 @@ export function useRequestHistory() {
     removeEntry,
     clearHistory,
     restoreEntry,
+    storageError,
   };
 }

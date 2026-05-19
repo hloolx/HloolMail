@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -37,6 +38,11 @@ type adminQuotaAlert struct {
 	LastUsedAt *time.Time `json:"last_used_at,omitempty"`
 	Severity   string     `json:"severity"`
 	Reason     string     `json:"reason"`
+}
+
+type adminAuditLogsResponse struct {
+	Items      []models.AuditLog `json:"items"`
+	NextCursor string            `json:"next_cursor,omitempty"`
 }
 
 func (h *Handler) adminDomainHealth(c *gin.Context) {
@@ -359,13 +365,113 @@ func (h *Handler) adminAuditLogs(c *gin.Context) {
 	if !h.requireAdmin(c) {
 		return
 	}
-	limit := parseLimit(c.Query("limit"), 30, 200)
+	limit := parseLimit(c.Query("limit"), 30, 100)
+	query := h.DB.Model(&models.AuditLog{})
+	query = filterAuditLogs(query, c)
+	if cursor := strings.TrimSpace(c.Query("cursor")); cursor != "" {
+		createdAt, id, err := parseAuditCursor(cursor)
+		if err != nil {
+			fail(c, http.StatusBadRequest, "invalid audit cursor")
+			return
+		}
+		query = query.Where("created_at < ? OR (created_at = ? AND id < ?)", createdAt, createdAt, id)
+	}
 	var logs []models.AuditLog
-	if err := h.DB.Order("created_at desc").Limit(limit).Find(&logs).Error; err != nil {
+	if err := query.Order("created_at desc, id desc").Limit(limit + 1).Find(&logs).Error; err != nil {
 		fail(c, http.StatusInternalServerError, err.Error())
 		return
 	}
-	ok(c, logs)
+	nextCursor := ""
+	if len(logs) > limit {
+		logs = logs[:limit]
+		nextCursor = encodeAuditCursor(logs[len(logs)-1])
+	}
+	ok(c, adminAuditLogsResponse{Items: logs, NextCursor: nextCursor})
+}
+
+func filterAuditLogs(query *gorm.DB, c *gin.Context) *gorm.DB {
+	if category := normalizedAuditFilter(c.Query("category")); category != "" && category != "all" {
+		if category == auditCategorySecurity {
+			query = query.Where("category = ? OR category = '' OR category IS NULL", category)
+		} else {
+			query = query.Where("category = ?", category)
+		}
+	}
+	if severity := normalizedAuditFilter(c.Query("severity")); severity != "" && severity != "all" {
+		query = query.Where("severity = ?", severity)
+	}
+	if action := normalizedAuditFilter(c.Query("action")); action != "" && action != "all" {
+		query = query.Where("action = ?", action)
+	}
+	if actor := strings.TrimSpace(c.Query("actor")); actor != "" {
+		query = query.Where("actor = ?", actor)
+	}
+	if targetType := normalizedAuditFilter(c.Query("target_type")); targetType != "" && targetType != "all" {
+		query = query.Where("target_type = ?", targetType)
+	}
+	if target := strings.TrimSpace(c.Query("target")); target != "" {
+		query = query.Where("target_id = ? OR target = ?", target, target)
+	}
+	if from, ok := parseAuditTime(c.Query("from")); ok {
+		query = query.Where("created_at >= ?", from)
+	}
+	if to, ok := parseAuditTime(c.Query("to")); ok {
+		query = query.Where("created_at <= ?", to)
+	}
+	if q := strings.TrimSpace(c.Query("q")); q != "" {
+		like := "%" + strings.ToLower(q) + "%"
+		query = query.Where(
+			"LOWER(action) LIKE ? OR LOWER(actor) LIKE ? OR LOWER(target) LIKE ? OR LOWER(metadata) LIKE ?",
+			like,
+			like,
+			like,
+			like,
+		)
+	}
+	return query
+}
+
+func normalizedAuditFilter(value string) string {
+	return strings.ToLower(strings.TrimSpace(value))
+}
+
+func parseAuditTime(value string) (time.Time, bool) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return time.Time{}, false
+	}
+	for _, layout := range []string{time.RFC3339Nano, time.RFC3339, "2006-01-02"} {
+		parsed, err := time.Parse(layout, value)
+		if err == nil {
+			return parsed.UTC(), true
+		}
+	}
+	return time.Time{}, false
+}
+
+func encodeAuditCursor(log models.AuditLog) string {
+	value := log.CreatedAt.UTC().Format(time.RFC3339Nano) + "|" + strconv.FormatUint(uint64(log.ID), 10)
+	return base64.RawURLEncoding.EncodeToString([]byte(value))
+}
+
+func parseAuditCursor(value string) (time.Time, uint, error) {
+	raw, err := base64.RawURLEncoding.DecodeString(value)
+	if err != nil {
+		return time.Time{}, 0, err
+	}
+	created, idText, ok := strings.Cut(string(raw), "|")
+	if !ok {
+		return time.Time{}, 0, errors.New("cursor missing separator")
+	}
+	createdAt, err := time.Parse(time.RFC3339Nano, created)
+	if err != nil {
+		return time.Time{}, 0, err
+	}
+	id, err := strconv.ParseUint(idText, 10, 0)
+	if err != nil {
+		return time.Time{}, 0, err
+	}
+	return createdAt.UTC(), uint(id), nil
 }
 
 func classifyDomainHealth(d models.Domain, now time.Time) (string, string) {

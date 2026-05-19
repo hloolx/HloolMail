@@ -63,5 +63,9 @@ export function relativeTime(value?: string) {
   if (minutes < 60) return `${minutes} ${text.time.minutesAgo}`;
   const hours = Math.floor(minutes / 60);
   if (hours < 24) return `${hours} ${text.time.hoursAgo}`;
-  return `${Math.floor(hours / 24)} ${text.time.daysAgo}`;
+  const days = Math.floor(hours / 24);
+  if (days < 7) return `${days} ${text.time.daysAgo}`;
+  if (days < 30) return `${Math.floor(days / 7)} ${text.time.weeksAgo}`;
+  if (days < 365) return `${Math.floor(days / 30)} ${text.time.monthsAgo}`;
+  return `${Math.floor(days / 365)} ${text.time.yearsAgo}`;
 }

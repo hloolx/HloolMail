@@ -48,7 +48,19 @@ curl "$BASE_URL/api/domains/available" \
   -H "X-API-Key: $API_KEY"
 ```
 
-Use this to get `public_domains` and the API key owner's ready `private_domains`. Public domains may be blocked by some websites.
+Use this to get active, MX-verified public domain names from `data.domains`. Public domains may be blocked by some websites.
+
+Response:
+
+```json
+{
+  "success": true,
+  "data": {
+    "domains": ["public.example.com", "mailbox.example.net"]
+  },
+  "error": null
+}
+```
 
 ## List Mailboxes
 
@@ -139,7 +151,7 @@ curl "$BASE_URL/api/email/msg-uuid" \
   -H "X-API-Key: $API_KEY"
 ```
 
-The detail response includes `text_content`, `html_content`, and `headers_json`. Extract codes from subject, preview, or text content.
+The API-key detail response includes `text_content` and `headers_json`; the web session view also includes sanitized `html_content`. Extract codes from subject, preview, or text content.
 
 ## Mark Message Read
 

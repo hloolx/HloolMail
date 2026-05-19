@@ -140,6 +140,34 @@ func TestAPIKeyUnlimitedAndExpiry(t *testing.T) {
 	}
 }
 
+func TestUsageForReportsUnlimitedQuotaClearly(t *testing.T) {
+	usage := UsageFor(&models.APIKey{
+		DailyLimit: 0,
+		TotalLimit: 0,
+		UsedToday:  3,
+		TotalUsed:  42,
+	})
+	if usage["remaining_today"] != "unlimited" || usage["remaining_total"] != "unlimited" {
+		t.Fatalf("expected unlimited remaining values, got %#v", usage)
+	}
+	if usage["daily_unlimited"] != "true" || usage["total_unlimited"] != "true" {
+		t.Fatalf("expected explicit unlimited flags, got %#v", usage)
+	}
+
+	limited := UsageFor(&models.APIKey{
+		DailyLimit: 10,
+		TotalLimit: 20,
+		UsedToday:  4,
+		TotalUsed:  25,
+	})
+	if limited["remaining_today"] != "6" || limited["remaining_total"] != "0" {
+		t.Fatalf("expected clamped numeric remaining values, got %#v", limited)
+	}
+	if limited["daily_unlimited"] != "false" || limited["total_unlimited"] != "false" {
+		t.Fatalf("expected limited flags, got %#v", limited)
+	}
+}
+
 func TestAPIKeyAuthenticateUsesStoredFullKey(t *testing.T) {
 	db := authTestDB(t)
 	service := APIKeyService{DB: db}

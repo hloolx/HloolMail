@@ -1,4 +1,4 @@
-import type { Domain, User } from '../api';
+import type { Domain, PublicDomainItem, User } from '../api';
 
 export type Stats = {
   messages: number;
@@ -7,6 +7,7 @@ export type Stats = {
   mailboxes: number;
   public_domains: number;
   api_calls_today: number;
+  domain_list?: PublicDomainItem[];
 };
 
 export type TimeseriesStats = {
@@ -115,11 +116,20 @@ export type AdminQuotaAlert = {
 
 export type AuditLog = {
   id: number;
+  category: 'security' | 'activity' | 'system' | string;
+  severity: 'info' | 'warning' | 'critical' | string;
   action: string;
   actor: string;
+  target_type: string;
+  target_id: string;
   target: string;
   metadata?: string;
   created_at: string;
+};
+
+export type AuditLogPage = {
+  items: AuditLog[];
+  next_cursor?: string;
 };
 
 export type OAuthProvider = {

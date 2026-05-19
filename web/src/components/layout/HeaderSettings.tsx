@@ -1,15 +1,35 @@
-import { useEffect, useRef, useState } from 'react';
-import { ChevronDown, Monitor, Moon, SlidersHorizontal, Sun } from 'lucide-react';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { ChevronDown, Monitor, Moon, RefreshCw, SlidersHorizontal, Sun } from 'lucide-react';
+import type { User } from '../../api';
+import { api } from '../../api';
 import { useText } from '../../locales';
 import { useAppStore } from '../../store';
 import type { Language, ThemeMode } from '../../store';
 import { animateThemeSwitch } from '../../lib/theme';
 
-export function HeaderSettings() {
+type VersionInfo = {
+  version: string;
+  commit: string;
+  buildTime: string;
+};
+
+type UpdateInfo = {
+  currentVersion: string;
+  latestVersion: string;
+  updateAvailable: boolean;
+  releaseURL: string;
+};
+
+export function HeaderSettings({ user }: { user?: User }) {
   const { theme, setTheme, language, setLanguage } = useAppStore();
   const text = useText();
   const [open, setOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
+  const [versionInfo, setVersionInfo] = useState<VersionInfo | null>(null);
+  const [updateInfo, setUpdateInfo] = useState<UpdateInfo | null>(null);
+  const [checkingUpdate, setCheckingUpdate] = useState(false);
+  const isAdmin = user?.role === 'admin';
+
   const themeOptions: { value: ThemeMode; label: string; icon: typeof Sun }[] = [
     { value: 'system', label: text.settings.system, icon: Monitor },
     { value: 'light', label: text.settings.light, icon: Sun },
@@ -31,6 +51,25 @@ export function HeaderSettings() {
       document.removeEventListener('keydown', closeByKey);
     };
   }, [open]);
+
+  useEffect(() => {
+    if (!open || !isAdmin || versionInfo) return;
+    api<VersionInfo>('/api/version', { method: 'GET' })
+      .then(setVersionInfo)
+      .catch(() => {});
+  }, [open, isAdmin, versionInfo]);
+
+  const checkUpdate = useCallback(async () => {
+    setCheckingUpdate(true);
+    try {
+      const result = await api<UpdateInfo>('/api/version/check', { method: 'GET' });
+      setUpdateInfo(result);
+    } catch {
+      // ignore check failures
+    } finally {
+      setCheckingUpdate(false);
+    }
+  }, []);
 
   return (
     <div className="header-settings" ref={menuRef}>
@@ -71,6 +110,35 @@ export function HeaderSettings() {
                 <ChevronDown className="settings-select-icon" size={15} aria-hidden />
               </span>
             </label>
+            {isAdmin && (
+              <div className="settings-row">
+                <span className="settings-label">{text.settings.version}</span>
+                <span className="settings-version-row">
+                  <span className="settings-version-value">
+                    {versionInfo ? `v${versionInfo.version}` : '...'}
+                  </span>
+                  <button
+                    className={`settings-version-refresh ${checkingUpdate ? 'settings-version-refresh-spin' : ''}`}
+                    title={text.settings.checkUpdate}
+                    aria-label={text.settings.checkUpdate}
+                    disabled={checkingUpdate}
+                    onClick={checkUpdate}
+                  >
+                    <RefreshCw size={12} />
+                  </button>
+                  {updateInfo?.updateAvailable && (
+                    <a
+                      className="settings-version-update"
+                      href={updateInfo.releaseURL || 'https://github.com/hloolx/HloolMail/releases'}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                    >
+                      {text.settings.updateAvailable}
+                    </a>
+                  )}
+                </span>
+              </div>
+            )}
           </div>
 
         </div>

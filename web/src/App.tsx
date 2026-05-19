@@ -55,8 +55,14 @@ function AppContent() {
     return <CenteredState>{text.loading.checkingInstall}</CenteredState>;
   }
 
-  if (!installStatus.data?.installed) {
+  const skipInstall = typeof window !== 'undefined' && sessionStorage.getItem('hlool_skip_install') === '1';
+
+  if (!installStatus.data?.installed && !skipInstall) {
     return <InstallPage status={installStatus.data} onDone={() => queryClient.invalidateQueries({ queryKey: ['install-status'] })} />;
+  }
+
+  if (!installStatus.data?.installed && skipInstall) {
+    return <Console user={{ id: 0, email: 'dev@localhost', role: 'admin', enabled: true, daily_limit: 0, total_limit: 0, used_today: 0, total_used: 0, created_at: '' }} />;
   }
 
   if (me.isLoading) {

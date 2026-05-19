@@ -4,7 +4,7 @@ import { useCountUp } from '../../hooks/useCountUp';
 export function Metric({ icon: Icon, label, value, loading }: { icon: LucideIcon; label: string; value: number; loading?: boolean }) {
   const animated = useCountUp(value);
   return (
-    <div className="metric">
+    <div className="metric" role="region" aria-label={label}>
       <div className="metric-icon">
         <Icon size={16} />
       </div>

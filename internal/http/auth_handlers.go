@@ -23,6 +23,12 @@ import (
 const sessionCookieName = "gptmail_session"
 
 func (h *Handler) installStatus(c *gin.Context) {
+	installed := h.isInstalled()
+	if installed && currentUser(c) == nil {
+		ok(c, gin.H{"installed": true})
+		return
+	}
+
 	var apiUsageToday, registeredUsers, hostedDomains int64
 	h.DB.Model(&models.APIUsageLog{}).Where("created_at >= ?", startOfDay(time.Now())).Count(&apiUsageToday)
 	h.DB.Model(&models.User{}).Count(&registeredUsers)
@@ -30,7 +36,7 @@ func (h *Handler) installStatus(c *gin.Context) {
 	configLocked := h.installRuntimeConfigLocked()
 
 	ok(c, gin.H{
-		"installed":            h.isInstalled(),
+		"installed":            installed,
 		"site_api_calls_today": apiUsageToday,
 		"registered_users":     registeredUsers,
 		"hosted_domains":       hostedDomains,
@@ -83,11 +89,11 @@ func (h *Handler) install(c *gin.Context) {
 	if restartRequired {
 		db, err := appdb.Open(targetCfg)
 		if err != nil {
-			fail(c, http.StatusBadRequest, "database connection failed: "+err.Error())
+			fail(c, http.StatusBadRequest, friendlyDatabaseSetupError("connect", err, targetCfg.DatabaseURL))
 			return
 		}
 		if err := appdb.AutoMigrate(db); err != nil {
-			fail(c, http.StatusBadRequest, "database migration failed: "+err.Error())
+			fail(c, http.StatusBadRequest, friendlyDatabaseSetupError("migrate", err, targetCfg.DatabaseURL))
 			return
 		}
 		targetDB = db
@@ -154,7 +160,7 @@ func (h *Handler) installDNSCheck(c *gin.Context) {
 			"domain":        input.Domain,
 			"mail_hostname": input.MailHostname,
 			"expected_mx":   input.ExpectedMX,
-			"message":       "dev mode accepts .test domains without external DNS",
+			"message":       "开发模式已允许 .test 域名跳过外部 DNS 检测",
 		})
 		return
 	}
@@ -179,9 +185,9 @@ func (h *Handler) installDNSCheck(c *gin.Context) {
 	}
 
 	verified := addressCheck.Verified && mxCheck.MXVerified && (!input.CheckWildcard || (wildcardCheck != nil && wildcardCheck.MXVerified))
-	message := "DNS records are not ready yet"
+	message := "DNS 记录还未完全生效"
 	if verified {
-		message = "DNS records are verified"
+		message = "DNS 检测通过"
 	}
 	ok(c, gin.H{
 		"verified":       verified,
@@ -618,6 +624,64 @@ func randomInstallSecret() (string, error) {
 		return "", fmt.Errorf("generate install secret: %w", err)
 	}
 	return secret, nil
+}
+
+func friendlyDatabaseSetupError(stage string, err error, databaseURL string) string {
+	if err == nil {
+		return ""
+	}
+	raw := err.Error()
+	lower := strings.ToLower(raw)
+	prefix := "数据库连接失败"
+	if stage == "migrate" {
+		prefix = "数据库迁移失败"
+	}
+	if strings.Contains(lower, "permission denied for schema public") || strings.Contains(lower, "sqlstate 42501") {
+		return prefix + "：当前数据库账号没有 PostgreSQL public schema 的建表/改表权限。请用数据库管理员密码在服务器执行下面的一键授权命令，然后回到安装页重试：\n" +
+			postgresSchemaGrantCommand(databaseURL) +
+			"\n如果提示 psql: command not found，先执行 find / -name psql -type f 2>/dev/null | head 查找 psql 路径；宝塔常见路径是 /www/server/pgsql/bin/psql。原始错误：" + raw
+	}
+	if stage == "migrate" {
+		return prefix + "：程序无法自动创建或更新数据表，请检查数据库账号权限、schema 权限和连接串。原始错误：" + raw
+	}
+	return prefix + "：请检查数据库主机、端口、库名、账号、密码和 SSL 模式。原始错误：" + raw
+}
+
+func postgresSchemaGrantCommand(databaseURL string) string {
+	dbName, dbUser := postgresDatabaseAndUser(databaseURL)
+	if dbName == "" {
+		dbName = "你的数据库名"
+	}
+	if dbUser == "" {
+		dbUser = "你的数据库账号"
+	}
+	sql := fmt.Sprintf(
+		"ALTER DATABASE %s OWNER TO %s; ALTER SCHEMA public OWNER TO %s; GRANT USAGE, CREATE ON SCHEMA public TO %s;",
+		quotePostgresIdentifier(dbName),
+		quotePostgresIdentifier(dbUser),
+		quotePostgresIdentifier(dbUser),
+		quotePostgresIdentifier(dbUser),
+	)
+	return "/www/server/pgsql/bin/psql -U postgres -d " + shellQuote(dbName) + " -c " + shellQuote(sql)
+}
+
+func postgresDatabaseAndUser(databaseURL string) (string, string) {
+	parsed, err := url.Parse(databaseURL)
+	if err != nil {
+		return "", ""
+	}
+	if parsed.Scheme != "postgres" && parsed.Scheme != "postgresql" {
+		return "", ""
+	}
+	return strings.TrimPrefix(parsed.Path, "/"), parsed.User.Username()
+}
+
+func quotePostgresIdentifier(value string) string {
+	return `"` + strings.ReplaceAll(value, `"`, `""`) + `"`
+}
+
+func shellQuote(value string) string {
+	return "'" + strings.ReplaceAll(value, "'", `'\''`) + "'"
 }
 
 func (h *Handler) installRuntimeConfigLocked() bool {

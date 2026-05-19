@@ -2,7 +2,9 @@ package httpapi
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -133,7 +135,7 @@ func TestAPIDocsMarkdownEndpoint(t *testing.T) {
 			t.Fatalf("docs body missing %q", want)
 		}
 	}
-	for _, forbidden := range []string{"llm-api-docs", "Cookie", "HTTP_ADDR", "SMTP_ADDR", "TCP 25"} {
+	for _, forbidden := range []string{"llm-api-docs", "Cookie", "HTTP_ADDR", "SMTP_ADDR", "TCP 25", "/api/inbox-stream", "SSE"} {
 		if strings.Contains(body, forbidden) {
 			t.Fatalf("docs body should not contain %q: %s", forbidden, body[:min(len(body), 240)])
 		}
@@ -157,7 +159,7 @@ func TestAPISkillMarkdownEndpoint(t *testing.T) {
 			t.Fatalf("skill body missing %q", want)
 		}
 	}
-	for _, forbidden := range []string{"llm-api-docs", "Cookie", "HTTP_ADDR", "SMTP_ADDR", "TCP 25"} {
+	for _, forbidden := range []string{"llm-api-docs", "Cookie", "HTTP_ADDR", "SMTP_ADDR", "TCP 25", "/api/inbox-stream", "SSE"} {
 		if strings.Contains(body, forbidden) {
 			t.Fatalf("skill body should not contain %q: %s", forbidden, body[:min(len(body), 240)])
 		}
@@ -306,12 +308,21 @@ func TestAPIKeyCanGenerateAndReadOwnedMailbox(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	admin := models.User{
+		Email:        "admin@example.com",
+		PasswordHash: hash,
+		Role:         models.UserRoleAdmin,
+		Enabled:      true,
+	}
 	owner := models.User{
 		Email:        "owner@example.com",
 		PasswordHash: hash,
 		Role:         models.UserRoleUser,
 		Enabled:      true,
 		DailyLimit:   1000,
+	}
+	if err := db.Create(&admin).Error; err != nil {
+		t.Fatal(err)
 	}
 	if err := db.Create(&owner).Error; err != nil {
 		t.Fatal(err)
@@ -404,6 +415,124 @@ func TestAPIKeyCanGenerateAndReadOwnedMailbox(t *testing.T) {
 	}
 }
 
+func TestInboxPaginationAndMailboxSearch(t *testing.T) {
+	db := httpTestDB(t)
+	hash, err := auth.HashSecret("password123")
+	if err != nil {
+		t.Fatal(err)
+	}
+	owner := models.User{
+		Email:        "owner@example.com",
+		PasswordHash: hash,
+		Role:         models.UserRoleUser,
+		Enabled:      true,
+		DailyLimit:   1000,
+	}
+	if err := db.Create(&owner).Error; err != nil {
+		t.Fatal(err)
+	}
+	domain := models.Domain{
+		Domain:          "page.test",
+		Mode:            models.DomainModePublic,
+		Active:          true,
+		MXVerified:      true,
+		WildcardEnabled: true,
+	}
+	if err := db.Create(&domain).Error; err != nil {
+		t.Fatal(err)
+	}
+	mailboxes := []models.Mailbox{
+		{OwnerID: owner.ID, Email: "alpha@page.test", LocalPart: "alpha", Host: "page.test", DomainID: domain.ID},
+		{OwnerID: owner.ID, Email: "beta@page.test", LocalPart: "beta", Host: "page.test", DomainID: domain.ID},
+		{OwnerID: owner.ID, Email: "gamma@page.test", LocalPart: "gamma", Host: "page.test", DomainID: domain.ID},
+	}
+	if err := db.Create(&mailboxes).Error; err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	for i := 0; i < 3; i++ {
+		message := models.Message{
+			ID:              "message-page-" + strconv.Itoa(i+1),
+			Recipient:       "alpha@page.test",
+			RecipientLocal:  "alpha",
+			RecipientDomain: "page.test",
+			RootDomain:      "page.test",
+			DomainID:        &domain.ID,
+			FromAddress:     "sender@example.com",
+			Subject:         "subject " + strconv.Itoa(i+1),
+			TextContent:     "body " + strconv.Itoa(i+1),
+			CreatedAt:       now.Add(time.Duration(i) * time.Minute),
+			ExpiresAt:       now.Add(time.Hour),
+		}
+		if err := db.Create(&message).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+	_, plain, err := (auth.APIKeyService{DB: db}).CreateFor(&owner.ID, "reader", 20, 0, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	router := testRouter(t, db)
+	headers := map[string]string{"X-API-Key": plain}
+
+	mailboxResponse := perform(router, http.MethodGet, "/api/mailboxes?q=page.test&page=2&per_page=2", nil, headers)
+	if mailboxResponse.Code != http.StatusOK {
+		t.Fatalf("mailboxes response = %d: %s", mailboxResponse.Code, mailboxResponse.Body.String())
+	}
+	var mailboxBody struct {
+		Success bool `json:"success"`
+		Data    struct {
+			Items []struct {
+				Email        string `json:"email"`
+				MessageCount int64  `json:"message_count"`
+			} `json:"items"`
+			Page       int   `json:"page"`
+			PerPage    int   `json:"per_page"`
+			Total      int64 `json:"total"`
+			TotalPages int   `json:"total_pages"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(mailboxResponse.Body.Bytes(), &mailboxBody); err != nil {
+		t.Fatal(err)
+	}
+	if mailboxBody.Data.Page != 2 || mailboxBody.Data.PerPage != 2 || mailboxBody.Data.Total != 3 || mailboxBody.Data.TotalPages != 2 || len(mailboxBody.Data.Items) != 1 {
+		t.Fatalf("unexpected mailbox pagination: %+v", mailboxBody.Data)
+	}
+
+	pagedEmailResponse := perform(router, http.MethodGet, "/api/emails?email=alpha@page.test&page=2&per_page=2", nil, headers)
+	if pagedEmailResponse.Code != http.StatusOK {
+		t.Fatalf("paged email response = %d: %s", pagedEmailResponse.Code, pagedEmailResponse.Body.String())
+	}
+	var pagedEmailBody struct {
+		Success bool                              `json:"success"`
+		Data    paginatedResponse[messageSummary] `json:"data"`
+	}
+	if err := json.Unmarshal(pagedEmailResponse.Body.Bytes(), &pagedEmailBody); err != nil {
+		t.Fatal(err)
+	}
+	if pagedEmailBody.Data.Page != 2 || pagedEmailBody.Data.PerPage != 2 || pagedEmailBody.Data.Total != 3 || pagedEmailBody.Data.TotalPages != 2 || len(pagedEmailBody.Data.Items) != 1 {
+		t.Fatalf("unexpected email pagination: %+v", pagedEmailBody.Data)
+	}
+	if pagedEmailBody.Data.Items[0].ID != "message-page-1" {
+		t.Fatalf("second email page ID = %q", pagedEmailBody.Data.Items[0].ID)
+	}
+
+	legacyEmailResponse := perform(router, http.MethodGet, "/api/emails?email=alpha@page.test&limit=2", nil, headers)
+	if legacyEmailResponse.Code != http.StatusOK {
+		t.Fatalf("legacy email response = %d: %s", legacyEmailResponse.Code, legacyEmailResponse.Body.String())
+	}
+	var legacyEmailBody struct {
+		Success bool             `json:"success"`
+		Data    []messageSummary `json:"data"`
+	}
+	if err := json.Unmarshal(legacyEmailResponse.Body.Bytes(), &legacyEmailBody); err != nil {
+		t.Fatal(err)
+	}
+	if len(legacyEmailBody.Data) != 2 {
+		t.Fatalf("legacy email list length = %d", len(legacyEmailBody.Data))
+	}
+}
+
 func TestAvailableDomainsRequiresActorAndSeparatesModes(t *testing.T) {
 	db := httpTestDB(t)
 	hash, err := auth.HashSecret("password123")
@@ -475,12 +604,12 @@ func TestAvailableDomainsRequiresActorAndSeparatesModes(t *testing.T) {
 	if response.Code != http.StatusOK {
 		t.Fatalf("available domains with api key = %d: %s", response.Code, response.Body.String())
 	}
-	publicNames, privateNames := decodeAvailableDomainNames(t, response.Body.Bytes())
+	publicNames := decodeAPIKeyAvailableDomainNames(t, response.Body.Bytes())
 	if !publicNames["public-ready.test"] || publicNames["public-pending.test"] || publicNames["public-wildcard-pending.test"] {
-		t.Fatalf("public domain grouping was not filtered to ready domains: %v", publicNames)
+		t.Fatalf("api key domain list was not filtered to ready public domains: %v", publicNames)
 	}
-	if !privateNames["owner-ready.test"] || privateNames["owner-pending.test"] || privateNames["owner-inactive.test"] || privateNames["other-ready.test"] {
-		t.Fatalf("private domain grouping leaked or missed domains: %v", privateNames)
+	if strings.Contains(response.Body.String(), "public_domains") || strings.Contains(response.Body.String(), "private_domains") || strings.Contains(response.Body.String(), "owner-ready.test") {
+		t.Fatalf("api key response should only expose public domain names: %s", response.Body.String())
 	}
 	publicDetail := perform(router, http.MethodGet, "/api/domains/"+strconv.Itoa(int(domains[0].ID)), nil, headers)
 	if publicDetail.Code != http.StatusOK {
@@ -510,6 +639,15 @@ func TestMarkEmailReadSetsSeen(t *testing.T) {
 	db := httpTestDB(t)
 	hash, err := auth.HashSecret("password123")
 	if err != nil {
+		t.Fatal(err)
+	}
+	admin := models.User{
+		Email:        "admin@example.com",
+		PasswordHash: hash,
+		Role:         models.UserRoleAdmin,
+		Enabled:      true,
+	}
+	if err := db.Create(&admin).Error; err != nil {
 		t.Fatal(err)
 	}
 	owner := models.User{
@@ -552,6 +690,8 @@ func TestMarkEmailReadSetsSeen(t *testing.T) {
 		FromAddress:     "sender@example.com",
 		Subject:         "code",
 		TextContent:     "123456",
+		HTMLContent:     "<p>123456</p>",
+		HeadersJSON:     `{"x-test":"yes"}`,
 		CreatedAt:       now,
 		ExpiresAt:       now.Add(time.Hour),
 	}
@@ -613,6 +753,121 @@ func TestMarkEmailReadSetsSeen(t *testing.T) {
 	}
 	if !detailBody.Data.Seen {
 		t.Fatalf("detail did not return seen=true: %s", detail.Body.String())
+	}
+	if strings.Contains(detail.Body.String(), "html_content") {
+		t.Fatalf("api key detail response should not include html_content: %s", detail.Body.String())
+	}
+	if !strings.Contains(detail.Body.String(), "headers_json") {
+		t.Fatalf("api key detail response should keep metadata headers: %s", detail.Body.String())
+	}
+
+	login := perform(router, http.MethodPost, "/api/auth/login", map[string]any{
+		"email":    "owner@example.com",
+		"password": "password123",
+	}, nil)
+	sessionDetailRequest := httptest.NewRequest(http.MethodGet, "/api/email/message-read", nil)
+	for _, cookie := range login.Result().Cookies() {
+		sessionDetailRequest.AddCookie(cookie)
+	}
+	sessionDetail := httptest.NewRecorder()
+	router.ServeHTTP(sessionDetail, sessionDetailRequest)
+	if sessionDetail.Code != http.StatusOK {
+		t.Fatalf("session detail = %d: %s", sessionDetail.Code, sessionDetail.Body.String())
+	}
+	if !strings.Contains(sessionDetail.Body.String(), "html_content") {
+		t.Fatalf("session detail response should include html_content: %s", sessionDetail.Body.String())
+	}
+}
+
+func TestInboxStreamRequiresSessionCookie(t *testing.T) {
+	db := httpTestDB(t)
+	hash, err := auth.HashSecret("password123")
+	if err != nil {
+		t.Fatal(err)
+	}
+	admin := models.User{
+		Email:        "admin@example.com",
+		PasswordHash: hash,
+		Role:         models.UserRoleAdmin,
+		Enabled:      true,
+	}
+	owner := models.User{
+		Email:        "owner@example.com",
+		PasswordHash: hash,
+		Role:         models.UserRoleUser,
+		Enabled:      true,
+		DailyLimit:   1000,
+	}
+	if err := db.Create(&admin).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&owner).Error; err != nil {
+		t.Fatal(err)
+	}
+	domain := models.Domain{
+		Domain:          "stream.test",
+		Mode:            models.DomainModePrivate,
+		OwnerID:         &owner.ID,
+		Active:          true,
+		MXVerified:      true,
+		WildcardEnabled: true,
+	}
+	if err := db.Create(&domain).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&models.Mailbox{
+		OwnerID:   owner.ID,
+		Email:     "demo@stream.test",
+		LocalPart: "demo",
+		Host:      "stream.test",
+		DomainID:  domain.ID,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	router := testRouter(t, db)
+	_, plain, err := (auth.APIKeyService{DB: db}).CreateFor(&owner.ID, "stream-key", 20, 0, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	apiKeyOnly := perform(router, http.MethodGet, "/api/inbox-stream?email=demo@stream.test", nil, map[string]string{"X-API-Key": plain})
+	if apiKeyOnly.Code != http.StatusUnauthorized {
+		t.Fatalf("expected API key-only stream request to be 401, got %d: %s", apiKeyOnly.Code, apiKeyOnly.Body.String())
+	}
+
+	login := perform(router, http.MethodPost, "/api/auth/login", map[string]any{
+		"email":    "owner@example.com",
+		"password": "password123",
+	}, nil)
+	if login.Code != http.StatusOK {
+		t.Fatalf("login = %d: %s", login.Code, login.Body.String())
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	request := httptest.NewRequest(http.MethodGet, "/api/inbox-stream?email=demo@stream.test", nil).WithContext(ctx)
+	for _, cookie := range login.Result().Cookies() {
+		request.AddCookie(cookie)
+	}
+	response := httptest.NewRecorder()
+	done := make(chan struct{})
+	go func() {
+		router.ServeHTTP(response, request)
+		close(done)
+	}()
+	time.Sleep(20 * time.Millisecond)
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("stream handler did not stop after request cancellation")
+	}
+	if response.Code != http.StatusOK {
+		t.Fatalf("cookie stream response = %d: %s", response.Code, response.Body.String())
+	}
+	if contentType := response.Header().Get("Content-Type"); !strings.Contains(contentType, "text/event-stream") {
+		t.Fatalf("expected event-stream content type, got %q", contentType)
+	}
+	if !strings.Contains(response.Body.String(), ": connected") {
+		t.Fatalf("stream did not flush initial connected frame: %s", response.Body.String())
 	}
 }
 
@@ -789,6 +1044,11 @@ func TestListDomainsHidesOtherUsersWaitingDomains(t *testing.T) {
 	}
 	if !ownerDomains["other-ready.test"] || !ownerDomains["owner-pending.test"] {
 		t.Fatalf("owner domain visibility missing expected domains: %v", ownerDomains)
+	}
+	for _, forbidden := range []string{"mx_auto_retry_", "health_failure_count", "health_recovery_count", "last_health_", "last_mx_records", "last_check_message"} {
+		if strings.Contains(ownerResponse.Body.String(), forbidden) {
+			t.Fatalf("owner domain list leaked internal field %q: %s", forbidden, ownerResponse.Body.String())
+		}
 	}
 
 	adminLogin := perform(router, http.MethodPost, "/api/auth/login", map[string]any{
@@ -1057,6 +1317,87 @@ func TestInstallLoginAndAdminGate(t *testing.T) {
 	}
 }
 
+func TestInstallStatusRedactsInstalledAnonymousResponse(t *testing.T) {
+	db := httpTestDB(t)
+	hash, err := auth.HashSecret("password123")
+	if err != nil {
+		t.Fatal(err)
+	}
+	admin := models.User{
+		Email:        "admin@example.com",
+		PasswordHash: hash,
+		Role:         models.UserRoleAdmin,
+		Enabled:      true,
+	}
+	if err := db.Create(&admin).Error; err != nil {
+		t.Fatal(err)
+	}
+	router := testRouterWithConfig(t, db, func(cfg *config.Config) {
+		cfg.HTTPAddr = ":3000"
+		cfg.SMTPAddr = ":2525"
+		cfg.PublicBaseURL = "https://mail.example.com"
+		cfg.MailHostname = "mail.example.com"
+		cfg.ExpectedMX = "mail.example.com"
+		cfg.DatabaseDriver = "postgres"
+		cfg.DatabaseURL = "postgres://user:pass@127.0.0.1:5432/hloolmail?sslmode=disable"
+		cfg.EnvPath = "/opt/hloolmail/.env"
+	})
+
+	status := perform(router, http.MethodGet, "/api/install/status", nil, nil)
+	if status.Code != http.StatusOK {
+		t.Fatalf("status = %d: %s", status.Code, status.Body.String())
+	}
+	var anonymous struct {
+		Success bool           `json:"success"`
+		Data    map[string]any `json:"data"`
+	}
+	if err := json.Unmarshal(status.Body.Bytes(), &anonymous); err != nil {
+		t.Fatal(err)
+	}
+	if !anonymous.Success || anonymous.Data["installed"] != true {
+		t.Fatalf("unexpected anonymous status: %s", status.Body.String())
+	}
+	for _, forbidden := range []string{"config", "deployment", "site_api_calls_today", "registered_users", "hosted_domains"} {
+		if _, exists := anonymous.Data[forbidden]; exists {
+			t.Fatalf("anonymous install status leaked %q: %s", forbidden, status.Body.String())
+		}
+	}
+
+	login := perform(router, http.MethodPost, "/api/auth/login", map[string]any{
+		"email":    "admin@example.com",
+		"password": "password123",
+	}, nil)
+	if login.Code != http.StatusOK {
+		t.Fatalf("login = %d: %s", login.Code, login.Body.String())
+	}
+	request := httptest.NewRequest(http.MethodGet, "/api/install/status", nil)
+	for _, cookie := range login.Result().Cookies() {
+		request.AddCookie(cookie)
+	}
+	authenticated := httptest.NewRecorder()
+	router.ServeHTTP(authenticated, request)
+	if authenticated.Code != http.StatusOK {
+		t.Fatalf("authenticated status = %d: %s", authenticated.Code, authenticated.Body.String())
+	}
+	var full struct {
+		Data struct {
+			Config struct {
+				DatabaseURL string `json:"database_url"`
+			} `json:"config"`
+			Deployment map[string]any `json:"deployment"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(authenticated.Body.Bytes(), &full); err != nil {
+		t.Fatal(err)
+	}
+	if full.Data.Config.DatabaseURL == "" || !strings.Contains(full.Data.Config.DatabaseURL, "***") {
+		t.Fatalf("authenticated status should include masked config, got: %s", authenticated.Body.String())
+	}
+	if full.Data.Deployment == nil {
+		t.Fatalf("authenticated status should include deployment details: %s", authenticated.Body.String())
+	}
+}
+
 func TestInstallStatusReportsContainerConfigLock(t *testing.T) {
 	t.Setenv("HLOOLMAIL_DEPLOYMENT", "docker")
 	t.Setenv("HLOOLMAIL_CONFIG_LOCKED", "true")
@@ -1174,6 +1515,26 @@ func TestInstallBuildsPostgresURLFromParts(t *testing.T) {
 	want := "postgres://mailuser:p%40ss%20word@db.example.com:5432/hloolmail?sslmode=require"
 	if input.DatabaseURL != want {
 		t.Fatalf("database url = %q, want %q", input.DatabaseURL, want)
+	}
+}
+
+func TestFriendlyDatabaseSetupErrorExplainsPostgresSchemaPermission(t *testing.T) {
+	message := friendlyDatabaseSetupError(
+		"migrate",
+		errors.New("ERROR: permission denied for schema public (SQLSTATE 42501)"),
+		"postgres://hlooltest:secret@127.0.0.1:5432/hlooltest?sslmode=disable",
+	)
+	for _, want := range []string{
+		"数据库迁移失败",
+		"public schema",
+		"建表/改表权限",
+		"/www/server/pgsql/bin/psql -U postgres -d 'hlooltest'",
+		`ALTER DATABASE "hlooltest" OWNER TO "hlooltest"`,
+		"SQLSTATE 42501",
+	} {
+		if !strings.Contains(message, want) {
+			t.Fatalf("message missing %q:\n%s", want, message)
+		}
 	}
 }
 
@@ -1400,7 +1761,9 @@ func deleteDomainRequest(handler http.Handler, login *httptest.ResponseRecorder,
 func decodeDomainNames(t *testing.T, body []byte) map[string]bool {
 	t.Helper()
 	var payload struct {
-		Data []models.Domain `json:"data"`
+		Data []struct {
+			Domain string `json:"domain"`
+		} `json:"data"`
 	}
 	if err := json.Unmarshal(body, &payload); err != nil {
 		t.Fatal(err)
@@ -1412,12 +1775,33 @@ func decodeDomainNames(t *testing.T, body []byte) map[string]bool {
 	return names
 }
 
+func decodeAPIKeyAvailableDomainNames(t *testing.T, body []byte) map[string]bool {
+	t.Helper()
+	var payload struct {
+		Data struct {
+			Domains []string `json:"domains"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(body, &payload); err != nil {
+		t.Fatal(err)
+	}
+	names := make(map[string]bool, len(payload.Data.Domains))
+	for _, domain := range payload.Data.Domains {
+		names[domain] = true
+	}
+	return names
+}
+
 func decodeAvailableDomainNames(t *testing.T, body []byte) (map[string]bool, map[string]bool) {
 	t.Helper()
 	var payload struct {
 		Data struct {
-			PublicDomains  []models.Domain `json:"public_domains"`
-			PrivateDomains []models.Domain `json:"private_domains"`
+			PublicDomains []struct {
+				Domain string `json:"domain"`
+			} `json:"public_domains"`
+			PrivateDomains []struct {
+				Domain string `json:"domain"`
+			} `json:"private_domains"`
 		} `json:"data"`
 	}
 	if err := json.Unmarshal(body, &payload); err != nil {

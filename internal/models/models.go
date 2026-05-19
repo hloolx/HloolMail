@@ -197,6 +197,24 @@ type Notification struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
+type Announcement struct {
+	ID        uint           `gorm:"primaryKey" json:"id"`
+	Title     string         `gorm:"size:500;not null" json:"title"`
+	Content   string         `gorm:"type:text;not null" json:"content"`
+	AdminID   uint           `gorm:"index;not null" json:"admin_id"`
+	Admin     *User          `gorm:"foreignKey:AdminID;constraint:OnUpdate:CASCADE,OnDelete:CASCADE;" json:"-"`
+	CreatedAt time.Time      `json:"created_at"`
+	UpdatedAt time.Time      `json:"updated_at"`
+	DeletedAt gorm.DeletedAt `gorm:"index" json:"-"`
+}
+
+type AnnouncementRead struct {
+	ID             uint      `gorm:"primaryKey" json:"id"`
+	UserID         uint      `gorm:"uniqueIndex:idx_user_announcement;not null" json:"user_id"`
+	AnnouncementID uint      `gorm:"uniqueIndex:idx_user_announcement;not null" json:"announcement_id"`
+	ReadAt         time.Time `gorm:"not null" json:"read_at"`
+}
+
 type DomainCheckSettings struct {
 	ID                 uint       `gorm:"primaryKey" json:"id"`
 	Enabled            bool       `gorm:"index;not null" json:"enabled"`
@@ -246,10 +264,14 @@ type DomainCheckResultRecord struct {
 }
 
 type AuditLog struct {
-	ID        uint      `gorm:"primaryKey" json:"id"`
-	Action    string    `gorm:"size:120;index;not null" json:"action"`
-	Actor     string    `gorm:"size:120;not null" json:"actor"`
-	Target    string    `gorm:"size:255;not null" json:"target"`
-	Metadata  string    `gorm:"type:text" json:"metadata,omitempty"`
-	CreatedAt time.Time `json:"created_at"`
+	ID         uint      `gorm:"primaryKey;index:idx_audit_created_id,priority:2;index:idx_audit_category_created_id,priority:3;index:idx_audit_action_created_id,priority:3;index:idx_audit_actor_created_id,priority:3;index:idx_audit_target_created_id,priority:4" json:"id"`
+	Category   string    `gorm:"size:40;index:idx_audit_category_created_id,priority:1;not null;default:security" json:"category"`
+	Severity   string    `gorm:"size:20;index;not null;default:info" json:"severity"`
+	Action     string    `gorm:"size:120;index:idx_audit_action_created_id,priority:1;not null" json:"action"`
+	Actor      string    `gorm:"size:120;index:idx_audit_actor_created_id,priority:1;not null" json:"actor"`
+	TargetType string    `gorm:"size:60;index:idx_audit_target_created_id,priority:1;not null;default:''" json:"target_type"`
+	TargetID   string    `gorm:"size:120;index:idx_audit_target_created_id,priority:2;not null;default:''" json:"target_id"`
+	Target     string    `gorm:"size:255;not null" json:"target"`
+	Metadata   string    `gorm:"type:text" json:"metadata,omitempty"`
+	CreatedAt  time.Time `gorm:"index:idx_audit_created_id,priority:1;index:idx_audit_category_created_id,priority:2;index:idx_audit_action_created_id,priority:2;index:idx_audit_actor_created_id,priority:2;index:idx_audit_target_created_id,priority:3" json:"created_at"`
 }

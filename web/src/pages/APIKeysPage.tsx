@@ -1,59 +1,32 @@
-import { useEffect, useState } from 'react';
-import type { FormEvent } from 'react';
-import { createPortal } from 'react-dom';
+import { useEffect, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Copy, KeyRound, Loader2, Trash2, X } from 'lucide-react';
+import { Copy, KeyRound, Loader2, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import type { APIKey, User } from '../api';
 import { api, patchJSON, postJSON } from '../api';
-import { currentText, useText } from '../locales';
+import { useText } from '../locales';
 import { copy } from '../lib/clipboard';
+import { dissolveElement } from '../lib/dissolve';
 import { formatAPIKeyExpiry, relativeTime } from '../lib/display';
-import { DataTable, IconButton } from '../components/shared';
+import { ConfirmModal, DataTable, IconButton, QuotaThermometer } from '../components/shared';
+import { CreateAPIKeyDialog } from './CreateAPIKeyDialog';
 
 export function APIKeysPage({ user }: { user: User }) {
   const queryClient = useQueryClient();
   const text = useText();
   const [createOpen, setCreateOpen] = useState(false);
-  const [name, setName] = useState('');
-  const [dailyLimit, setDailyLimit] = useState('');
-  const [totalLimit, setTotalLimit] = useState('');
-  const [dailyUnlimited, setDailyUnlimited] = useState(false);
-  const [totalUnlimited, setTotalUnlimited] = useState(false);
-  const [expiresNever, setExpiresNever] = useState(true);
-  const [expiresAt, setExpiresAt] = useState('');
-  const [plainKey, setPlainKey] = useState('');
-  const [createdCopied, setCreatedCopied] = useState(false);
   const [copyingKeyId, setCopyingKeyId] = useState<number | null>(null);
   const [deleteTargets, setDeleteTargets] = useState<APIKey[]>([]);
+  const [dissolveTarget, setDissolveTarget] = useState<HTMLElement | null>(null);
   const [selectedKeyIds, setSelectedKeyIds] = useState<number[]>([]);
-  const keys = useQuery({ queryKey: ['api-keys'], queryFn: () => api<APIKey[]>('/api/api-keys'), retry: false });
+  const createTriggerRef = useRef<HTMLButtonElement | null>(null);
+  const deleteTriggerRef = useRef<HTMLButtonElement | null>(null);
+  const keys = useQuery({ queryKey: ['api-keys'], queryFn: () => api<APIKey[]>('/api/api-keys'), retry: false, staleTime: 30_000 });
   const keyList = keys.data || [];
   const selectedKeys = keyList.filter((key) => selectedKeyIds.includes(key.id));
   const selectedCount = selectedKeys.length;
   const allKeysSelected = keyList.length > 0 && selectedCount === keyList.length;
   const someKeysSelected = selectedCount > 0 && !allKeysSelected;
-  const hasDailyLimit = dailyUnlimited || dailyLimit.trim() !== '';
-  const hasTotalLimit = totalUnlimited || totalLimit.trim() !== '';
-  const hasExpiry = expiresNever || expiresAt.trim() !== '';
-  const canCreate = name.trim() !== '' && hasDailyLimit && hasTotalLimit && hasExpiry;
-  const closeCreateModal = () => {
-    setCreateOpen(false);
-    setPlainKey('');
-    setCreatedCopied(false);
-  };
-
-  useEffect(() => {
-    if (!createOpen && deleteTargets.length === 0) return;
-    const handler = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') {
-        closeCreateModal();
-        setDeleteTargets([]);
-      }
-    };
-    window.addEventListener('keydown', handler);
-    return () => window.removeEventListener('keydown', handler);
-  }, [createOpen, deleteTargets.length]);
 
   useEffect(() => {
     if (!keys.data) return;
@@ -61,54 +34,6 @@ export function APIKeysPage({ user }: { user: User }) {
     setSelectedKeyIds((current) => current.filter((id) => existingIds.has(id)));
   }, [keys.data]);
 
-  const resetCreateForm = () => {
-    setName('');
-    setDailyLimit('');
-    setTotalLimit('');
-    setDailyUnlimited(false);
-    setTotalUnlimited(false);
-    setExpiresNever(true);
-    setExpiresAt('');
-  };
-
-  const buildCreatePayload = () => {
-    const trimmedName = name.trim();
-    if (!trimmedName) throw new Error(text.apiKeys.nameRequired);
-
-    const daily = dailyUnlimited ? 0 : Number(dailyLimit);
-    const total = totalUnlimited ? 0 : Number(totalLimit);
-    if (!dailyUnlimited && (!Number.isInteger(daily) || daily < 1)) throw new Error(text.apiKeys.dailyRequired);
-    if (!totalUnlimited && (!Number.isInteger(total) || total < 1)) throw new Error(text.apiKeys.totalRequired);
-
-    const payload: Record<string, unknown> = {
-      name: trimmedName,
-      daily_limit: daily,
-      total_limit: total
-    };
-    if (!expiresNever) {
-      const date = new Date(expiresAt);
-      if (!expiresAt || Number.isNaN(date.getTime())) throw new Error(text.apiKeys.expiryRequired);
-      payload.expires_at = date.toISOString();
-    }
-    return payload;
-  };
-
-  const createKey = useMutation({
-    mutationFn: () => postJSON<{ api_key: APIKey; plain_key: string }>('/api/api-keys', buildCreatePayload()),
-    onSuccess: (data) => {
-      setPlainKey(data.plain_key);
-      setCreatedCopied(false);
-      queryClient.setQueryData<APIKey[]>(['api-keys'], (current) => {
-        const existing = current || [];
-        return [data.api_key, ...existing.filter((key) => key.id !== data.api_key.id)];
-      });
-      resetCreateForm();
-      queryClient.invalidateQueries({ queryKey: ['api-keys'] });
-      void copy(data.plain_key, { celebrate: true, label: text.apiKeys.copiedSecret, toastMessage: text.apiKeys.copiedSecret })
-        .then(setCreatedCopied);
-    },
-    onError: (error) => toast.error(error.message)
-  });
   const toggleKey = useMutation({
     mutationFn: (key: APIKey) => patchJSON(`/api/api-keys/${key.id}`, { enabled: !key.enabled }),
     onSuccess: () => {
@@ -118,17 +43,11 @@ export function APIKeysPage({ user }: { user: User }) {
     onError: (error) => toast.error(error.message)
   });
   const deleteKeys = useMutation({
-    mutationFn: async (targets: APIKey[]) => {
-      for (const key of targets) {
-        await api(`/api/api-keys/${key.id}`, { method: 'DELETE' });
-      }
-    },
-    onSuccess: (_data, targets) => {
+    mutationFn: (targets: APIKey[]) =>
+      Promise.all(targets.map((key) => api(`/api/api-keys/${key.id}`, { method: 'DELETE' }))).then(() => undefined),
+    onSuccess: () => {
       setDeleteTargets([]);
       setSelectedKeyIds([]);
-      if (targets.some((key) => key.key_prefix && plainKey.startsWith(key.key_prefix))) {
-        setPlainKey('');
-      }
       queryClient.invalidateQueries({ queryKey: ['api-keys'] });
       toast.success(text.toast.apiKeyDeleted);
     },
@@ -145,12 +64,6 @@ export function APIKeysPage({ user }: { user: User }) {
     } finally {
       setCopyingKeyId(null);
     }
-  };
-
-  const submitCreate = (event: FormEvent) => {
-    event.preventDefault();
-    if (!canCreate || createKey.isPending) return;
-    createKey.mutate();
   };
 
   const toggleSelectedKey = (id: number) => {
@@ -178,12 +91,12 @@ export function APIKeysPage({ user }: { user: User }) {
           </div>
           <div className="api-key-header-actions">
             {selectedCount > 0 && (
-              <button className="btn-danger" onClick={() => setDeleteTargets(selectedKeys)} disabled={deleteKeys.isPending}>
+              <button className="btn-danger" ref={deleteTriggerRef} onClick={() => { setDissolveTarget(null); setDeleteTargets(selectedKeys); }} disabled={deleteKeys.isPending}>
                 <Trash2 size={16} />
                 {text.apiKeys.deleteSelected} ({selectedCount})
               </button>
             )}
-            <button className="btn-primary" onClick={() => { setPlainKey(''); setCreatedCopied(false); setCreateOpen(true); }}>
+            <button className="btn-primary" ref={createTriggerRef} onClick={() => setCreateOpen(true)}>
               <KeyRound size={16} />
               {text.apiKeys.createButton}
             </button>
@@ -206,6 +119,8 @@ export function APIKeysPage({ user }: { user: User }) {
                     onChange={toggleSelectAllKeys}
                     aria-label={text.apiKeys.selectAll}
                   />
+                  <span className="sr-only">{text.apiKeys.selectAll}</span>
+                  <span style={{ fontSize: '0.68rem', marginLeft: '0.25rem' }}>{text.apiKeys.selectAll}</span>
                 </label>
               )
             },
@@ -218,6 +133,7 @@ export function APIKeysPage({ user }: { user: User }) {
             { key: 'last-used', header: text.apiKeys.lastUsed },
             { key: 'actions', header: text.apiKeys.actions }
           ]}
+          emptyLabel={keys.isLoading ? text.common.loading : text.apiKeys.empty}
           rows={keyList.map((key) => {
             const maskedKey = maskAPIKey(key.key_prefix);
             return {
@@ -242,7 +158,7 @@ export function APIKeysPage({ user }: { user: User }) {
                   <span className="key-copy-mask">{maskedKey}</span>
                   {copyingKeyId === key.id ? <Loader2 size={13} className="animate-spin" /> : <Copy size={13} />}
                 </button>,
-                <button className={`key-switch ${key.enabled ? 'key-switch-on' : 'key-switch-off'}`} onClick={() => toggleKey.mutate(key)} disabled={toggleKey.isPending} aria-pressed={key.enabled}>
+                <button className={`key-switch ${key.enabled ? 'key-switch-on' : 'key-switch-off'}`} onClick={() => toggleKey.mutate(key)} disabled={toggleKey.isPending} role="switch" aria-checked={key.enabled}>
                   <span className="key-switch-knob" />
                   <span className="key-switch-label">{key.enabled ? text.common.enabled : text.common.disabled}</span>
                 </button>,
@@ -250,8 +166,12 @@ export function APIKeysPage({ user }: { user: User }) {
                 <QuotaThermometer used={key.total_used} limit={key.total_limit} />,
                 formatAPIKeyExpiry(key.expires_at),
                 key.last_used_at ? relativeTime(key.last_used_at) : '-',
-                <div className="table-actions">
-                  <IconButton title={text.apiKeys.deleteKey} onClick={() => setDeleteTargets([key])} disabled={deleteKeys.isPending}>
+                <div className="table-actions" data-key-id={key.id}>
+                  <IconButton title={`${text.apiKeys.deleteKey}: ${key.name}`} aria-label={`${text.apiKeys.deleteKey} ${key.name}`} onClick={() => {
+                    const row = document.querySelector(`[data-key-id="${key.id}"]`)?.closest('tr') as HTMLElement | null;
+                    setDissolveTarget(row);
+                    setDeleteTargets([key]);
+                  }} disabled={deleteKeys.isPending}>
                     <Trash2 size={14} />
                   </IconButton>
                 </div>
@@ -260,114 +180,46 @@ export function APIKeysPage({ user }: { user: User }) {
           })}
         />
       </section>
-      {createOpen && createPortal((
-        <div className="modal-backdrop" role="presentation" onMouseDown={(event) => {
-          if (event.target === event.currentTarget) closeCreateModal();
-        }}>
-          <section className="modal-panel api-key-modal" role="dialog" aria-modal="true" aria-labelledby="create-api-key-title">
-            <div className="modal-header">
-              <div>
-                <h2 id="create-api-key-title">{text.apiKeys.createTitle}</h2>
-                <p>{text.apiKeys.createDesc}</p>
-              </div>
-              <IconButton title={text.common.close} onClick={closeCreateModal}>
-                <X size={16} />
-              </IconButton>
-            </div>
-            <form className="api-key-form" onSubmit={submitCreate}>
-              <label className="api-key-field">
-                <span>{text.apiKeys.name}</span>
-                <input className="input" value={name} placeholder={text.apiKeys.namePlaceholder} onChange={(event) => setName(event.target.value)} required />
-              </label>
-              <div className="api-key-limit-grid">
-                <label className="api-key-field">
-                  <span>{text.apiKeys.dailyLimit}</span>
-                  <input className="input" type="number" min="1" step="1" value={dailyLimit} disabled={dailyUnlimited} onChange={(event) => setDailyLimit(event.target.value)} required={!dailyUnlimited} />
-                </label>
-                <label className="check-row">
-                  <input type="checkbox" checked={dailyUnlimited} onChange={(event) => setDailyUnlimited(event.target.checked)} />
-                  <span>{text.apiKeys.unlimited}</span>
-                </label>
-              </div>
-              <div className="api-key-limit-grid">
-                <label className="api-key-field">
-                  <span>{text.apiKeys.totalLimit}</span>
-                  <input className="input" type="number" min="1" step="1" value={totalLimit} disabled={totalUnlimited} onChange={(event) => setTotalLimit(event.target.value)} required={!totalUnlimited} />
-                </label>
-                <label className="check-row">
-                  <input type="checkbox" checked={totalUnlimited} onChange={(event) => setTotalUnlimited(event.target.checked)} />
-                  <span>{text.apiKeys.unlimited}</span>
-                </label>
-              </div>
-              <div className="api-key-limit-grid">
-                <label className="api-key-field">
-                  <span>{text.apiKeys.expiresAt}</span>
-                  <input className="input" type="datetime-local" value={expiresAt} disabled={expiresNever} onChange={(event) => setExpiresAt(event.target.value)} required={!expiresNever} />
-                </label>
-                <label className="check-row">
-                  <input type="checkbox" checked={expiresNever} onChange={(event) => setExpiresNever(event.target.checked)} />
-                  <span>{text.apiKeys.neverExpires}</span>
-                </label>
-              </div>
-              <p className="api-key-quota-note">{text.apiKeys.quotaHint}</p>
-              <button className="btn-primary" type="submit" disabled={!canCreate || createKey.isPending}>
-                {createKey.isPending ? <Loader2 size={16} className="animate-spin" /> : <KeyRound size={16} />}
-                {text.common.create}
-              </button>
-            </form>
-            {plainKey && (
-              <div className="created-key-copy">
-                <span>
-                  <b>{createdCopied ? text.apiKeys.createdCopiedTitle : text.apiKeys.createdKeyTitle}</b>
-                  <small>{text.apiKeys.createdKeyHint}</small>
-                </span>
-                <button className="btn-secondary" type="button" onClick={(event) => {
-                  void copy(plainKey, { celebrate: true, event, label: text.apiKeys.copiedSecret, toastMessage: text.apiKeys.copiedSecret })
-                    .then(setCreatedCopied);
-                }}>
-                  <Copy size={15} />
-                  {text.common.copy}
-                </button>
-                <input
-                  className="input created-key-value"
-                  value={plainKey}
-                  readOnly
-                  autoComplete="off"
-                  spellCheck={false}
-                  aria-label={text.apiKeys.createdKeyTitle}
-                  onFocus={(event) => event.currentTarget.select()}
-                  onClick={(event) => event.currentTarget.select()}
-                />
-              </div>
-            )}
-          </section>
-        </div>
-      ), document.body)}
-      {deleteTargets.length > 0 && createPortal((
-        <div className="modal-backdrop" role="presentation" onMouseDown={(event) => {
-          if (event.target === event.currentTarget && !deleteKeys.isPending) setDeleteTargets([]);
-        }}>
-          <section className="modal-panel confirm-modal" role="alertdialog" aria-modal="true" aria-labelledby="delete-api-key-title" aria-describedby="delete-api-key-desc">
-            <div className="confirm-modal-icon">
-              <Trash2 size={18} />
-            </div>
-            <div className="confirm-modal-copy">
-              <h2 id="delete-api-key-title">{deleteTargets.length > 1 ? text.apiKeys.deleteSelectedTitle : text.apiKeys.deleteKey}</h2>
-              <p id="delete-api-key-desc">{deleteConfirmText}</p>
-              <code>{deleteSummary}</code>
-            </div>
-            <div className="confirm-modal-actions">
-              <button className="btn-secondary" type="button" onClick={() => setDeleteTargets([])} disabled={deleteKeys.isPending}>
-                {text.common.cancel}
-              </button>
-              <button className="btn-danger" type="button" onClick={() => deleteKeys.mutate(deleteTargets)} disabled={deleteKeys.isPending}>
-                {deleteKeys.isPending ? <Loader2 size={16} className="animate-spin" /> : <Trash2 size={16} />}
-                {text.common.delete}
-              </button>
-            </div>
-          </section>
-        </div>
-      ), document.body)}
+      {createOpen && (
+        <CreateAPIKeyDialog
+          open={createOpen}
+          onClose={() => {
+            setCreateOpen(false);
+            createTriggerRef.current?.focus();
+          }}
+        />
+      )}
+      <ConfirmModal
+        open={deleteTargets.length > 0}
+        title={deleteTargets.length > 1 ? text.apiKeys.deleteSelectedTitle : text.apiKeys.deleteKey}
+        description={`${deleteConfirmText}\n\n${deleteSummary}`}
+        danger
+        confirmText={text.common.delete}
+        cancelText={text.common.cancel}
+        onConfirm={async () => {
+          const targets = deleteTargets;
+          const targetEl = dissolveTarget;
+          setDeleteTargets([]);
+          setDissolveTarget(null);
+          await new Promise(r => requestAnimationFrame(r));
+          if (targets.length === 1 && targetEl) {
+            await dissolveElement(targetEl, { duration: 400, blockSize: 4, direction: 'out' });
+          } else if (targets.length > 1) {
+            const rows = targets
+              .map((key) => document.querySelector(`[data-key-id="${key.id}"]`)?.closest('tr') as HTMLElement | null)
+              .filter(Boolean) as HTMLElement[];
+            for (const row of rows) {
+              await dissolveElement(row, { duration: 300, blockSize: 4, direction: 'up' });
+            }
+          }
+          deleteKeys.mutate(targets);
+        }}
+        onCancel={() => {
+          setDeleteTargets([]);
+          setDissolveTarget(null);
+          deleteTriggerRef.current?.focus();
+        }}
+      />
     </div>
   );
 }
@@ -377,34 +229,12 @@ function maskAPIKey(value: string) {
   if (!trimmed) return '';
   const prefix = 'key-hloolmail-';
   if (trimmed.startsWith(prefix) && trimmed.length > prefix.length + 6) {
-    return `${prefix}${trimmed.slice(prefix.length, prefix.length + 2)}${'*'.repeat(Math.max(8, trimmed.length - prefix.length - 4))}${trimmed.slice(-2)}`;
+    return `${prefix}${trimmed.slice(prefix.length, prefix.length + 2)}${'*'.repeat(8)}${trimmed.slice(-2)}`;
   }
   const visible = Math.min(3, Math.floor(trimmed.length / 5));
   const suffix = Math.min(2, Math.floor(trimmed.length / 6));
   const maskedLen = trimmed.length - visible - suffix;
-  return `${trimmed.slice(0, visible)}${'*'.repeat(Math.max(6, maskedLen))}${suffix > 0 ? trimmed.slice(-suffix) : ''}`;
+  const starCount = maskedLen > 0 ? Math.max(8, maskedLen) : 8;
+  return `${trimmed.slice(0, visible)}${'*'.repeat(starCount)}${suffix > 0 ? trimmed.slice(-suffix) : ''}`;
 }
 
-function QuotaThermometer({ used, limit }: { used: number; limit: number }) {
-  const text = currentText();
-  const unlimited = limit <= 0;
-  if (unlimited) {
-    return (
-      <div className="quota-thermo quota-thermo-unlimited" title={text.apiKeys.unlimited}>
-        <span className="quota-thermo-infinity">{text.apiKeys.unlimitedShort}</span>
-      </div>
-    );
-  }
-
-  const ratio = Math.min(1, Math.max(0, used / Math.max(limit, 1)));
-  const label = `${used.toLocaleString()} / ${limit.toLocaleString()}`;
-
-  return (
-    <div className="quota-thermo" title={label}>
-      <span className="quota-thermo-value">{label}</span>
-      <span className="quota-thermo-track">
-        <span style={{ width: `${Math.round(ratio * 100)}%` }} />
-      </span>
-    </div>
-  );
-}

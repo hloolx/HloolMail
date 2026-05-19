@@ -96,13 +96,15 @@ const JsonNode: React.FC<JsonNodeProps> = ({
 
     return (
       <>
-        <span
+        <button
+          type="button"
           className="cursor-pointer select-none"
-          style={{ color: 'var(--muted)' }}
+          style={{ color: 'var(--muted)', background: 'none', border: 'none', padding: 0, font: 'inherit' }}
           onClick={toggle}
+          aria-expanded={isExpanded}
         >
           {isExpanded ? 'v' : '>'}[
-        </span>
+        </button>
         {!isExpanded && (
           <span style={{ color: 'var(--muted)' }}>
             ... {value.length} items]
@@ -145,13 +147,15 @@ const JsonNode: React.FC<JsonNodeProps> = ({
 
     return (
       <>
-        <span
+        <button
+          type="button"
           className="cursor-pointer select-none"
-          style={{ color: 'var(--muted)' }}
+          style={{ color: 'var(--muted)', background: 'none', border: 'none', padding: 0, font: 'inherit' }}
           onClick={toggle}
+          aria-expanded={isExpanded}
         >
           {isExpanded ? 'v' : '>'}{'{'}
-        </span>
+        </button>
         {!isExpanded && (
           <span style={{ color: 'var(--muted)' }}>
             ... {keys.length} items {'}'}

@@ -8,6 +8,7 @@ storage/
 
 # Frontend dependencies and build output
 web/dist/
+internal/frontend/dist/
 web/node_modules/
 web/bun.lock
 *.tsbuildinfo

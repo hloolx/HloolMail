@@ -113,6 +113,7 @@ export function ResponsePanel({
             <div className="border border-[var(--border)] rounded-lg overflow-hidden">
               <button
                 onClick={() => setHeadersExpanded((v) => !v)}
+                aria-expanded={headersExpanded}
                 className="flex items-center justify-between w-full px-3 py-2 text-xs font-medium text-[var(--foreground)] bg-[var(--panel)] hover:bg-[var(--soft)] transition-colors"
               >
                 <span>Response Headers</span>

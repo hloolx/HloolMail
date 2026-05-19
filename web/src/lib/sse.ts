@@ -1,5 +1,4 @@
 type SSEOptions = {
-  apiKey?: string;
   signal?: AbortSignal;
   maxRetries?: number;
   retryDelay?: number;
@@ -7,7 +6,6 @@ type SSEOptions = {
 
 export async function* sseStream<T = unknown>(url: string, options: SSEOptions = {}): AsyncGenerator<T> {
   const {
-    apiKey,
     signal,
     maxRetries = 3,
     retryDelay = 1000
@@ -17,10 +15,7 @@ export async function* sseStream<T = unknown>(url: string, options: SSEOptions =
     if (signal?.aborted) return;
 
     try {
-      const headers = new Headers();
-      if (apiKey) headers.set('X-API-Key', apiKey);
       const response = await fetch(url, {
-        headers,
         signal,
         credentials: 'same-origin'
       });

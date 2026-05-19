@@ -2,7 +2,6 @@ package httpapi
 
 import (
 	"net/http"
-	"strconv"
 
 	"gptmail/internal/auth"
 	"gptmail/internal/models"
@@ -20,7 +19,27 @@ type envelope struct {
 }
 
 func ok(c *gin.Context, data any) {
-	c.JSON(http.StatusOK, envelope{
+	writeJSON(c, http.StatusOK, data)
+}
+
+func publicOK(c *gin.Context, data any) {
+	writeJSON(c, http.StatusOK, data)
+}
+
+func webOK(c *gin.Context, data any) {
+	writeJSON(c, http.StatusOK, data)
+}
+
+func respond(c *gin.Context, publicData, webData any) {
+	if currentAPIKey(c) != nil {
+		publicOK(c, publicData)
+		return
+	}
+	webOK(c, webData)
+}
+
+func writeJSON(c *gin.Context, status int, data any) {
+	c.JSON(status, envelope{
 		Success: true,
 		Data:    data,
 		Error:   nil,
@@ -29,12 +48,7 @@ func ok(c *gin.Context, data any) {
 }
 
 func created(c *gin.Context, data any) {
-	c.JSON(http.StatusCreated, envelope{
-		Success: true,
-		Data:    data,
-		Error:   nil,
-		Usage:   usage(c),
-	})
+	writeJSON(c, http.StatusCreated, data)
 }
 
 func fail(c *gin.Context, status int, message string) {
@@ -56,9 +70,5 @@ func usage(c *gin.Context) map[string]string {
 	if len(values) == 0 {
 		return nil
 	}
-	formatted := make(map[string]string, len(values))
-	for name, value := range values {
-		formatted[name] = strconv.FormatInt(value, 10)
-	}
-	return formatted
+	return values
 }

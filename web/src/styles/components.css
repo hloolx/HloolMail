@@ -7,7 +7,7 @@
   border: 1px solid color-mix(in srgb, var(--bad) 42%, transparent);
   border-radius: 0.5rem;
   background: var(--bad);
-  color: white;
+  color: var(--accent-foreground);
   padding: 0 0.75rem;
   font-size: 0.875rem;
   font-weight: 700;
@@ -55,20 +55,6 @@
   grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 0.75rem;
   margin: 0.9rem 0;
-}
-
-.admin-toggle {
-  align-items: center;
-  border: 1px solid var(--border);
-  border-radius: 0.5rem;
-  display: inline-flex;
-  gap: 0.5rem;
-  min-height: 2.6rem;
-  padding: 0.55rem 0.7rem;
-}
-
-.admin-toggle input {
-  accent-color: var(--focus);
 }
 
 .admin-resolver-field {
@@ -278,6 +264,7 @@
 
 .admin-oauth-form {
   display: grid;
+  overflow: hidden;
   gap: 0.75rem;
   border-top: 1px solid var(--border);
   padding-top: 0.85rem;
@@ -302,7 +289,7 @@
   font-size: 0.84rem;
 }
 
-@media (max-width: 640px) {
+@media (max-width: 480px) {
   .admin-oauth-provider-head {
     grid-template-columns: auto minmax(0, 1fr);
   }
@@ -321,6 +308,11 @@
   .admin-oauth-summary-row-action .admin-oauth-control {
     justify-self: start;
   }
+}
+
+.admin-oauth-edit-control:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
 }
 
 .admin-domain-cell {
@@ -379,12 +371,96 @@
   font-size: 0.72rem;
 }
 
+.admin-audit-filters {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0.75rem;
+  margin: -0.25rem 0 0.85rem;
+}
+
+.admin-audit-filters label {
+  display: grid;
+  gap: 0.32rem;
+  min-width: 0;
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 700;
+}
+
+.admin-audit-search {
+  grid-column: span 2;
+}
+
+.admin-audit-search-box {
+  display: flex;
+  height: 2.25rem;
+  min-width: 0;
+  align-items: center;
+  gap: 0.45rem;
+  border: 1px solid var(--border);
+  border-radius: 0.5rem;
+  background: var(--panel);
+  padding: 0 0.65rem;
+  color: var(--muted);
+}
+
+.admin-audit-search-box input {
+  width: 100%;
+  min-width: 0;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--foreground);
+  font-size: 0.85rem;
+}
+
+.admin-audit-event {
+  display: grid;
+  gap: 0.12rem;
+  min-width: 14rem;
+}
+
+.admin-audit-event b {
+  font-size: 0.82rem;
+  font-weight: 760;
+}
+
+.admin-audit-event small {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 0.72rem;
+  line-height: 1.5;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.admin-audit-event code {
+  font-size: 0.7rem;
+}
+
 .admin-log-target {
   display: inline-block;
   max-width: 16rem;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+@media (max-width: 900px) {
+  .admin-audit-filters {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 640px) {
+  .admin-audit-filters,
+  .admin-audit-search {
+    grid-template-columns: 1fr;
+  }
+
+  .admin-audit-search {
+    grid-column: auto;
+  }
 }
 
 .users-filters {
@@ -515,7 +591,7 @@
   border: 2px solid var(--shell);
   border-radius: 999px;
   background: var(--bad);
-  color: #fff;
+  color: var(--accent-foreground);
   padding: 0 0.22rem;
   font-size: 0.62rem;
   font-weight: 800;
@@ -633,6 +709,209 @@
   font-size: 0.68rem;
 }
 
+/* Message Center (Unified Notification Bell) */
+.message-center-sections {
+  display: grid;
+  max-height: min(40rem, calc(100vh - 7rem));
+  overflow: auto;
+}
+
+.message-center-section {
+  display: grid;
+}
+
+.message-center-section:not(:last-child) {
+  border-bottom: 1px solid var(--border);
+}
+
+.message-center-section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.5rem 0.75rem;
+  background: color-mix(in srgb, var(--soft) 40%, transparent);
+}
+
+.message-center-section-head > span {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.74rem;
+  font-weight: 660;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.message-center-section-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 1.15rem;
+  height: 1.15rem;
+  padding: 0 0.28rem;
+  border-radius: 999px;
+  background: var(--focus);
+  color: var(--background);
+  font-size: 0.6rem;
+  font-weight: 800;
+  line-height: 1;
+}
+
+.message-center-section-clear {
+  display: grid;
+  width: 1.55rem;
+  height: 1.55rem;
+  place-items: center;
+  border: none;
+  border-radius: 0.4rem;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  transition: background 150ms ease, color 150ms ease;
+}
+
+.message-center-section-clear:hover {
+  background: color-mix(in srgb, var(--bad) 12%, transparent);
+  color: var(--bad);
+}
+
+.message-center-icon-mail {
+  color: var(--focus);
+}
+
+.message-center-icon-announcement {
+  color: var(--warn);
+}
+
+.message-center-icon-system {
+  color: var(--bad);
+}
+
+.message-center-mail-item .notification-icon {
+  background: color-mix(in srgb, var(--focus) 14%, transparent);
+  color: var(--focus);
+}
+
+.message-center-announcement-wrapper {
+  display: grid;
+}
+
+.message-center-announcement-item .notification-icon {
+  background: color-mix(in srgb, var(--warn) 16%, transparent);
+  color: var(--warn);
+}
+
+.message-center-announcement-body {
+  overflow: hidden;
+  border-top: 1px solid var(--border);
+  padding: 0 0.75rem;
+}
+
+.message-center-markdown {
+  padding: 0.6rem 0;
+  font-size: 0.78rem;
+  line-height: 1.6;
+  color: var(--foreground);
+  word-break: break-word;
+}
+
+.message-center-markdown h1,
+.message-center-markdown h2,
+.message-center-markdown h3,
+.message-center-markdown h4,
+.message-center-markdown h5,
+.message-center-markdown h6 {
+  margin: 0.6rem 0 0.3rem;
+  font-weight: 700;
+  line-height: 1.3;
+}
+
+.message-center-markdown h1 { font-size: 1.15rem; }
+.message-center-markdown h2 { font-size: 1.05rem; }
+.message-center-markdown h3 { font-size: 0.95rem; }
+.message-center-markdown h4 { font-size: 0.88rem; }
+
+.message-center-markdown p {
+  margin: 0.3rem 0;
+}
+
+.message-center-markdown ul,
+.message-center-markdown ol {
+  margin: 0.3rem 0;
+  padding-left: 1.3rem;
+}
+
+.message-center-markdown li {
+  margin: 0.15rem 0;
+}
+
+.message-center-markdown code {
+  padding: 0.1rem 0.35rem;
+  border-radius: 0.3rem;
+  background: color-mix(in srgb, var(--soft) 80%, transparent);
+  font-size: 0.75rem;
+  font-family: 'SF Mono', 'Cascadia Code', 'Fira Code', monospace;
+}
+
+.message-center-markdown pre {
+  overflow: auto;
+  border-radius: 0.45rem;
+  padding: 0.6rem;
+  background: color-mix(in srgb, var(--soft) 70%, transparent);
+  font-size: 0.72rem;
+}
+
+.message-center-markdown pre code {
+  padding: 0;
+  background: none;
+}
+
+.message-center-markdown blockquote {
+  margin: 0.3rem 0;
+  border-left: 3px solid var(--focus);
+  padding: 0.15rem 0.6rem;
+  color: var(--muted);
+}
+
+.message-center-markdown a {
+  color: var(--focus);
+  text-decoration: underline;
+}
+
+.message-center-markdown hr {
+  margin: 0.6rem 0;
+  border: none;
+  border-top: 1px solid var(--border);
+}
+
+.message-center-markdown img {
+  max-width: 100%;
+  border-radius: 0.4rem;
+}
+
+/* Admin Announcement Form */
+.admin-announcement-form {
+  display: grid;
+  gap: 0.8rem;
+  padding: 0.8rem 0 0;
+}
+
+.admin-announcement-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+}
+
+.admin-announcement-preview {
+  overflow: auto;
+  max-height: 18rem;
+  border: 1px solid var(--border);
+  border-radius: 0.55rem;
+  padding: 0.6rem 0.8rem;
+  background: color-mix(in srgb, var(--panel) 96%, transparent);
+}
+
 .confirm-modal {
   display: grid;
   width: min(100%, 27rem);
@@ -702,6 +981,15 @@
   }
 }
 
+@keyframes modal-backdrop-out {
+  from { opacity: 1; }
+  to { opacity: 0; }
+}
+
+.modal-backdrop-closing {
+  animation: modal-backdrop-out 180ms ease both;
+}
+
 @keyframes modal-panel-in {
   from {
     opacity: 0;
@@ -712,6 +1000,15 @@
     opacity: 1;
     transform: translateY(0) scale(1);
   }
+}
+
+@keyframes modal-panel-out {
+  from { opacity: 1; transform: translateY(0) scale(1); }
+  to { opacity: 0; transform: translateY(0.55rem) scale(0.96); }
+}
+
+.modal-panel-closing {
+  animation: modal-panel-out 180ms ease both;
 }
 
 .status-loading {
@@ -755,4 +1052,21 @@
 @keyframes metric-shimmer {
   0%, 100% { opacity: 0.4; }
   50% { opacity: 0.75; }
+}
+
+.usage-muted {
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
+.field-error {
+  margin-top: 0.2rem;
+  color: var(--bad);
+  font-size: 0.72rem;
+}
+
+.field-hint {
+  color: var(--muted);
+  font-size: 0.7rem;
+  line-height: 1.45;
 }

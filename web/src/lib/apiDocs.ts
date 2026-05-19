@@ -15,7 +15,6 @@ export type DocEndpoint = {
   queryTemplate?: string;
   bodyTemplate?: string;
   dangerous?: boolean;
-  streaming?: boolean;
   zhTitle: string;
   zhDesc: string;
   enTitle: string;
@@ -29,9 +28,9 @@ export const API_DOC_ENDPOINTS: DocEndpoint[] = [
     auth: 'apiKey',
     requestPath: '/api/domains/available',
     zhTitle: '可用域名',
-    zhDesc: '返回当前身份可用的公有域名和私有域名分组列表。',
+    zhDesc: '使用 API Key 时返回可用公开域名名称数组 data.domains。',
     enTitle: 'Available domains',
-    enDesc: 'List available domains grouped into public_domains and private_domains.'
+    enDesc: 'List available public domain names in data.domains.'
   },
   {
     method: 'POST',
@@ -93,9 +92,9 @@ export const API_DOC_ENDPOINTS: DocEndpoint[] = [
     auth: 'apiKey',
     requestPath: '/api/email/msg-uuid',
     zhTitle: '查看邮件详情',
-    zhDesc: '按邮件 ID 读取正文、HTML、headers 和 seen 已读状态。',
+    zhDesc: '按邮件 ID 读取纯文本正文、headers 和 seen 已读状态。',
     enTitle: 'Read message',
-    enDesc: 'Read body, HTML, headers, and seen state for one message by ID.'
+    enDesc: 'Read text body, headers, and seen state for one message by ID.'
   },
   {
     method: 'PATCH',
@@ -132,18 +131,6 @@ export const API_DOC_ENDPOINTS: DocEndpoint[] = [
   },
   {
     method: 'GET',
-    path: '/api/inbox-stream?email=',
-    auth: 'apiKey',
-    requestPath: '/api/inbox-stream',
-    queryTemplate: 'email=verify@example.com',
-    streaming: true,
-    zhTitle: '订阅新邮件',
-    zhDesc: '使用 SSE 实时接收新邮件事件。',
-    enTitle: 'Subscribe to mail',
-    enDesc: 'Receive new message events over SSE.'
-  },
-  {
-    method: 'GET',
     path: '/api/stats',
     auth: 'apiKey',
     requestPath: '/api/stats',
@@ -163,8 +150,6 @@ export const API_DOC_ENDPOINTS: DocEndpoint[] = [
     enDesc: 'The single AI-readable Markdown API reference link.'
   }
 ];
-
-export const API_EXPLORER_ENDPOINTS = API_DOC_ENDPOINTS.filter((endpoint) => !endpoint.streaming);
 
 function markdownAuthLabel(auth: DocAuth) {
   return {
@@ -272,6 +257,8 @@ export function apiDocMarkdown(baseURL: string, config?: InstallStatus['config']
     '  -H "X-API-Key: YOUR_KEY"',
     '```',
     '',
+    'The API-key response is `{ "domains": ["public.example.com"] }` inside the standard envelope.',
+    '',
     '```bash',
     `curl -X POST "${base}/api/generate-email" \\`,
     '  -H "Content-Type: application/json" \\',
@@ -323,12 +310,17 @@ export function apiDocMarkdown(baseURL: string, config?: InstallStatus['config']
     '  "usage": {',
     '    "used_today": "12",',
     '    "daily_limit": "200000",',
-    '    "total_used": "238"',
+    '    "remaining_today": "199988",',
+    '    "daily_unlimited": "false",',
+    '    "total_usage": "238",',
+    '    "total_limit": "0",',
+    '    "remaining_total": "unlimited",',
+    '    "total_unlimited": "true"',
     '  }',
     '}',
     '```',
     '',
-    '`usage` appears only for API-key requests. Usage counters are strings so JavaScript clients can safely handle large integers.',
+    '`usage` appears only for API-key requests. Numeric usage values are strings so JavaScript clients can safely handle large integers. Unlimited quota is reported as `"unlimited"` in remaining fields with matching `*_unlimited` flags.',
     ''
   ].join('\n');
 }

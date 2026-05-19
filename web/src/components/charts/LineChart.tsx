@@ -9,12 +9,41 @@ function formatChartLabel(label: string): string {
   return label;
 }
 
-export function LineChart({ data, labels, color, unit }: { data: number[]; labels: string[]; color: string; unit: string }) {
+export function LineChart({
+  data,
+  labels,
+  color,
+  unit,
+  emptyLabel = 'No data',
+  loading = false,
+  ariaLabel,
+}: {
+  data: number[];
+  labels: string[];
+  color: string;
+  unit: string;
+  emptyLabel?: string;
+  loading?: boolean;
+  ariaLabel?: string;
+}) {
   const svgRef = useRef<SVGSVGElement>(null);
   const [tooltip, setTooltip] = useState<{ index: number; x: number; y: number } | null>(null);
 
+  if (loading) {
+    return (
+      <div className="chart-empty chart-loading">
+        <div className="chart-skeleton" aria-busy="true" />
+      </div>
+    );
+  }
+
   if (!data.length || !labels.length) {
-    return <div className="chart-empty"><Activity size={20} />No data</div>;
+    return (
+      <div className="chart-empty">
+        <Activity size={20} />
+        <span>{emptyLabel}</span>
+      </div>
+    );
   }
 
   const maxVal = Math.max(...data, 1);
@@ -59,6 +88,8 @@ export function LineChart({ data, labels, color, unit }: { data: number[]; label
         ref={svgRef}
         viewBox={`0 0 ${width} ${height}`}
         className="chart-svg"
+        role="img"
+        aria-label={ariaLabel}
         onPointerMove={handlePointer}
         onPointerLeave={() => setTooltip(null)}
       >

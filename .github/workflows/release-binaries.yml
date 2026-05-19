@@ -76,9 +76,14 @@ jobs:
         run: |
           name="hloolmail-${{ matrix.suffix }}"
           package_dir="dist/${name}"
-          mkdir -p "${package_dir}/web"
-          go build -trimpath -ldflags="-s -w" -o "${package_dir}/hloolmail${{ matrix.ext }}" ./cmd/server
-          cp -R web/dist "${package_dir}/web/dist"
+          mkdir -p "${package_dir}"
+          rm -rf internal/frontend/dist
+          cp -R web/dist internal/frontend/dist
+          version="${{ github.ref_name }}"
+          version="${version#v}"
+          commit="${GITHUB_SHA:0:8}"
+          build_time="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          go build -tags embed_frontend -trimpath -ldflags="-s -w -X gptmail/internal/version.Version=${version} -X gptmail/internal/version.Commit=${commit} -X gptmail/internal/version.BuildTime=${build_time}" -o "${package_dir}/hloolmail${{ matrix.ext }}" ./cmd/server
           cp README.md .env.example .env.compose.example "${package_dir}/"
           if [ "${{ matrix.archive }}" = "zip" ]; then
             (cd dist && zip -qr "${name}.zip" "${name}")
