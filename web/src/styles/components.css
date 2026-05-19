@@ -50,30 +50,32 @@
   gap: 0.5rem;
 }
 
-.admin-dns-settings {
+.admin-dns-grid {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 0.75rem;
+  grid-template-columns: 320px minmax(0, 1fr);
+  gap: 1.25rem;
   margin: 0.9rem 0;
 }
 
-.admin-resolver-field {
-  grid-column: span 2;
+.admin-dns-settings {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.admin-dns-settings .segmented-control {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.admin-dns-runs {
+  min-width: 0;
 }
 
 @media (max-width: 900px) {
-  .admin-dns-settings {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-}
-
-@media (max-width: 640px) {
-  .admin-dns-settings {
+  .admin-dns-grid {
     grid-template-columns: 1fr;
-  }
-
-  .admin-resolver-field {
-    grid-column: auto;
   }
 }
 
@@ -318,6 +320,7 @@
 .admin-domain-cell {
   display: grid;
   gap: 0.12rem;
+  max-width: 22rem;
   min-width: 0;
 }
 
@@ -465,15 +468,29 @@
 
 .users-filters {
   display: flex;
-  flex-wrap: wrap;
+  flex: 1 1 auto;
+  flex-wrap: nowrap;
   justify-content: flex-end;
   gap: 0.5rem;
+  min-width: 0;
+}
+
+.users-panel-header > div:first-child {
+  min-width: 0;
+}
+
+.users-filters .input {
+  flex: 0 0 auto;
+  width: auto;
+  max-width: 8.5rem;
 }
 
 .users-search {
   display: inline-flex;
+  flex: 1 1 13rem;
   height: 2.25rem;
-  min-width: min(14rem, 100%);
+  max-width: 18rem;
+  min-width: 0;
   align-items: center;
   gap: 0.45rem;
   border: 1px solid var(--border);
@@ -489,11 +506,16 @@
 }
 
 .users-search input {
+  width: 100%;
   min-width: 0;
   border: 0;
   background: transparent;
   color: var(--foreground);
   outline: none;
+}
+
+.users-email-cell {
+  max-width: min(22rem, 42vw);
 }
 
 .user-form {

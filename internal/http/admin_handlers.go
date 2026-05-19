@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"gptmail/internal/db"
 	"gptmail/internal/jobs"
 	"gptmail/internal/models"
 
@@ -228,13 +229,28 @@ func (h *Handler) listAdminDomainCheckRuns(c *gin.Context) {
 	if !h.requireAdmin(c) {
 		return
 	}
-	limit := parseLimit(c.Query("limit"), 10, 100)
-	var runs []models.DomainCheckRun
-	if err := h.DB.Order("started_at desc").Limit(limit).Find(&runs).Error; err != nil {
+	page := 1
+	if p := c.Query("page"); p != "" {
+		if parsed, err := strconv.Atoi(p); err == nil && parsed > 0 {
+			page = parsed
+		}
+	}
+	perPage := parseLimit(c.Query("per_page"), 10, 100)
+
+	var total int64
+	if err := h.DB.Model(&models.DomainCheckRun{}).Count(&total).Error; err != nil {
 		fail(c, http.StatusInternalServerError, err.Error())
 		return
 	}
-	ok(c, runs)
+
+	var runs []models.DomainCheckRun
+	offset := (page - 1) * perPage
+	if err := h.DB.Order("started_at desc").Offset(offset).Limit(perPage).Find(&runs).Error; err != nil {
+		fail(c, http.StatusInternalServerError, err.Error())
+		return
+	}
+	totalPages := int((total + int64(perPage) - 1) / int64(perPage))
+	ok(c, gin.H{"runs": runs, "total": total, "page": page, "per_page": perPage, "total_pages": totalPages})
 }
 
 func (h *Handler) getAdminDomainCheckRun(c *gin.Context) {
@@ -266,12 +282,12 @@ func (h *Handler) adminQuotaAlerts(c *gin.Context) {
 	alerts := make([]adminQuotaAlert, 0)
 
 	var users []models.User
-	if err := h.DB.Order("used_today desc, total_used desc").Find(&users).Error; err != nil {
+	if err := h.DB.Order("public_mailbox_today desc, total_used desc").Find(&users).Error; err != nil {
 		fail(c, http.StatusInternalServerError, err.Error())
 		return
 	}
 	for _, user := range users {
-		if alert, ok := quotaAlert("user", user.ID, user.Email, "", user.Enabled, user.DailyLimit, user.UsedToday, user.TotalLimit, user.TotalUsed, user.LastUsedAt); ok {
+		if alert, ok := quotaAlert("user", user.ID, user.Email, "", user.Enabled, user.DailyLimit, user.PublicMailboxToday, user.TotalLimit, user.TotalUsed, user.LastUsedAt); ok {
 			alerts = append(alerts, alert)
 		}
 	}
@@ -563,4 +579,109 @@ func (h *Handler) enabledAdminCountExcluding(id uint) (int64, error) {
 
 func cannotRemoveAdminResponse(c *gin.Context) {
 	fail(c, http.StatusBadRequest, "at least one enabled admin account is required")
+}
+
+func (h *Handler) adminQuotaSettings(c *gin.Context) {
+	if !h.requireAdmin(c) {
+		return
+	}
+	settings, err := db.EnsureSystemQuotaSettings(h.DB)
+	if err != nil {
+		fail(c, http.StatusInternalServerError, err.Error())
+		return
+	}
+	ok(c, settings)
+}
+
+func (h *Handler) patchAdminQuotaSettings(c *gin.Context) {
+	if !h.requireAdmin(c) {
+		return
+	}
+	settings, err := db.EnsureSystemQuotaSettings(h.DB)
+	if err != nil {
+		fail(c, http.StatusInternalServerError, err.Error())
+		return
+	}
+	var input struct {
+		PublicDomainMailboxLimit    *int64 `json:"public_domain_mailbox_limit"`
+		UserDailyPublicMailboxLimit *int64 `json:"user_daily_public_mailbox_limit"`
+		RequirePublicDomainForQuota *bool  `json:"require_public_domain_for_quota"`
+	}
+	if err := c.ShouldBindJSON(&input); err != nil {
+		fail(c, http.StatusBadRequest, "invalid json")
+		return
+	}
+	if input.PublicDomainMailboxLimit != nil {
+		if *input.PublicDomainMailboxLimit < 0 {
+			fail(c, http.StatusBadRequest, "public_domain_mailbox_limit must be zero or greater")
+			return
+		}
+		settings.PublicDomainMailboxLimit = *input.PublicDomainMailboxLimit
+	}
+	if input.UserDailyPublicMailboxLimit != nil {
+		if *input.UserDailyPublicMailboxLimit < 0 {
+			fail(c, http.StatusBadRequest, "user_daily_public_mailbox_limit must be zero or greater")
+			return
+		}
+		settings.UserDailyPublicMailboxLimit = *input.UserDailyPublicMailboxLimit
+	}
+	if input.RequirePublicDomainForQuota != nil {
+		settings.RequirePublicDomainForQuota = *input.RequirePublicDomainForQuota
+	}
+	if err := h.DB.Save(settings).Error; err != nil {
+		fail(c, http.StatusInternalServerError, err.Error())
+		return
+	}
+	h.audit("quota_settings.patch", actor(c), "system-quota-settings", "")
+	ok(c, settings)
+}
+
+func (h *Handler) mailboxStats(c *gin.Context) {
+	actor, allowed := h.requireActor(c)
+	if !allowed {
+		return
+	}
+	ownerID, hasOwner := actor.ownerID()
+	if !hasOwner {
+		fail(c, http.StatusForbidden, "login required")
+		return
+	}
+	var user models.User
+	if err := h.DB.First(&user, "id = ?", ownerID).Error; err != nil {
+		fail(c, http.StatusInternalServerError, err.Error())
+		return
+	}
+	quotaSettings, err := db.EnsureSystemQuotaSettings(h.DB)
+	if err != nil {
+		fail(c, http.StatusInternalServerError, err.Error())
+		return
+	}
+	publicLimit := quotaSettings.UserDailyPublicMailboxLimit
+	if user.Role == models.UserRoleAdmin {
+		publicLimit = 0
+	}
+	var publicDomainCount int64
+	h.DB.Model(&models.Domain{}).Where("owner_id = ? AND mode = ? AND active = ?", ownerID, models.DomainModePublic, true).Count(&publicDomainCount)
+	publicToday := user.PublicMailboxToday
+	publicTotal := user.PublicMailboxCreated
+	privateTotal := user.PrivateMailboxCreated
+	if !isSameLocalDate(user.PublicMailboxDate) {
+		publicToday = 0
+	}
+	hasPublicDomain := publicDomainCount > 0
+	ok(c, gin.H{
+		"public_mailbox_created":     publicTotal,
+		"public_mailbox_today":       publicToday,
+		"public_mailbox_daily_limit": publicLimit,
+		"private_mailbox_created":    privateTotal,
+		"has_public_domain":          hasPublicDomain,
+		"require_public_domain":      quotaSettings.RequirePublicDomainForQuota,
+	})
+}
+
+func isSameLocalDate(dateStr string) bool {
+	if dateStr == "" {
+		return false
+	}
+	return dateStr == time.Now().Format("2006-01-02")
 }

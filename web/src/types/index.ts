@@ -94,6 +94,14 @@ export type DomainCheckResultRecord = {
   created_at: string;
 };
 
+export type DomainCheckRunsPage = {
+  runs: DomainCheckRun[];
+  total: number;
+  page: number;
+  per_page: number;
+  total_pages: number;
+};
+
 export type DomainCheckRunDetail = {
   run: DomainCheckRun;
   records: DomainCheckResultRecord[];
@@ -182,6 +190,25 @@ export type DomainCheckResult = {
   dns_checks?: DNSProbe[];
   wildcard_dns_checks?: DNSProbe[];
   domain_expires_at?: string;
+};
+
+export type BatchDomainInput = {
+  raw: string;
+  domain: string;
+  wildcard: boolean;
+};
+
+export type BatchDomainItemResult = {
+  raw: string;
+  domain: string;
+  status: 'created' | 'already_exists' | 'owned_by_other' | 'invalid' | 'error';
+  domain_record?: import('../api').Domain;
+  dns?: DNSInstructions;
+  error?: string;
+};
+
+export type BatchDomainResponse = {
+  results: BatchDomainItemResult[];
 };
 
 export type MeResponse = {

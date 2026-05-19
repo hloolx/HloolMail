@@ -171,7 +171,7 @@ func classifyAuditAction(action string) auditProfile {
 	switch action {
 	case "mailbox.create", "mailbox.reuse", "mailbox.delete":
 		return auditProfile{category: auditCategoryActivity, severity: auditSeverityInfo, targetType: "mailbox"}
-	case "oauth.login":
+	case "oauth.login", "oauth.bind", "oauth.unbind":
 		return auditProfile{category: auditCategoryActivity, severity: auditSeverityInfo, targetType: "oauth_provider"}
 	case "domain_check_run.create":
 		return auditProfile{category: auditCategorySystem, severity: auditSeverityInfo, targetType: "domain_check_run"}

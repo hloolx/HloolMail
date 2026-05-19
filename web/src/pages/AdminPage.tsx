@@ -2,13 +2,13 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useMemo, useState } from 'react';
 import { Database, Eye, Globe2, Inbox, KeyRound, Megaphone, Play, RefreshCw, Save, ShieldAlert, Trash2, Users } from 'lucide-react';
 import { toast } from 'sonner';
-import type { AdminAnnouncement } from '../api';
+import type { AdminAnnouncement, SystemQuotaSettings } from '../api';
 import { api, patchJSON, postJSON } from '../api';
-import type { AdminDomainHealth, AdminQuotaAlert, AdminStats, DomainCheckRun, DomainCheckSettings } from '../types';
+import type { AdminDomainHealth, AdminQuotaAlert, AdminStats, DomainCheckRun, DomainCheckRunsPage, DomainCheckSettings } from '../types';
 import { domainModeLabel, formatDomainExpiry, relativeTime } from '../lib/display';
 import { useAppStore } from '../store';
 import { currentText, useText } from '../locales';
-import { DataTable, Metric, StatusPill } from '../components/shared';
+import { DataTable, Metric, PaginationControls, StatusPill } from '../components/shared';
 import { simpleMarkdownToHTML } from '../lib/markdown';
 import { AdminAuditLog } from './AdminAuditLog';
 
@@ -17,6 +17,8 @@ export function AdminPage() {
   const text = useText();
   const language = useAppStore((state) => state.language);
   const setPage = useAppStore((state) => state.setPage);
+  const [dnsCheckPage, setDnsCheckPage] = useState(1);
+  const dnsCheckPerPage = 10;
 
   const stats = useQuery({ queryKey: ['admin-stats'], queryFn: () => api<AdminStats>('/api/admin/stats'), retry: false, staleTime: 30_000 });
   const domainHealth = useQuery({ queryKey: ['admin-domain-health'], queryFn: () => api<AdminDomainHealth[]>('/api/admin/domain-health'), retry: false, staleTime: 30_000 });
@@ -29,12 +31,47 @@ export function AdminPage() {
     refetchInterval: (query) => query.state.data?.last_run?.status === 'running' ? 5000 : false
   });
   const domainCheckRuns = useQuery({
-    queryKey: ['admin-domain-check-runs'],
-    queryFn: () => api<DomainCheckRun[]>('/api/admin/domain-check-runs?limit=10'),
+    queryKey: ['admin-domain-check-runs', dnsCheckPage, dnsCheckPerPage],
+    queryFn: () => api<DomainCheckRunsPage>(`/api/admin/domain-check-runs?page=${dnsCheckPage}&per_page=${dnsCheckPerPage}`),
     retry: false,
     staleTime: 30_000,
-    refetchInterval: (query) => query.state.data?.some((run) => run.status === 'running') ? 5000 : false
+    refetchInterval: (query) => query.state.data?.runs?.some((run: DomainCheckRun) => run.status === 'running') ? 5000 : false
   });
+  const quotaSettings = useQuery({
+    queryKey: ['admin-quota-settings'],
+    queryFn: () => api<SystemQuotaSettings>('/api/admin/quota-settings'),
+    retry: false,
+    staleTime: 30_000
+  });
+  const [quotaForm, setQuotaForm] = useState({
+    public_domain_mailbox_limit: '0',
+    user_daily_public_mailbox_limit: '0',
+    require_public_domain_for_quota: false
+  });
+
+  useEffect(() => {
+    const qs = quotaSettings.data;
+    if (!qs) return;
+    setQuotaForm({
+      public_domain_mailbox_limit: String(qs.public_domain_mailbox_limit),
+      user_daily_public_mailbox_limit: String(qs.user_daily_public_mailbox_limit),
+      require_public_domain_for_quota: qs.require_public_domain_for_quota
+    });
+  }, [quotaSettings.data]);
+
+  const saveQuotaSettings = useMutation({
+    mutationFn: () => patchJSON<SystemQuotaSettings>('/api/admin/quota-settings', {
+      public_domain_mailbox_limit: toPositiveInt64(quotaForm.public_domain_mailbox_limit, 0),
+      user_daily_public_mailbox_limit: toPositiveInt64(quotaForm.user_daily_public_mailbox_limit, 0),
+      require_public_domain_for_quota: quotaForm.require_public_domain_for_quota
+    }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['admin-quota-settings'] });
+      toast.success(text.admin.quotaSettings.saved);
+    },
+    onError: (error) => toast.error(error.message)
+  });
+
   const [settingsForm, setSettingsForm] = useState({
     enabled: true,
     interval_minutes: '30',
@@ -118,6 +155,7 @@ export function AdminPage() {
     queryClient.invalidateQueries({ queryKey: ['admin-domain-check-settings'] });
     queryClient.invalidateQueries({ queryKey: ['admin-domain-check-runs'] });
     queryClient.invalidateQueries({ queryKey: ['admin-announcements'] });
+    queryClient.invalidateQueries({ queryKey: ['admin-quota-settings'] });
   };
 
   function validateNumberFields(): boolean {
@@ -214,9 +252,10 @@ export function AdminPage() {
     () => stats.data ? configRisks(stats.data) : [],
     [stats.data]
   );
-  const runRows = (domainCheckRuns.data || domainCheckSettings.data?.recent_runs || []).slice(0, 10);
+  const runRows = domainCheckRuns.data?.runs || domainCheckSettings.data?.recent_runs || [];
+  const runsPage = domainCheckRuns.data;
   const lastRun = domainCheckSettings.data?.last_run;
-  const hasRunningCheck = domainCheckRuns.data?.some((run) => run.status === 'running') || lastRun?.status === 'running';
+  const hasRunningCheck = runRows.some((run) => run.status === 'running') || lastRun?.status === 'running';
   const isLoading = stats.isLoading || domainHealth.isLoading || quotaAlerts.isLoading || domainCheckSettings.isLoading || domainCheckRuns.isLoading;
 
   return (
@@ -275,6 +314,50 @@ export function AdminPage() {
         </div>
       </section>
 
+      <section className="panel" id="admin-quota-settings">
+        <div className="panel-header admin-panel-header">
+          <div>
+            <h2>{text.admin.quotaSettings.title}</h2>
+            <p>{text.admin.quotaSettings.desc}</p>
+          </div>
+          <div className="table-actions">
+            <button
+              className="btn-secondary"
+              onClick={() => saveQuotaSettings.mutate()}
+              disabled={saveQuotaSettings.isPending || quotaSettings.isError}
+              aria-label={text.admin.quotaSettings.save}
+            >
+              <Save size={15} aria-hidden="true" />
+              {text.admin.quotaSettings.save}
+            </button>
+          </div>
+        </div>
+        <div className="admin-dns-settings">
+          <label className="grid gap-1 text-sm">
+            <span className="text-[var(--muted)]">{text.admin.quotaSettings.publicDomainMailboxLimit}</span>
+            <input className="input" type="number" min="0" value={quotaForm.public_domain_mailbox_limit} onChange={(event) => setQuotaForm((current) => ({ ...current, public_domain_mailbox_limit: event.target.value }))} />
+            <small className="text-[var(--muted)]">{text.admin.quotaSettings.publicDomainMailboxLimitHint}</small>
+          </label>
+          <label className="grid gap-1 text-sm">
+            <span className="text-[var(--muted)]">{text.admin.quotaSettings.userDailyPublicMailboxLimit}</span>
+            <input className="input" type="number" min="0" value={quotaForm.user_daily_public_mailbox_limit} onChange={(event) => setQuotaForm((current) => ({ ...current, user_daily_public_mailbox_limit: event.target.value }))} />
+            <small className="text-[var(--muted)]">{text.admin.quotaSettings.userDailyPublicMailboxLimitHint}</small>
+          </label>
+          <label className="grid gap-1 text-sm">
+            <span className="text-[var(--muted)]">{text.admin.quotaSettings.requirePublicDomainForQuota}</span>
+            <div className="segmented-control">
+              <button type="button" className={`segment-choice ${!quotaForm.require_public_domain_for_quota ? 'segment-choice-active' : ''}`} onClick={() => setQuotaForm((current) => ({ ...current, require_public_domain_for_quota: false }))} aria-pressed={!quotaForm.require_public_domain_for_quota}>
+                {text.common.disabled}
+              </button>
+              <button type="button" className={`segment-choice ${quotaForm.require_public_domain_for_quota ? 'segment-choice-active' : ''}`} onClick={() => setQuotaForm((current) => ({ ...current, require_public_domain_for_quota: true }))} aria-pressed={quotaForm.require_public_domain_for_quota}>
+                {text.common.enabled}
+              </button>
+            </div>
+            <small className="text-[var(--muted)]">{text.admin.quotaSettings.requirePublicDomainForQuotaHint}</small>
+          </label>
+        </div>
+      </section>
+
       <section className="panel" id="admin-dns-check">
         <div className="panel-header admin-panel-header">
           <div>
@@ -312,72 +395,83 @@ export function AdminPage() {
             <span><small>{text.admin.dnsCheck.settingsError}</small></span>
           </div>
         )}
-        <div className="admin-dns-settings">
-          <div className="segmented-control">
-            <button type="button" className={`segment-choice ${!settingsForm.enabled ? 'segment-choice-active' : ''}`} onClick={() => setSettingsForm((current) => ({ ...current, enabled: false }))} aria-pressed={!settingsForm.enabled}>
-              {text.common.disabled}
-            </button>
-            <button type="button" className={`segment-choice ${settingsForm.enabled ? 'segment-choice-active' : ''}`} onClick={() => setSettingsForm((current) => ({ ...current, enabled: true }))} aria-pressed={settingsForm.enabled}>
-              {text.common.enabled}
-            </button>
+        <div className="admin-dns-grid">
+          <div className="admin-dns-settings">
+            <div className="segmented-control">
+              <span className="text-sm text-[var(--muted)]">{text.admin.dnsCheck.enabled}</span>
+              <div style={{ display: 'flex', gap: 0 }}>
+                <button type="button" className={`segment-choice ${!settingsForm.enabled ? 'segment-choice-active' : ''}`} onClick={() => setSettingsForm((current) => ({ ...current, enabled: false }))} aria-pressed={!settingsForm.enabled}>
+                  {text.common.disabled}
+                </button>
+                <button type="button" className={`segment-choice ${settingsForm.enabled ? 'segment-choice-active' : ''}`} onClick={() => setSettingsForm((current) => ({ ...current, enabled: true }))} aria-pressed={settingsForm.enabled}>
+                  {text.common.enabled}
+                </button>
+              </div>
+            </div>
+            <div className="segmented-control">
+              <span className="text-sm text-[var(--muted)]">{text.admin.dnsCheck.checkInactive}</span>
+              <div style={{ display: 'flex', gap: 0 }}>
+                <button type="button" className={`segment-choice ${!settingsForm.check_inactive ? 'segment-choice-active' : ''}`} onClick={() => setSettingsForm((current) => ({ ...current, check_inactive: false }))} aria-pressed={!settingsForm.check_inactive}>
+                  {text.common.disabled}
+                </button>
+                <button type="button" className={`segment-choice ${settingsForm.check_inactive ? 'segment-choice-active' : ''}`} onClick={() => setSettingsForm((current) => ({ ...current, check_inactive: true }))} aria-pressed={settingsForm.check_inactive}>
+                  {text.common.enabled}
+                </button>
+              </div>
+            </div>
+            <label className="grid gap-1 text-sm">
+              <span className="text-[var(--muted)]">{text.admin.dnsCheck.interval}</span>
+              <input className="input" type="number" min="1" value={settingsForm.interval_minutes} onChange={(event) => setSettingsForm((current) => ({ ...current, interval_minutes: event.target.value }))} />
+            </label>
+            <label className="grid gap-1 text-sm">
+              <span className="text-[var(--muted)]">{text.admin.dnsCheck.timeout}</span>
+              <input className="input" type="number" min="500" value={settingsForm.timeout_ms} onChange={(event) => setSettingsForm((current) => ({ ...current, timeout_ms: event.target.value }))} />
+            </label>
+            <label className="grid gap-1 text-sm">
+              <span className="text-[var(--muted)]">{text.admin.dnsCheck.concurrency}</span>
+              <input className="input" type="number" min="1" value={settingsForm.max_concurrency} onChange={(event) => setSettingsForm((current) => ({ ...current, max_concurrency: event.target.value }))} />
+            </label>
+            <label className="grid gap-1 text-sm">
+              <span className="text-[var(--muted)]">{text.admin.dnsCheck.failureThreshold}</span>
+              <input className="input" type="number" min="1" value={settingsForm.failure_threshold} onChange={(event) => setSettingsForm((current) => ({ ...current, failure_threshold: event.target.value }))} />
+            </label>
+            <label className="grid gap-1 text-sm">
+              <span className="text-[var(--muted)]">{text.admin.dnsCheck.recoveryThreshold}</span>
+              <input className="input" type="number" min="1" value={settingsForm.recovery_threshold} onChange={(event) => setSettingsForm((current) => ({ ...current, recovery_threshold: event.target.value }))} />
+            </label>
+            <label className="grid gap-1 text-sm">
+              <span className="text-[var(--muted)]">{text.admin.dnsCheck.resolvers}</span>
+              <textarea className="input-textarea" rows={4} value={settingsForm.resolvers} onChange={(event) => setSettingsForm((current) => ({ ...current, resolvers: event.target.value }))} />
+            </label>
           </div>
-          <div className="segmented-control">
-            <button type="button" className={`segment-choice ${!settingsForm.check_inactive ? 'segment-choice-active' : ''}`} onClick={() => setSettingsForm((current) => ({ ...current, check_inactive: false }))} aria-pressed={!settingsForm.check_inactive}>
-              {text.common.disabled}
-            </button>
-            <button type="button" className={`segment-choice ${settingsForm.check_inactive ? 'segment-choice-active' : ''}`} onClick={() => setSettingsForm((current) => ({ ...current, check_inactive: true }))} aria-pressed={settingsForm.check_inactive}>
-              {text.common.enabled}
-            </button>
+          <div className="admin-dns-runs">
+            <DataTable
+              emptyLabel={text.admin.dnsCheck.empty}
+              columns={[
+                { key: 'started-at', header: text.admin.dnsCheck.colTime },
+                { key: 'trigger', header: text.admin.dnsCheck.colTrigger },
+                { key: 'status', header: text.admin.dnsCheck.colStatus },
+                { key: 'progress', header: text.admin.dnsCheck.colProgress },
+                { key: 'passed', header: text.admin.dnsCheck.colPassed },
+                { key: 'failed', header: text.admin.dnsCheck.colFailed },
+                { key: 'duration', header: text.admin.dnsCheck.colDuration }
+              ]}
+              rows={runRows.map((run) => ({
+                key: run.id,
+                cells: [
+                  relativeTime(run.started_at),
+                  domainCheckTriggerLabel(run.trigger),
+                  <SeverityPill severity={run.status === 'failed' ? 'critical' : run.status === 'running' ? 'warning' : 'ok'}>{domainCheckStatusLabel(run.status)}</SeverityPill>,
+                  `${run.checked}/${run.total}`,
+                  String(run.passed),
+                  String(run.failed),
+                  domainCheckDuration(run)
+                ]
+              }))}
+            />
+            <PaginationControls page={runsPage?.page || 1} totalPages={runsPage?.total_pages || 1} onPageChange={setDnsCheckPage} />
           </div>
-          <label className="grid gap-1 text-sm">
-            <span className="text-[var(--muted)]">{text.admin.dnsCheck.interval}</span>
-            <input className="input" type="number" min="1" value={settingsForm.interval_minutes} onChange={(event) => setSettingsForm((current) => ({ ...current, interval_minutes: event.target.value }))} />
-          </label>
-          <label className="grid gap-1 text-sm">
-            <span className="text-[var(--muted)]">{text.admin.dnsCheck.timeout}</span>
-            <input className="input" type="number" min="500" value={settingsForm.timeout_ms} onChange={(event) => setSettingsForm((current) => ({ ...current, timeout_ms: event.target.value }))} />
-          </label>
-          <label className="grid gap-1 text-sm">
-            <span className="text-[var(--muted)]">{text.admin.dnsCheck.concurrency}</span>
-            <input className="input" type="number" min="1" value={settingsForm.max_concurrency} onChange={(event) => setSettingsForm((current) => ({ ...current, max_concurrency: event.target.value }))} />
-          </label>
-          <label className="grid gap-1 text-sm">
-            <span className="text-[var(--muted)]">{text.admin.dnsCheck.failureThreshold}</span>
-            <input className="input" type="number" min="1" value={settingsForm.failure_threshold} onChange={(event) => setSettingsForm((current) => ({ ...current, failure_threshold: event.target.value }))} />
-          </label>
-          <label className="grid gap-1 text-sm">
-            <span className="text-[var(--muted)]">{text.admin.dnsCheck.recoveryThreshold}</span>
-            <input className="input" type="number" min="1" value={settingsForm.recovery_threshold} onChange={(event) => setSettingsForm((current) => ({ ...current, recovery_threshold: event.target.value }))} />
-          </label>
-          <label className="grid gap-1 text-sm admin-resolver-field">
-            <span className="text-[var(--muted)]">{text.admin.dnsCheck.resolvers}</span>
-            <textarea className="input-textarea" rows={4} value={settingsForm.resolvers} onChange={(event) => setSettingsForm((current) => ({ ...current, resolvers: event.target.value }))} />
-          </label>
         </div>
-        <DataTable
-          emptyLabel={text.admin.dnsCheck.empty}
-          columns={[
-            { key: 'started-at', header: text.admin.dnsCheck.colTime },
-            { key: 'trigger', header: text.admin.dnsCheck.colTrigger },
-            { key: 'status', header: text.admin.dnsCheck.colStatus },
-            { key: 'progress', header: text.admin.dnsCheck.colProgress },
-            { key: 'passed', header: text.admin.dnsCheck.colPassed },
-            { key: 'failed', header: text.admin.dnsCheck.colFailed },
-            { key: 'duration', header: text.admin.dnsCheck.colDuration }
-          ]}
-          rows={runRows.map((run) => ({
-            key: run.id,
-            cells: [
-              relativeTime(run.started_at),
-              run.trigger,
-              <SeverityPill severity={run.status === 'failed' ? 'critical' : run.status === 'running' ? 'warning' : 'ok'}>{domainCheckStatusLabel(run.status)}</SeverityPill>,
-              `${run.checked}/${run.total}`,
-              String(run.passed),
-              String(run.failed),
-              domainCheckDuration(run)
-            ]
-          }))}
-        />
       </section>
 
       <div className="grid gap-4 xl:grid-cols-[1.25fr_0.75fr]" id="admin-domain-health">
@@ -450,7 +544,7 @@ export function AdminPage() {
                   <b>{alert.label}</b>
                   <small>{alert.kind === 'api_key' ? `API Key${alert.owner ? ` · ${alert.owner}` : ''}` : 'User'}</small>
                 </div>,
-                <SeverityPill severity={alert.severity}>{quotaReasonLabel(alert.reason)}</SeverityPill>,
+                <SeverityPill severity={alert.severity}>{quotaReasonLabel(alert)}</SeverityPill>,
                 quotaSummary(alert),
                 relativeTime(alert.last_used_at)
               ]
@@ -582,6 +676,11 @@ function toPositiveInt(value: string, fallback: number) {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
 }
 
+function toPositiveInt64(value: string, fallback: number) {
+  const parsed = Number.parseInt(value, 10);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback;
+}
+
 function domainCheckStatusLabel(status: string) {
   const text = currentText();
   const labels: Record<string, string> = {
@@ -591,6 +690,15 @@ function domainCheckStatusLabel(status: string) {
     canceled: text.admin.dnsCheck.statusCanceled
   };
   return labels[status] || status;
+}
+
+function domainCheckTriggerLabel(trigger: string) {
+  const text = currentText();
+  const labels: Record<string, string> = {
+    schedule: text.admin.dnsCheck.triggerSchedule,
+    manual: text.admin.dnsCheck.triggerManual
+  };
+  return labels[trigger] || trigger;
 }
 
 function domainCheckDuration(run: DomainCheckRun) {
@@ -616,20 +724,25 @@ function domainIssueLabel(issue: string) {
   return labels[issue] || issue;
 }
 
-function quotaReasonLabel(reason: string) {
+function quotaReasonLabel(alert: AdminQuotaAlert) {
   const text = currentText();
+  const dailyExceeded = alert.kind === 'user' ? text.admin.quotaAlerts.reason.publicDailyExceeded : text.admin.quotaAlerts.reason.dailyExceeded;
+  const dailyWarning = alert.kind === 'user' ? text.admin.quotaAlerts.reason.publicDailyWarning : text.admin.quotaAlerts.reason.dailyWarning;
   const labels: Record<string, string> = {
-    daily_exceeded: text.admin.quotaAlerts.reason.dailyExceeded,
-    daily_warning: text.admin.quotaAlerts.reason.dailyWarning,
+    daily_exceeded: dailyExceeded,
+    daily_warning: dailyWarning,
     total_exceeded: text.admin.quotaAlerts.reason.totalExceeded,
     total_warning: text.admin.quotaAlerts.reason.totalWarning
   };
-  return labels[reason] || reason;
+  return labels[alert.reason] || alert.reason;
 }
 
 function quotaSummary(alert: AdminQuotaAlert) {
   const text = currentText();
-  const daily = alert.daily_limit > 0 ? `${alert.used_today}/${alert.daily_limit}` : text.admin.quotaAlerts.dailyUnlimited;
+  const dailyValue = alert.daily_limit > 0 ? `${alert.used_today}/${alert.daily_limit}` : '';
+  const daily = alert.kind === 'user'
+    ? (dailyValue ? text.admin.quotaAlerts.publicDailyUsage.replace('{value}', dailyValue) : text.admin.quotaAlerts.publicDailyUnlimited)
+    : (dailyValue ? text.admin.quotaAlerts.dailyUsage.replace('{value}', dailyValue) : text.admin.quotaAlerts.dailyUnlimited);
   const total = alert.total_limit > 0 ? `${alert.total_used}/${alert.total_limit}` : text.admin.quotaAlerts.totalUnlimited;
   return `${daily} · ${total}`;
 }

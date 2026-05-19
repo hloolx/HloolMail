@@ -1,21 +1,23 @@
-import { useMemo, useState } from 'react';
-import type { FormEvent } from 'react';
+import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Loader2, Pencil, Search, Trash2, UserCog } from 'lucide-react';
+import { Ban, CheckCircle, Loader2, Pencil, Search, Trash2, UserCog } from 'lucide-react';
 import { toast } from 'sonner';
-import type { User } from '../api';
+import type { PaginatedResponse, User } from '../api';
 import { api, patchJSON, postJSON } from '../api';
 import { roleText, useText } from '../locales';
 import { dissolveElement } from '../lib/dissolve';
 import { boolBadge, relativeTime } from '../lib/display';
-import { ConfirmModal, DataTable, IconButton } from '../components/shared';
+import { ConfirmModal, DataTable, PaginationControls } from '../components/shared';
 import { EditUserDialog } from './EditUserDialog';
 import { type UserForm, buildCreatePayload, buildUpdatePayload, emptyCreateForm, validateEmail } from './userFormHelpers';
+
+const USER_PAGE_SIZE = 20;
 
 export function UsersPage({ currentUser }: { currentUser: User }) {
   const queryClient = useQueryClient();
   const text = useText();
   const [form, setForm] = useState<UserForm>(emptyCreateForm());
+  const [page, setPage] = useState(1);
   const [search, setSearch] = useState('');
   const [roleFilter, setRoleFilter] = useState<'all' | User['role']>('all');
   const [statusFilter, setStatusFilter] = useState<'all' | 'enabled' | 'disabled'>('all');
@@ -24,17 +26,24 @@ export function UsersPage({ currentUser }: { currentUser: User }) {
   const [deleteTarget, setDeleteTarget] = useState<User | null>(null);
   const [dissolveTarget, setDissolveTarget] = useState<HTMLElement | null>(null);
   const [emailError, setEmailError] = useState('');
-  const users = useQuery({ queryKey: ['users'], queryFn: () => api<User[]>('/api/users'), retry: false, staleTime: 30_000 });
-
-  const filteredUsers = useMemo(() => {
-    const term = search.trim().toLowerCase();
-    return (users.data || []).filter((user) => {
-      const matchesSearch = !term || user.email.toLowerCase().includes(term);
-      const matchesRole = roleFilter === 'all' || user.role === roleFilter;
-      const matchesStatus = statusFilter === 'all' || (statusFilter === 'enabled' ? user.enabled : !user.enabled);
-      return matchesSearch && matchesRole && matchesStatus;
-    });
-  }, [roleFilter, search, statusFilter, users.data]);
+  const users = useQuery({
+    queryKey: ['users', page, search.trim(), roleFilter, statusFilter],
+    queryFn: () => {
+      const params = new URLSearchParams({
+        page: String(page),
+        page_size: String(USER_PAGE_SIZE)
+      });
+      const term = search.trim();
+      if (term) params.set('search', term);
+      if (roleFilter !== 'all') params.set('role', roleFilter);
+      if (statusFilter !== 'all') params.set('status', statusFilter);
+      return api<PaginatedResponse<User>>(`/api/users?${params.toString()}`);
+    },
+    retry: false,
+    staleTime: 30_000
+  });
+  const userPage = users.data;
+  const visibleUsers = userPage?.items || [];
 
   const invalidateUserViews = () => {
     queryClient.invalidateQueries({ queryKey: ['users'] });
@@ -145,19 +154,19 @@ export function UsersPage({ currentUser }: { currentUser: User }) {
           <div className="panel-header users-panel-header">
             <div>
               <h2>{text.users.title}</h2>
-              <p>{filteredUsers.length}/{users.data?.length ?? 0} {text.users.count}</p>
+              <p>{visibleUsers.length}/{userPage?.total ?? 0} {text.users.count}</p>
             </div>
             <div className="users-filters">
               <label className="users-search">
                 <Search size={15} />
-                <input value={search} onChange={(event) => setSearch(event.target.value)} placeholder={text.users.searchPlaceholder} />
+                <input value={search} onChange={(event) => { setSearch(event.target.value); setPage(1); }} placeholder={text.users.searchPlaceholder} />
               </label>
-              <select className="input" value={roleFilter} onChange={(event) => setRoleFilter(event.target.value as typeof roleFilter)}>
+              <select className="input" value={roleFilter} onChange={(event) => { setRoleFilter(event.target.value as typeof roleFilter); setPage(1); }}>
                 <option value="all">{text.users.allRoles}</option>
                 <option value="admin">{text.role.admin}</option>
                 <option value="user">{text.role.user}</option>
               </select>
-              <select className="input" value={statusFilter} onChange={(event) => setStatusFilter(event.target.value as typeof statusFilter)}>
+              <select className="input" value={statusFilter} onChange={(event) => { setStatusFilter(event.target.value as typeof statusFilter); setPage(1); }}>
                 <option value="all">{text.users.allStatuses}</option>
                 <option value="enabled">{text.common.enabled}</option>
                 <option value="disabled">{text.common.disabled}</option>
@@ -179,18 +188,18 @@ export function UsersPage({ currentUser }: { currentUser: User }) {
               { key: 'last-used', header: text.users.lastUsed },
               { key: 'actions', header: text.users.actions }
             ]}
-            rows={filteredUsers.map((user) => ({
+            rows={visibleUsers.map((user) => ({
               key: user.id,
               cells: [
-                <div className="admin-domain-cell">
+                <div className="admin-domain-cell users-email-cell">
                   <b>{user.email}</b>
                   {user.id === currentUser.id && <small>{text.users.currentUser}</small>}
                 </div>,
                 roleText(user.role, text),
                 boolBadge(user.enabled),
                 user.daily_limit
-                  ? <><b>{user.used_today}</b><span className="usage-muted">/{user.daily_limit}</span></>
-                  : <><b>{user.used_today}</b><span className="usage-muted">/{text.users.unlimited}</span></>,
+                  ? <><b>{user.public_mailbox_today}</b><span className="usage-muted">/{user.daily_limit}</span></>
+                  : <><b>{user.public_mailbox_today}</b><span className="usage-muted">/{text.users.unlimited}</span></>,
                 user.total_limit
                   ? <><b>{user.total_used}</b><span className="usage-muted">/{user.total_limit}</span></>
                   : <><b>{user.total_used}</b><span className="usage-muted">/{text.users.unlimited}</span></>,
@@ -202,10 +211,12 @@ export function UsersPage({ currentUser }: { currentUser: User }) {
                   </button>
                   {user.enabled ? (
                     <button className="btn-ghost" disabled={user.id === currentUser.id || toggleUser.isPending} onClick={() => setDisableTarget(user)}>
+                      <Ban size={14} />
                       {text.common.disabled}
                     </button>
                   ) : (
                     <button className="btn-ghost" disabled={toggleUser.isPending} onClick={() => toggleUser.mutate({ user, enabled: true })}>
+                      <CheckCircle size={14} />
                       {text.common.enabled}
                     </button>
                   )}
@@ -220,6 +231,7 @@ export function UsersPage({ currentUser }: { currentUser: User }) {
               ]
             }))}
           />
+          <PaginationControls page={userPage?.page || page} totalPages={userPage?.total_pages || 1} onPageChange={setPage} />
         </section>
       </div>
 

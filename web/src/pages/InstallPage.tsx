@@ -3,7 +3,7 @@ import type { ReactNode } from 'react';
 import { useMutation } from '@tanstack/react-query';
 import { Check, Clipboard, Database, ExternalLink, Globe2, Loader2, Lock, RefreshCw, Server, Shield } from 'lucide-react';
 import { toast } from 'sonner';
-import type { InstallDNSCheckResult, InstallResult, InstallStatus } from '../api';
+import type { InstallDNSCheckResult, InstallResult, InstallStatus, User } from '../api';
 import { postJSON } from '../api';
 import { useText } from '../locales';
 import { copy } from '../lib/clipboard';
@@ -126,17 +126,31 @@ export function InstallPage({ status, onDone }: { status?: InstallStatus; onDone
   });
 
   const install = useMutation({
-    mutationFn: () => postJSON<InstallResult>('/api/install', {
-      ...form,
-      database_url: databaseURL
-    }),
-    onSuccess: (data) => {
-      // Clear persisted form on success
+    mutationFn: (override?: InstallForm) => {
+      const data = override || form;
+      return postJSON<InstallResult>('/api/install', {
+        ...data,
+        database_url: override ? databaseURLFor(override) : databaseURL
+      });
+    },
+    onSuccess: async (data) => {
       try { sessionStorage.removeItem(INSTALL_FORM_KEY); } catch { /* ignore */ }
-      setInstallResult(data);
+      const isDevSkip = typeof window !== 'undefined' && sessionStorage.getItem('hlool_skip_install') === '1';
+      if (!isDevSkip) {
+        setInstallResult(data);
+      }
+      // Dev skip: auto-login after install
+      if (isDevSkip) {
+        try {
+          await postJSON<User>('/api/auth/login', { email: 'dev@localhost', password: 'devdevdev' });
+        } catch { /* fall through — user can log in manually */ }
+      }
       const message = data.restart_required ? text.toast.installDoneRestart : text.toast.installDone;
-      launchSuccessBurst({ origin: installButtonRef.current, label: text.toast.installDone });
+      if (!isDevSkip) {
+        launchSuccessBurst({ origin: installButtonRef.current, label: text.toast.installDone });
+      }
       toast.success(message);
+      onDone();
     },
     onError: (error) => toast.error(error.message)
   });
@@ -164,7 +178,7 @@ export function InstallPage({ status, onDone }: { status?: InstallStatus; onDone
       toast.error(error);
       return;
     }
-    install.mutate();
+    install.mutate(undefined);
   };
 
   const handleLogoTap = useCallback(() => {
@@ -174,10 +188,35 @@ export function InstallPage({ status, onDone }: { status?: InstallStatus; onDone
     t.since = now;
     t.count += 1;
     if (t.count >= 3) {
+      t.count = 0;
       sessionStorage.setItem('hlool_skip_install', '1');
-      onDone();
+      const origin = typeof window !== 'undefined' ? window.location.origin : 'http://localhost:3000';
+      const devForm: InstallForm = {
+        admin_email: 'dev@localhost',
+        admin_password: 'devdevdev',
+        database_driver: 'sqlite',
+        database_url: 'storage/hlool-mail.db',
+        database_host: '',
+        database_port: '5432',
+        database_name: '',
+        database_user: '',
+        database_password: '',
+        database_sslmode: 'disable',
+        public_base_url: origin,
+        mail_hostname: 'mail.example.com',
+        expected_mx: 'mail.example.com',
+        setup_domain: 'example.com',
+        server_ip: '',
+        check_wildcard: false,
+        http_addr: ':3000',
+        smtp_addr: ':2525',
+        frontend_dist: 'web/dist',
+        dev_mode: true,
+      };
+      setForm(devForm);
+      install.mutate(devForm);
     }
-  }, [onDone]);
+  }, [onDone, install]);
 
   // Derive step from state
   const currentStep = runtimeConfigLocked ? 2 : (dnsVerified ? 2 : (form.admin_email && form.admin_password ? 1 : 0));

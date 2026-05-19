@@ -187,9 +187,10 @@ export function DomainManagementPage({ user }: { user: User }) {
                 key: domain.id,
                 cells: [
                   <span className="domain-name-cell font-medium" style={{ display: 'inline-block', maxWidth: '100%' }}>{domain.domain}</span>,
-                  <span className={`status-pill ${domain.mx_verified ? 'status-warn' : 'status-bad'}`}>
+                  <span className={`status-pill domain-status-tooltip-wrap ${domain.mx_verified ? 'status-warn' : 'status-bad'}`}>
                     {domain.mx_verified ? <Clock3 size={13} /> : <X size={13} />}
                     {domain.mx_verified ? text.domains.randomSubdomainNotReady : text.domains.mxNotReady}
+                    <DomainStatusTooltip domain={domain} />
                   </span>,
                   domainModeLabel(domain.mode, language),
                   <span title={formatDateTime(pendingDeleteAt(domain), language)}>{formatAutoDeleteTime(domain, text.domains.aboutToDelete)}</span>,
@@ -290,13 +291,46 @@ function domainHealthBadge(domain: Domain, text: ReturnType<typeof useText>) {
   const expiring = expiresAt && expiresAt.getTime() > Date.now() && expiresAt.getTime() < Date.now() + 30 * 24 * 60 * 60 * 1000;
   if (expiring) {
     return (
-      <span className="status-pill status-warn">
+      <span className="status-pill status-warn domain-status-tooltip-wrap">
         <AlertTriangle size={13} />
         {text.domains.expiring}
+        <DomainStatusTooltip domain={domain} />
       </span>
     );
   }
-  return boolBadge(true);
+  return (
+    <span className="domain-status-tooltip-wrap">
+      {boolBadge(true)}
+      <DomainStatusTooltip domain={domain} />
+    </span>
+  );
+}
+
+function DomainStatusTooltip({ domain }: { domain: Domain }) {
+  const language = useAppStore((state) => state.language);
+  if (!domain.last_mx_check_at && !domain.last_check_message) return null;
+  return (
+    <div className="domain-status-tooltip">
+      {domain.last_mx_check_at && (
+        <div className="tooltip-row">
+          <span className="tooltip-label">{language === 'en-US' ? 'Last check' : '上次检测'}</span>
+          <span>{formatDateTime(domain.last_mx_check_at, language)}</span>
+        </div>
+      )}
+      {domain.last_check_message && (
+        <div className="tooltip-row">
+          <span className="tooltip-label">{language === 'en-US' ? 'Message' : '信息'}</span>
+          <span>{domain.last_check_message}</span>
+        </div>
+      )}
+      {domain.mx_verified && (
+        <div className="tooltip-row tooltip-row-ok">
+          <span className="tooltip-label">{language === 'en-US' ? 'Status' : '状态'}</span>
+          <span>{language === 'en-US' ? 'MX verified' : 'MX 已生效'}</span>
+        </div>
+      )}
+    </div>
+  );
 }
 
 function formatDateTime(value?: string, language?: Language) {

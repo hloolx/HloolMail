@@ -1,51 +1,89 @@
-import { Fragment, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { AnimatePresence, motion } from 'framer-motion';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Check, Clock3, Copy, Globe2, Info, Loader2, Plus, RefreshCw, ShieldCheck, X } from 'lucide-react';
+import { Check, Copy, Globe2, Loader2, Plus, ShieldCheck, X } from 'lucide-react';
 import { toast } from 'sonner';
 import type { Domain, InstallStatus } from '../api';
 import { api, postJSON } from '../api';
-import type { DNSInstructions, DNSProbe, DomainCheckResult, DomainCreateResult } from '../types';
-import { useText, currentText } from '../locales';
-import { useAppStore } from '../store';
+import type { BatchDomainInput, BatchDomainItemResult, BatchDomainResponse } from '../types';
+import { currentText, useText } from '../locales';
 import { useCopyState } from '../hooks/useCopyState';
 import { copy } from '../lib/clipboard';
-import { launchSuccessBurst } from '../lib/confetti';
 import { domainInputWantsWildcard, normalizeDomainInput } from '../lib/domain';
-import { IconButton, StatusPill } from '../components/shared';
+import { IconButton } from '../components/shared';
+
+const MAX_BATCH_SIZE = 50;
+
+/** Split pasted text into individual domain entries by common separators. */
+function splitDomainText(raw: string): string[] {
+  return raw
+    .split(/[\n\r]+|[;,；，]+|(?<!\s)\s{2,}(?!\s)/)
+    .map((s) => s.replace(/[\s​‌‍﻿]+/g, ' ').trim())
+    .filter((s) => s.length > 0);
+}
+
+function parseDomainsFromInput(text: string): BatchDomainInput[] {
+  const rawList = splitDomainText(text);
+  const seen = new Set<string>();
+  const result: BatchDomainInput[] = [];
+  for (const raw of rawList) {
+    const normalized = normalizeDomainInput(raw);
+    if (!normalized) continue;
+    if (seen.has(normalized)) continue;
+    seen.add(normalized);
+    result.push({
+      raw,
+      domain: normalized,
+      wildcard: domainInputWantsWildcard(raw),
+    });
+  }
+  // Truncate at MAX_BATCH_SIZE
+  return result.slice(0, MAX_BATCH_SIZE);
+}
+
+function isValidDomain(domainName: string) {
+  const labels = domainName.split('.');
+  return labels.length > 1 && labels.every((label) => /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(label));
+}
 
 export function AddDomainDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
   const queryClient = useQueryClient();
   const text = useText();
-  const language = useAppStore((state) => state.language);
-  const [domainName, setDomainName] = useState('example.test');
+  const [domainsText, setDomainsText] = useState('');
   const [mode, setMode] = useState<Domain['mode']>('private');
-  const [dns, setDNS] = useState<DNSInstructions | null>(null);
-  const [submittedDomain, setSubmittedDomain] = useState<Domain | null>(null);
-  const [checkResult, setCheckResult] = useState<DomainCheckResult | null>(null);
+  const [results, setResults] = useState<BatchDomainItemResult[] | null>(null);
   const [mxCopied, markMxCopied] = useCopyState();
-  const successRef = useRef<HTMLDivElement | null>(null);
   const panelRef = useRef<HTMLDivElement | null>(null);
-  const domainInputRef = useRef<HTMLInputElement | null>(null);
-  const installStatus = useQuery({ queryKey: ['install-status'], queryFn: () => api<InstallStatus>('/api/install/status'), retry: false, enabled: open });
-  const normalizedDomain = normalizeDomainInput(domainName);
-  const domainValid = isValidDomain(normalizedDomain);
-  const inputTouched = domainName.trim().length > 0;
-  const validationMessage = inputTouched && !domainValid ? text.domains.invalidDomain : '';
-  const cfg = installStatus.data?.config;
-  const mxTarget = (dns?.mx.value || cfg?.expected_mx || 'mail.example.com').replace(/\.$/, '');
-  const activeDomain = submittedDomain?.domain || normalizedDomain || 'example.com';
-  const verified = isDomainReady(checkResult, submittedDomain);
-  const submitted = Boolean(submittedDomain);
+  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
 
-  // Focus panel and first input when dialog opens; implement focus trap
+  const installStatus = useQuery({
+    queryKey: ['install-status'],
+    queryFn: () => api<InstallStatus>('/api/install/status'),
+    retry: false,
+    enabled: open,
+  });
+
+  const parsedDomains = useMemo(() => parseDomainsFromInput(domainsText), [domainsText]);
+  const parsedCount = parsedDomains.length;
+  const overflowCount = Math.max(0, splitDomainText(domainsText).length - MAX_BATCH_SIZE);
+  const invalidDomains = useMemo(
+    () => parsedDomains.filter((d) => !isValidDomain(d.domain)),
+    [parsedDomains]
+  );
+  const validDomains = useMemo(
+    () => parsedDomains.filter((d) => isValidDomain(d.domain)),
+    [parsedDomains]
+  );
+  const cfg = installStatus.data?.config;
+  const mxTarget = (cfg?.expected_mx || 'mail.example.com').replace(/\.$/, '');
+  const submitted = results !== null;
+
+  // Focus trap and escape handling
   useEffect(() => {
     if (!open) return;
-    // Focus the panel so it can receive keyboard events
     panelRef.current?.focus();
-    // Focus the domain input after a short delay
-    const timer = setTimeout(() => domainInputRef.current?.focus(), 50);
+    const timer = setTimeout(() => textareaRef.current?.focus(), 50);
 
     const handleKey = (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
@@ -53,17 +91,13 @@ export function AddDomainDialog({ open, onClose }: { open: boolean; onClose: () 
         onClose();
         return;
       }
-
       if (event.key !== 'Tab') return;
-
       const focusableElements = panelRef.current?.querySelectorAll<HTMLElement>(
-        'button:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])'
+        'button:not([disabled]), textarea:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])'
       );
       if (!focusableElements || focusableElements.length === 0) return;
-
       const first = focusableElements[0];
       const last = focusableElements[focusableElements.length - 1];
-
       if (event.shiftKey && document.activeElement === first) {
         event.preventDefault();
         last.focus();
@@ -81,82 +115,77 @@ export function AddDomainDialog({ open, onClose }: { open: boolean; onClose: () 
   }, [open, onClose]);
 
   const resetForm = () => {
-    setDomainName('example.test');
-    setMode('private');
-    setDNS(null);
-    setSubmittedDomain(null);
-    setCheckResult(null);
+    setDomainsText('');
+    setResults(null);
+    setTimeout(() => textareaRef.current?.focus(), 50);
   };
 
-  const checkMX = useMutation({
-    mutationFn: (domain: string) => postJSON<DomainCheckResult>('/api/domains/check-mx', { domain }),
+  const batchCreate = useMutation({
+    mutationFn: () =>
+      postJSON<BatchDomainResponse>('/api/domains/batch-request', {
+        domains: validDomains,
+        mode,
+      }),
     onSuccess: (data) => {
-      setCheckResult(data);
-      setSubmittedDomain((current) => {
-        if (!current) return current;
-        return {
-          ...current,
-          mx_verified: data.mx_verified,
-          wildcard_enabled: data.wildcard_enabled,
-          mx_auto_retry_enabled: isCheckReady(data) ? false : current.mx_auto_retry_enabled,
-          last_check_message: data.check_message
-        };
-      });
+      setResults(data.results);
       invalidateDomainQueries(queryClient);
-      if (isCheckReady(data)) {
-        window.setTimeout(() => launchSuccessBurst({ origin: successRef.current, label: text.domains.mxWorking }), 40);
-      }
-    },
-    onError: (error) => toast.error(error.message)
-  });
-
-  const createDomain = useMutation({
-    mutationFn: () => postJSON<DomainCreateResult>('/api/domains/request', { domain: domainName, mode, wildcard_enabled: domainInputWantsWildcard(domainName) }),
-    onSuccess: (data) => {
-      setDNS(data.dns);
-      setSubmittedDomain(data.domain);
-      setCheckResult(null);
-      invalidateDomainQueries(queryClient);
-      checkMX.mutate(data.domain.domain);
-    },
-    onError: (error) => toast.error(error.message)
-  });
-
-  const toggleAutoRetry = useMutation({
-    mutationFn: (enabled: boolean) => {
-      if (!submittedDomain?.id) {
-        throw new Error(text.domains.domainLoadError);
-      }
-      return postJSON<Domain | { deleted: boolean }>(`/api/domains/${submittedDomain.id}/mx-auto-retry`, { enabled });
-    },
-    onSuccess: (domain) => {
-      if ('deleted' in domain) {
-        setSubmittedDomain(null);
-        setCheckResult(null);
-        toast.error(text.domains.autoRetryTimedOut);
+      const created = data.results.filter((r) => r.status === 'created').length;
+      const alreadyExists = data.results.filter((r) => r.status === 'already_exists').length;
+      const successful = created + alreadyExists;
+      const failed = data.results.length - successful;
+      if (successful > 0 && failed === 0) {
+        toast.success(text.domains.batchDone.replace('{count}', String(successful)));
+      } else if (successful > 0) {
+        toast.success(text.domains.batchPartial.replace('{created}', String(successful)).replace('{failed}', String(failed)));
       } else {
-        setSubmittedDomain(domain);
-        toast.success(domain.mx_auto_retry_enabled ? text.domains.autoRetryEnabled : text.domains.autoRetryDisabled);
+        toast.error(text.domains.batchAllFailed);
       }
-      invalidateDomainQueries(queryClient);
     },
-    onError: (error) => toast.error(error.message)
+    onError: (error) => toast.error(error.message),
   });
 
-  const busy = createDomain.isPending || checkMX.isPending;
-  const autoRetryBusy = toggleAutoRetry.isPending;
-  const submitDisabled = submitted || !domainValid || busy;
-  const statusMessage = checkResult?.check_message || (submitted ? text.domains.submittedDesc : text.domains.submitAndVerifyDesc);
-  const autoRetryActive = Boolean(submittedDomain?.mx_auto_retry_enabled);
-  const submittedPendingDeleteAt = submittedDomain ? pendingDeleteAt(submittedDomain) : undefined;
-  const nextCheckTime = formatRelativeTime(submittedDomain?.mx_auto_retry_next_at, text.domains.aboutToCheck);
-  const autoDeleteTime = formatRelativeTime(submittedPendingDeleteAt, text.domains.aboutToDelete);
-  const autoRetryMeta = autoRetryActive
-    ? text.domains.autoRetryOn
-        .replace('{count}', String(submittedDomain?.mx_auto_retry_count ?? 0))
-        .replace('{next}', nextCheckTime)
-        .replace('{autoDelete}', autoDeleteTime)
-    : text.domains.autoRetryOff.replace('{autoDeleteTime}', autoDeleteTime);
+  const canSubmit = validDomains.length > 0 && !batchCreate.isPending;
+
+  const handlePaste = useCallback((e: React.ClipboardEvent) => {
+    const clipboard = e.clipboardData.getData('text/plain');
+    if (!clipboard) return;
+    // If the clipboard already has newlines, let the default paste handle it
+    const hasNewlines = /[\n\r]/.test(clipboard);
+    if (hasNewlines) return;
+    // Otherwise, process separators
+    e.preventDefault();
+    const lines = splitDomainText(clipboard);
+    if (lines.length === 0) return;
+    // Insert at cursor position
+    const textarea = textareaRef.current;
+    if (!textarea) {
+      setDomainsText(lines.join('\n'));
+      return;
+    }
+    const start = textarea.selectionStart;
+    const end = textarea.selectionEnd;
+    const before = domainsText.slice(0, start);
+    const after = domainsText.slice(end);
+    const insertText = lines.join('\n');
+    const newText = before + (before && !before.endsWith('\n') ? '\n' : '') + insertText + (after && !after.startsWith('\n') ? '\n' : '') + after;
+    setDomainsText(newText);
+    // Restore cursor after the pasted content
+    setTimeout(() => {
+      const newCursor = start + insertText.length + (before && !before.endsWith('\n') ? 1 : 0);
+      textarea.selectionStart = textarea.selectionEnd = newCursor;
+    }, 0);
+  }, [domainsText]);
+
+  const handleInputChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
+    const value = e.target.value;
+    // Truncate to roughly MAX_BATCH_SIZE lines to prevent performance issues
+    const lines = value.split('\n');
+    if (lines.length > MAX_BATCH_SIZE + 10) {
+      setDomainsText(lines.slice(0, MAX_BATCH_SIZE + 10).join('\n'));
+      return;
+    }
+    setDomainsText(value);
+  };
 
   const backdropVariants = {
     hidden: { opacity: 0 },
@@ -200,7 +229,7 @@ export function AddDomainDialog({ open, onClose }: { open: boolean; onClose: () 
             <div className="modal-header">
               <div>
                 <h2 id="add-domain-title">{text.domains.dialogTitle}</h2>
-                <p>{text.domains.dialogDesc}</p>
+                <p>{text.domains.batchDialogDesc}</p>
               </div>
               <IconButton title={text.domains.closeTitle} onClick={onClose}>
                 <X size={16} />
@@ -208,24 +237,75 @@ export function AddDomainDialog({ open, onClose }: { open: boolean; onClose: () 
             </div>
 
             <div className="add-domain-form">
-              <label className="api-key-field">
-                {text.domains.domainLabel}
-                <input ref={domainInputRef} className="input" value={domainName} disabled={submitted} onChange={(event) => setDomainName(event.target.value)} placeholder={text.domains.domainPlaceholder} />
-              </label>
-              <p className="domain-input-hint">{text.domains.inputHint}</p>
-              {validationMessage && <p className="domain-field-error">{validationMessage}</p>}
-
-              <div className="segmented-control" role="group" aria-label={text.domains.domainTypeAria}>
-                <button type="button" className={`segment-choice ${mode === 'private' ? 'segment-choice-active' : ''}`} disabled={submitted} onClick={() => setMode('private')}>
-                  <ShieldCheck size={15} />
+              {/* Mode selector — compact pills */}
+              <div className="segmented-control segmented-control-compact" role="group" aria-label={text.domains.domainTypeAria}>
+                <button type="button" className={`segment-choice ${mode === 'private' ? 'segment-choice-active' : ''}`} disabled={batchCreate.isPending} onClick={() => setMode('private')}>
+                  <ShieldCheck size={13} />
                   {text.domains.modePrivateShort}
                 </button>
-                <button type="button" className={`segment-choice ${mode === 'public' ? 'segment-choice-active' : ''}`} disabled={submitted} onClick={() => setMode('public')}>
-                  <Globe2 size={15} />
+                <button type="button" className={`segment-choice ${mode === 'public' ? 'segment-choice-active' : ''}`} disabled={batchCreate.isPending} onClick={() => setMode('public')}>
+                  <Globe2 size={13} />
                   {text.domains.modePublicShort}
                 </button>
               </div>
 
+              {/* Results summary (after submit) */}
+              {submitted && (
+                <div className="batch-results-card">
+                  <div className="batch-results-summary">
+                    {results.filter((r) => r.status === 'created').length > 0 && (
+                      <span className="batch-count batch-count-ok">{text.domains.batchCreated.replace('{count}', String(results.filter((r) => r.status === 'created').length))}</span>
+                    )}
+                    {results.filter((r) => r.status === 'already_exists').length > 0 && (
+                      <span className="batch-count batch-count-warn">{text.domains.batchExists.replace('{count}', String(results.filter((r) => r.status === 'already_exists').length))}</span>
+                    )}
+                    {results.filter((r) => r.status === 'invalid').length > 0 && (
+                      <span className="batch-count batch-count-bad">{text.domains.batchInvalid.replace('{count}', String(results.filter((r) => r.status === 'invalid').length))}</span>
+                    )}
+                  </div>
+                  {results.filter((r) => r.status !== 'created' && r.status !== 'already_exists').length > 0 && (
+                    <div className="batch-failed-list">
+                      {results.filter((r) => r.status !== 'created' && r.status !== 'already_exists').map((r, i) => (
+                        <div key={i} className="batch-failed-row">
+                          <span className="batch-failed-domain">{r.domain || r.raw}</span>
+                          <span className="batch-failed-reason">{r.error || text.domains.batchUnknownError}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Textarea input */}
+              <label className="api-key-field">
+                {text.domains.domainLabel}
+                <textarea
+                  ref={textareaRef}
+                  className="input batch-domain-input"
+                  value={domainsText}
+                  onChange={handleInputChange}
+                  onPaste={handlePaste}
+                  disabled={batchCreate.isPending}
+                  placeholder={text.domains.batchPlaceholder}
+                  rows={8}
+                  spellCheck={false}
+                />
+              </label>
+              <div className="batch-input-footer">
+                <span className="batch-input-count">
+                  {parsedCount > 0
+                    ? text.domains.batchCount.replace('{count}', String(parsedCount)).replace('{remaining}', String(MAX_BATCH_SIZE - parsedCount))
+                    : text.domains.batchHint}
+                </span>
+                {overflowCount > 0 && (
+                  <span className="batch-input-overflow">{text.domains.batchOverflow.replace('{count}', String(overflowCount))}</span>
+                )}
+                {invalidDomains.length > 0 && (
+                  <span className="batch-input-invalid">{text.domains.batchInvalidCount.replace('{count}', String(invalidDomains.length))}</span>
+                )}
+              </div>
+
+              {/* MX settings info */}
               <div className="domain-modal-section">
                 <div className="domain-modal-section-title">{text.domains.mxSettings}</div>
                 <div className="mx-target-card">
@@ -237,50 +317,24 @@ export function AddDomainDialog({ open, onClose }: { open: boolean; onClose: () 
                   </button>
                 </div>
                 <p className="dns-note">
-                  {renderDnsNote(text.domains.dnsNote, activeDomain, mxTarget)}
+                  {text.domains.batchDNSNote.replace('[[mx]]', mxTarget)}
                 </p>
-              </div>
-
-              <div ref={successRef} className={`domain-verification-card ${verified && checkResult?.dns_status !== 'propagating' ? 'domain-verification-card-ok' : ''}`}>
-                <div className="domain-verification-head">
-                  {dnsStatusPill(checkResult, verified, submitted, text)}
-                  <code>@{activeDomain}</code>
-                </div>
-                <p>{statusMessage}</p>
-                {submitted && <DNSCheckDetails result={checkResult} text={text} />}
-                {submitted && !verified && (
-                  <div className="domain-auto-retry-note">
-                    <Clock3 size={14} />
-                    <span>{autoRetryMeta}</span>
-                  </div>
-                )}
               </div>
             </div>
 
             <div className="add-domain-actions">
               <button className="btn-secondary" onClick={onClose}>
-                {verified ? text.domains.finish : text.common.cancel}
+                {submitted ? text.domains.finish : text.common.cancel}
               </button>
-              {verified ? (
+              {submitted ? (
                 <button className="btn-primary" onClick={resetForm}>
                   <Plus size={16} />
-                  {text.domains.addNext}
+                  {text.domains.addMore}
                 </button>
-              ) : submittedDomain ? (
-                <>
-                  <button className="btn-secondary" onClick={() => toggleAutoRetry.mutate(!autoRetryActive)} disabled={busy || autoRetryBusy}>
-                    {autoRetryBusy ? <Loader2 size={16} className="animate-spin" /> : <Clock3 size={16} />}
-                    {autoRetryActive ? text.domains.stopWait : text.domains.bgWait}
-                  </button>
-                  <button className="btn-primary" onClick={() => checkMX.mutate(submittedDomain.domain)} disabled={busy || autoRetryBusy}>
-                    {checkMX.isPending ? <Loader2 size={16} className="animate-spin" /> : <RefreshCw size={16} />}
-                    {text.domains.recheck}
-                  </button>
-                </>
               ) : (
-                <button className="btn-primary" onClick={() => createDomain.mutate()} disabled={submitDisabled}>
-                  {createDomain.isPending || checkMX.isPending ? <Loader2 size={16} className="animate-spin" /> : <Globe2 size={16} />}
-                  {text.domains.submitAndVerify}
+                <button className="btn-primary" onClick={() => batchCreate.mutate()} disabled={!canSubmit}>
+                  {batchCreate.isPending ? <Loader2 size={16} className="animate-spin" /> : <Globe2 size={16} />}
+                  {text.domains.batchSubmit}
                 </button>
               )}
             </div>
@@ -289,50 +343,6 @@ export function AddDomainDialog({ open, onClose }: { open: boolean; onClose: () 
       )}
     </AnimatePresence>,
     document.body
-  );
-}
-
-/** Renders the dnsNote i18n string with `[[domain]]`, `[[mx]]`, `[[wildcard]]` replaced by <code> elements. */
-function renderDnsNote(template: string, activeDomain: string, mxTarget: string) {
-  const parts = template.split(/(\[\[domain\]\]|\[\[mx\]\]|\[\[wildcard\]\])/g);
-  return parts.map((part, i) => {
-    if (part === '[[domain]]') return <code key={`d-${i}`}>{activeDomain}</code>;
-    if (part === '[[mx]]') return <code key={`m-${i}`}>{mxTarget}</code>;
-    if (part === '[[wildcard]]') return <code key={`w-${i}`}>*.{activeDomain}</code>;
-    return <Fragment key={`t-${i}`}>{part}</Fragment>;
-  });
-}
-
-function DNSCheckDetails({ result, text }: { result: DomainCheckResult | null; text: ReturnType<typeof useText> }) {
-  const rootChecks = result?.dns_checks || [];
-  const wildcardChecks = result?.wildcard_dns_checks || [];
-  if (!rootChecks.length && !wildcardChecks.length) return null;
-  return (
-    <details className="dns-check-details">
-      <summary>
-        <Info size={14} />
-        {text.domains.dnsPropagationDetail}
-      </summary>
-      <DNSProbeList title={text.domains.dnsRootMX} probes={rootChecks} text={text} />
-      {wildcardChecks.length > 0 && <DNSProbeList title={text.domains.dnsWildcardMX} probes={wildcardChecks} text={text} />}
-    </details>
-  );
-}
-
-function DNSProbeList({ title, probes, text }: { title: string; probes: DNSProbe[]; text: ReturnType<typeof useText> }) {
-  return (
-    <div className="dns-probe-group">
-      <div className="dns-probe-title">{title}</div>
-      <div className="dns-probe-list">
-        {probes.map((probe, index) => (
-          <div className="dns-probe-row" key={`${probe.source}-${probe.resolver || index}`}>
-            <span className={`dns-probe-state ${probe.verified ? 'dns-probe-ok' : probe.mx_records?.length ? 'dns-probe-warn' : 'dns-probe-bad'}`} />
-            <span className="dns-probe-source">{probe.authoritative ? `${probe.source} ${probe.resolver || ''}` : probe.source}</span>
-            <code>{probe.mx_records?.length ? probe.mx_records.join(', ') : probe.error || text.domains.dnsProbeNoMX}</code>
-          </div>
-        ))}
-      </div>
-    </div>
   );
 }
 
@@ -363,38 +373,6 @@ export function formatRelativeTime(value?: string, pastLabel = ''): string {
   return rest ? t.domains.hoursMinLater.replace('{hours}', String(hours)).replace('{rest}', String(rest)) : t.domains.hoursLater.replace('{hours}', String(hours));
 }
 
-export function isCheckReady(result: DomainCheckResult | null | undefined) {
+export function isCheckReady(result: { mx_verified?: boolean; wildcard_enabled?: boolean; wildcard_checked?: boolean } | null | undefined) {
   return Boolean(result?.mx_verified && (!result.wildcard_checked || result.wildcard_enabled));
-}
-
-function isDomainReady(result: DomainCheckResult | null, domain: Domain | null) {
-  if (result) return isCheckReady(result);
-  return Boolean(domain?.mx_verified && (!domain.wildcard_requested || domain.wildcard_enabled));
-}
-
-function dnsStatusPill(result: DomainCheckResult | null, verified: boolean, submitted: boolean, text: ReturnType<typeof useText>) {
-  const status = result?.dns_status;
-  if (status === 'propagating') {
-    return (
-      <span className="status-pill status-warn">
-        <Clock3 size={13} />
-        {result?.mx_verified ? text.domains.authorityReady : text.domains.propagating}
-      </span>
-    );
-  }
-  if (verified) {
-    return <StatusPill ok>{text.domains.mxWorking}</StatusPill>;
-  }
-  if (status === 'misconfigured') {
-    return <StatusPill>{text.domains.misconfigured}</StatusPill>;
-  }
-  if (status === 'not_found') {
-    return <StatusPill>{text.domains.mxNotFound}</StatusPill>;
-  }
-  return <StatusPill>{submitted ? text.domains.awaitingMX : text.domains.pendingSubmit}</StatusPill>;
-}
-
-function isValidDomain(domainName: string) {
-  const labels = domainName.split('.');
-  return labels.length > 1 && labels.every((label) => /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(label));
 }

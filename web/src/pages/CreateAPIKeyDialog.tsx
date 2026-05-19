@@ -143,7 +143,7 @@ export function CreateAPIKeyDialog({ open, onClose }: { open: boolean; onClose: 
             </label>
             <div className="segmented-control">
               <button type="button" className={`segment-choice ${!dailyUnlimited ? 'segment-choice-active' : ''}`} onClick={() => setDailyUnlimited(false)}>
-                Limited
+                {text.apiKeys.limited}
               </button>
               <button type="button" className={`segment-choice ${dailyUnlimited ? 'segment-choice-active' : ''}`} onClick={() => setDailyUnlimited(true)}>
                 {text.apiKeys.unlimited}
@@ -157,7 +157,7 @@ export function CreateAPIKeyDialog({ open, onClose }: { open: boolean; onClose: 
             </label>
             <div className="segmented-control">
               <button type="button" className={`segment-choice ${!totalUnlimited ? 'segment-choice-active' : ''}`} onClick={() => setTotalUnlimited(false)}>
-                Limited
+                {text.apiKeys.limited}
               </button>
               <button type="button" className={`segment-choice ${totalUnlimited ? 'segment-choice-active' : ''}`} onClick={() => setTotalUnlimited(true)}>
                 {text.apiKeys.unlimited}
@@ -171,10 +171,10 @@ export function CreateAPIKeyDialog({ open, onClose }: { open: boolean; onClose: 
             </label>
             <div className="segmented-control">
               <button type="button" className={`segment-choice ${!expiresNever ? 'segment-choice-active' : ''}`} onClick={() => { setExpiresNever(false); }}>
-                Expires
+                {text.apiKeys.expires}
               </button>
               <button type="button" className={`segment-choice ${expiresNever ? 'segment-choice-active' : ''}`} onClick={() => { setExpiresNever(true); setExpiresAt(''); }}>
-                Never
+                {text.apiKeys.never}
               </button>
             </div>
           </div>

@@ -415,6 +415,297 @@ func TestAPIKeyCanGenerateAndReadOwnedMailbox(t *testing.T) {
 	}
 }
 
+func TestPublicMailboxDailyQuotaDoesNotAffectPrivateDomain(t *testing.T) {
+	db := httpTestDB(t)
+	hash, err := auth.HashSecret("password123")
+	if err != nil {
+		t.Fatal(err)
+	}
+	admin := models.User{
+		Email:        "admin@example.com",
+		PasswordHash: hash,
+		Role:         models.UserRoleAdmin,
+		Enabled:      true,
+	}
+	if err := db.Create(&admin).Error; err != nil {
+		t.Fatal(err)
+	}
+	owner := models.User{
+		Email:        "owner@example.com",
+		PasswordHash: hash,
+		Role:         models.UserRoleUser,
+		Enabled:      true,
+		DailyLimit:   1000,
+	}
+	if err := db.Create(&owner).Error; err != nil {
+		t.Fatal(err)
+	}
+	settings := models.SystemQuotaSettings{
+		ID:                          1,
+		UserDailyPublicMailboxLimit: 1,
+	}
+	if err := db.Create(&settings).Error; err != nil {
+		t.Fatal(err)
+	}
+	publicDomain := models.Domain{
+		Domain:     "public-quota.test",
+		Mode:       models.DomainModePublic,
+		Active:     true,
+		MXVerified: true,
+	}
+	privateDomain := models.Domain{
+		Domain:     "private-quota.test",
+		Mode:       models.DomainModePrivate,
+		OwnerID:    &owner.ID,
+		Active:     true,
+		MXVerified: true,
+	}
+	if err := db.Create(&publicDomain).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&privateDomain).Error; err != nil {
+		t.Fatal(err)
+	}
+	router := testRouter(t, db)
+	_, plain, err := (auth.APIKeyService{DB: db}).CreateFor(&owner.ID, "owner-key", 20, 0, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	headers := map[string]string{"X-API-Key": plain}
+
+	firstPublic := perform(router, http.MethodPost, "/api/generate-email", map[string]any{
+		"prefix": "one",
+		"domain": "public-quota.test",
+	}, headers)
+	if firstPublic.Code != http.StatusCreated {
+		t.Fatalf("first public generate = %d: %s", firstPublic.Code, firstPublic.Body.String())
+	}
+	secondPublic := perform(router, http.MethodPost, "/api/generate-email", map[string]any{
+		"prefix": "two",
+		"domain": "public-quota.test",
+	}, headers)
+	if secondPublic.Code != http.StatusTooManyRequests {
+		t.Fatalf("second public generate = %d: %s", secondPublic.Code, secondPublic.Body.String())
+	}
+	private := perform(router, http.MethodPost, "/api/generate-email", map[string]any{
+		"prefix": "mine",
+		"domain": "private-quota.test",
+	}, headers)
+	if private.Code != http.StatusCreated {
+		t.Fatalf("private generate after public quota = %d: %s", private.Code, private.Body.String())
+	}
+	var refreshed models.User
+	if err := db.First(&refreshed, owner.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if refreshed.PublicMailboxCreated != 1 || refreshed.PublicMailboxToday != 1 || refreshed.PrivateMailboxCreated != 1 {
+		t.Fatalf("mailbox counters public/today/private = %d/%d/%d, want 1/1/1", refreshed.PublicMailboxCreated, refreshed.PublicMailboxToday, refreshed.PrivateMailboxCreated)
+	}
+}
+
+func TestUserDailyLimitAppliesOnlyToPublicMailboxCreation(t *testing.T) {
+	db := httpTestDB(t)
+	hash, err := auth.HashSecret("password123")
+	if err != nil {
+		t.Fatal(err)
+	}
+	admin := models.User{
+		Email:        "admin@example.com",
+		PasswordHash: hash,
+		Role:         models.UserRoleAdmin,
+		Enabled:      true,
+	}
+	if err := db.Create(&admin).Error; err != nil {
+		t.Fatal(err)
+	}
+	owner := models.User{
+		Email:        "owner@example.com",
+		PasswordHash: hash,
+		Role:         models.UserRoleUser,
+		Enabled:      true,
+		DailyLimit:   1,
+	}
+	if err := db.Create(&owner).Error; err != nil {
+		t.Fatal(err)
+	}
+	publicDomain := models.Domain{
+		Domain:     "user-public-quota.test",
+		Mode:       models.DomainModePublic,
+		Active:     true,
+		MXVerified: true,
+	}
+	privateDomain := models.Domain{
+		Domain:     "user-private-quota.test",
+		Mode:       models.DomainModePrivate,
+		OwnerID:    &owner.ID,
+		Active:     true,
+		MXVerified: true,
+	}
+	if err := db.Create(&publicDomain).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&privateDomain).Error; err != nil {
+		t.Fatal(err)
+	}
+	router := testRouter(t, db)
+	login := perform(router, http.MethodPost, "/api/auth/login", map[string]any{
+		"email":    "owner@example.com",
+		"password": "password123",
+	}, nil)
+	if login.Code != http.StatusOK {
+		t.Fatalf("login = %d: %s", login.Code, login.Body.String())
+	}
+	cookies := make([]string, 0, len(login.Result().Cookies()))
+	for _, cookie := range login.Result().Cookies() {
+		cookies = append(cookies, cookie.Name+"="+cookie.Value)
+	}
+	headers := map[string]string{"Cookie": strings.Join(cookies, "; ")}
+
+	firstPublic := perform(router, http.MethodPost, "/api/generate-email", map[string]any{
+		"prefix": "one",
+		"domain": "user-public-quota.test",
+	}, headers)
+	if firstPublic.Code != http.StatusCreated {
+		t.Fatalf("first public generate = %d: %s", firstPublic.Code, firstPublic.Body.String())
+	}
+	secondPublic := perform(router, http.MethodPost, "/api/generate-email", map[string]any{
+		"prefix": "two",
+		"domain": "user-public-quota.test",
+	}, headers)
+	if secondPublic.Code != http.StatusTooManyRequests {
+		t.Fatalf("second public generate = %d: %s", secondPublic.Code, secondPublic.Body.String())
+	}
+	private := perform(router, http.MethodPost, "/api/generate-email", map[string]any{
+		"prefix": "mine",
+		"domain": "user-private-quota.test",
+	}, headers)
+	if private.Code != http.StatusCreated {
+		t.Fatalf("private generate after user public quota = %d: %s", private.Code, private.Body.String())
+	}
+}
+
+func TestAdminBypassesPublicMailboxDailyQuota(t *testing.T) {
+	db := httpTestDB(t)
+	hash, err := auth.HashSecret("password123")
+	if err != nil {
+		t.Fatal(err)
+	}
+	admin := models.User{
+		Email:        "admin@example.com",
+		PasswordHash: hash,
+		Role:         models.UserRoleAdmin,
+		Enabled:      true,
+		DailyLimit:   1000,
+	}
+	if err := db.Create(&admin).Error; err != nil {
+		t.Fatal(err)
+	}
+	settings := models.SystemQuotaSettings{
+		ID:                          1,
+		UserDailyPublicMailboxLimit: 1,
+	}
+	if err := db.Create(&settings).Error; err != nil {
+		t.Fatal(err)
+	}
+	publicDomain := models.Domain{
+		Domain:     "admin-public-quota.test",
+		Mode:       models.DomainModePublic,
+		Active:     true,
+		MXVerified: true,
+	}
+	if err := db.Create(&publicDomain).Error; err != nil {
+		t.Fatal(err)
+	}
+	router := testRouter(t, db)
+	_, plain, err := (auth.APIKeyService{DB: db}).CreateFor(&admin.ID, "admin-key", 20, 0, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	headers := map[string]string{"X-API-Key": plain}
+
+	for _, prefix := range []string{"one", "two"} {
+		resp := perform(router, http.MethodPost, "/api/generate-email", map[string]any{
+			"prefix": prefix,
+			"domain": "admin-public-quota.test",
+		}, headers)
+		if resp.Code != http.StatusCreated {
+			t.Fatalf("admin public generate %q = %d: %s", prefix, resp.Code, resp.Body.String())
+		}
+	}
+	var refreshed models.User
+	if err := db.First(&refreshed, admin.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if refreshed.PublicMailboxCreated != 2 || refreshed.PublicMailboxToday != 2 {
+		t.Fatalf("admin public counters = %d/%d, want 2/2", refreshed.PublicMailboxCreated, refreshed.PublicMailboxToday)
+	}
+}
+
+func TestPublicDomainMailboxLimitFiltersAndEnforces(t *testing.T) {
+	db := httpTestDB(t)
+	hash, err := auth.HashSecret("password123")
+	if err != nil {
+		t.Fatal(err)
+	}
+	users := []models.User{
+		{Email: "one@example.com", PasswordHash: hash, Role: models.UserRoleUser, Enabled: true, DailyLimit: 1000},
+		{Email: "two@example.com", PasswordHash: hash, Role: models.UserRoleUser, Enabled: true, DailyLimit: 1000},
+	}
+	if err := db.Create(&users).Error; err != nil {
+		t.Fatal(err)
+	}
+	settings := models.SystemQuotaSettings{
+		ID:                       1,
+		PublicDomainMailboxLimit: 1,
+	}
+	if err := db.Create(&settings).Error; err != nil {
+		t.Fatal(err)
+	}
+	publicDomain := models.Domain{
+		Domain:     "capped.test",
+		Mode:       models.DomainModePublic,
+		Active:     true,
+		MXVerified: true,
+	}
+	if err := db.Create(&publicDomain).Error; err != nil {
+		t.Fatal(err)
+	}
+	router := testRouter(t, db)
+	service := auth.APIKeyService{DB: db}
+	_, firstPlain, err := service.CreateFor(&users[0].ID, "first-key", 20, 0, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, secondPlain, err := service.CreateFor(&users[1].ID, "second-key", 20, 0, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	firstHeaders := map[string]string{"X-API-Key": firstPlain}
+	secondHeaders := map[string]string{"X-API-Key": secondPlain}
+
+	created := perform(router, http.MethodPost, "/api/generate-email", map[string]any{
+		"prefix": "one",
+		"domain": "capped.test",
+	}, firstHeaders)
+	if created.Code != http.StatusCreated {
+		t.Fatalf("first public generate = %d: %s", created.Code, created.Body.String())
+	}
+	available := perform(router, http.MethodGet, "/api/domains/available", nil, secondHeaders)
+	if available.Code != http.StatusOK {
+		t.Fatalf("available domains = %d: %s", available.Code, available.Body.String())
+	}
+	if names := decodeAPIKeyAvailableDomainNames(t, available.Body.Bytes()); names["capped.test"] {
+		t.Fatalf("capped domain remained public for non-owner: %v", names)
+	}
+	blocked := perform(router, http.MethodPost, "/api/generate-email", map[string]any{
+		"prefix": "two",
+		"domain": "capped.test",
+	}, secondHeaders)
+	if blocked.Code != http.StatusForbidden {
+		t.Fatalf("second public generate = %d: %s", blocked.Code, blocked.Body.String())
+	}
+}
+
 func TestInboxPaginationAndMailboxSearch(t *testing.T) {
 	db := httpTestDB(t)
 	hash, err := auth.HashSecret("password123")
@@ -1722,7 +2013,7 @@ func httpTestDB(t *testing.T) *gorm.DB {
 		t.Fatal(err)
 	}
 	sqlDB.SetMaxOpenConns(1)
-	if err := db.AutoMigrate(&models.User{}, &models.Domain{}, &models.Mailbox{}, &models.Message{}, &models.APIKey{}, &models.SessionToken{}, &models.APIUsageLog{}, &models.Notification{}, &models.AuditLog{}); err != nil {
+	if err := db.AutoMigrate(&models.User{}, &models.OAuthIdentity{}, &models.OAuthProviderSetting{}, &models.Domain{}, &models.Mailbox{}, &models.Message{}, &models.APIKey{}, &models.SessionToken{}, &models.APIUsageLog{}, &models.Notification{}, &models.AuditLog{}, &models.SystemQuotaSettings{}); err != nil {
 		t.Fatal(err)
 	}
 	return db

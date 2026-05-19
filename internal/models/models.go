@@ -17,20 +17,24 @@ const (
 )
 
 type User struct {
-	ID            uint       `gorm:"primaryKey" json:"id"`
-	Email         string     `gorm:"uniqueIndex;size:255;not null" json:"email"`
-	PasswordHash  string     `gorm:"not null" json:"-"`
-	AvatarURL     string     `gorm:"type:text" json:"avatar_url,omitempty"`
-	EmailVerified bool       `gorm:"not null;default:false" json:"email_verified"`
-	Role          string     `gorm:"size:20;index;not null" json:"role"`
-	Enabled       bool       `gorm:"index;not null" json:"enabled"`
-	DailyLimit    int64      `gorm:"not null" json:"daily_limit"`
-	TotalLimit    int64      `gorm:"not null" json:"total_limit"`
-	UsedToday     int64      `gorm:"not null" json:"used_today"`
-	TotalUsed     int64      `gorm:"not null" json:"total_used"`
-	LastUsedAt    *time.Time `json:"last_used_at,omitempty"`
-	CreatedAt     time.Time  `json:"created_at"`
-	UpdatedAt     time.Time  `json:"updated_at"`
+	ID                    uint       `gorm:"primaryKey" json:"id"`
+	Email                 string     `gorm:"uniqueIndex;size:255;not null" json:"email"`
+	PasswordHash          string     `gorm:"not null" json:"-"`
+	AvatarURL             string     `gorm:"type:text" json:"avatar_url,omitempty"`
+	EmailVerified         bool       `gorm:"not null;default:false" json:"email_verified"`
+	Role                  string     `gorm:"size:20;index;not null" json:"role"`
+	Enabled               bool       `gorm:"index;not null" json:"enabled"`
+	DailyLimit            int64      `gorm:"not null" json:"daily_limit"`
+	TotalLimit            int64      `gorm:"not null" json:"total_limit"`
+	UsedToday             int64      `gorm:"not null" json:"used_today"`
+	TotalUsed             int64      `gorm:"not null" json:"total_used"`
+	LastUsedAt            *time.Time `json:"last_used_at,omitempty"`
+	PublicMailboxCreated  int64      `gorm:"not null;default:0" json:"public_mailbox_created"`
+	PublicMailboxToday    int64      `gorm:"not null;default:0" json:"public_mailbox_today"`
+	PublicMailboxDate     string     `gorm:"size:10;not null;default:''" json:"public_mailbox_date"`
+	PrivateMailboxCreated int64      `gorm:"not null;default:0" json:"private_mailbox_created"`
+	CreatedAt             time.Time  `json:"created_at"`
+	UpdatedAt             time.Time  `json:"updated_at"`
 }
 
 type OAuthIdentity struct {
@@ -86,6 +90,7 @@ type Domain struct {
 	MXAutoRetryLastAt    *time.Time      `json:"mx_auto_retry_last_at,omitempty"`
 	MXAutoRetryCount     int             `gorm:"not null" json:"mx_auto_retry_count"`
 	DomainExpiresAt      *time.Time      `json:"domain_expires_at,omitempty"`
+	MailboxCreatedCount  int64           `gorm:"not null;default:0" json:"mailbox_created_count"`
 	HealthFailureCount   int             `gorm:"not null" json:"health_failure_count"`
 	HealthRecoveryCount  int             `gorm:"not null" json:"health_recovery_count"`
 	LastHealthStatus     string          `gorm:"size:40;index" json:"last_health_status,omitempty"`
@@ -205,7 +210,7 @@ type Announcement struct {
 	Admin     *User          `gorm:"foreignKey:AdminID;constraint:OnUpdate:CASCADE,OnDelete:CASCADE;" json:"-"`
 	CreatedAt time.Time      `json:"created_at"`
 	UpdatedAt time.Time      `json:"updated_at"`
-	DeletedAt gorm.DeletedAt `gorm:"index" json:"-"`
+	DeletedAt gorm.DeletedAt `gorm:"index" json:"deleted_at,omitempty"`
 }
 
 type AnnouncementRead struct {
@@ -274,4 +279,13 @@ type AuditLog struct {
 	Target     string    `gorm:"size:255;not null" json:"target"`
 	Metadata   string    `gorm:"type:text" json:"metadata,omitempty"`
 	CreatedAt  time.Time `gorm:"index:idx_audit_created_id,priority:1;index:idx_audit_category_created_id,priority:2;index:idx_audit_action_created_id,priority:2;index:idx_audit_actor_created_id,priority:2;index:idx_audit_target_created_id,priority:3" json:"created_at"`
+}
+
+type SystemQuotaSettings struct {
+	ID                          uint      `gorm:"primaryKey" json:"id"`
+	PublicDomainMailboxLimit    int64     `gorm:"not null;default:0" json:"public_domain_mailbox_limit"`
+	UserDailyPublicMailboxLimit int64     `gorm:"not null;default:0" json:"user_daily_public_mailbox_limit"`
+	RequirePublicDomainForQuota bool      `gorm:"not null;default:false" json:"require_public_domain_for_quota"`
+	CreatedAt                   time.Time `json:"created_at"`
+	UpdatedAt                   time.Time `json:"updated_at"`
 }

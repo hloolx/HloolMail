@@ -262,6 +262,17 @@ npm run dev
 
 Vite 会代理 `/api` 到 `http://localhost:3000`。
 
+### Install 页面开发者快捷键
+
+在 Install 页面**快速点击页面左上角的 Logo 图标 3 次**（2 秒内），系统会自动以开发模式完成安装：
+
+- 管理员账号：`dev@localhost` / `devdevdev`
+- 数据库：SQLite (`storage/hlool-mail.db`)
+- `DEV_MODE=true`（`.test` 域名跳过 DNS 验证）
+- 其他配置使用默认值
+
+安装完成后会自动登录到管理控制台。此功能仅用于本地开发，请勿在生产环境使用。
+
 ## DNS / MX
 
 `MAIL_HOSTNAME` / `EXPECTED_MX` 应该填写你自己的 HLOOL Mail 收信主机名，不是 QQ、Google 或 Outlook 的邮箱服务器。

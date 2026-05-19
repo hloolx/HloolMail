@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"gptmail/internal/db"
 	domaindb "gptmail/internal/domain"
 	"gptmail/internal/models"
 	"gptmail/internal/version"
@@ -20,6 +21,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/microcosm-cc/bluemonday"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 var htmlPolicy = bluemonday.UGCPolicy()
@@ -372,14 +374,7 @@ func (h *Handler) generateEmail(c *gin.Context) {
 		var existing models.Mailbox
 		err := h.DB.Where("email = ?", email).First(&existing).Error
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			mailbox := models.Mailbox{
-				OwnerID:   ownerID,
-				Email:     email,
-				LocalPart: local,
-				Host:      host,
-				DomainID:  d.ID,
-			}
-			if err := h.DB.Create(&mailbox).Error; err != nil {
+			if err := h.createMailboxWithAccounting(ownerID, d, email, local, host, actor); err != nil {
 				if isUniqueConstraintError(err) {
 					attempt++
 					if attempt >= maxRetries {
@@ -388,6 +383,11 @@ func (h *Handler) generateEmail(c *gin.Context) {
 					}
 					local = ""
 					continue
+				}
+				var httpErr httpStatusError
+				if errors.As(err, &httpErr) {
+					fail(c, httpErr.Status, httpErr.Message)
+					return
 				}
 				fail(c, http.StatusInternalServerError, err.Error())
 				return
@@ -642,6 +642,113 @@ func (h *Handler) requestDomain(c *gin.Context) {
 	created(c, gin.H{"domain": domainWithCount(h.DB, *d), "dns": dns})
 }
 
+func (h *Handler) batchRequestDomain(c *gin.Context) {
+	user, loggedIn := h.requireLogin(c)
+	if !loggedIn {
+		return
+	}
+	var input struct {
+		Domains []struct {
+			Raw      string `json:"raw"`
+			Domain   string `json:"domain"`
+			Wildcard bool   `json:"wildcard"`
+		} `json:"domains"`
+		Mode string `json:"mode"`
+	}
+	if err := c.ShouldBindJSON(&input); err != nil {
+		fail(c, http.StatusBadRequest, "invalid json")
+		return
+	}
+	mode := input.Mode
+	if mode != models.DomainModePublic && mode != models.DomainModePrivate {
+		mode = models.DomainModePrivate
+	}
+	if len(input.Domains) > 50 {
+		input.Domains = input.Domains[:50]
+	}
+	type batchDomainItemResult struct {
+		Raw          string                    `json:"raw"`
+		Domain       string                    `json:"domain"`
+		Status       string                    `json:"status"`
+		DomainRecord *domainDTO                `json:"domain_record,omitempty"`
+		DNS          *domaindb.DNSInstructions `json:"dns,omitempty"`
+		Error        string                    `json:"error,omitempty"`
+	}
+	results := make([]batchDomainItemResult, 0, len(input.Domains))
+	for _, item := range input.Domains {
+		raw := strings.TrimSpace(item.Raw)
+		candidate := strings.TrimSpace(item.Domain)
+		if candidate == "" {
+			candidate = raw
+		}
+		domainName := domaindb.NormalizeDomain(candidate)
+		wildcard := item.Wildcard || domainWantsWildcard(raw) || domainWantsWildcard(candidate)
+		result := batchDomainItemResult{
+			Raw:    raw,
+			Domain: domainName,
+		}
+		if domainName == "" || !strings.Contains(domainName, ".") {
+			result.Status = "invalid"
+			result.Error = "valid domain required"
+			results = append(results, result)
+			continue
+		}
+		var existing models.Domain
+		lookupErr := h.DB.Where("domain = ?", domainName).First(&existing).Error
+		if lookupErr != nil && !errors.Is(lookupErr, gorm.ErrRecordNotFound) {
+			result.Status = "error"
+			result.Error = lookupErr.Error()
+			results = append(results, result)
+			continue
+		}
+		if lookupErr == nil && existing.OwnerID != nil && *existing.OwnerID != user.ID {
+			result.Status = "owned_by_other"
+			result.Error = "domain is already owned by another user"
+			results = append(results, result)
+			continue
+		}
+		d, dns, err := h.upsertDomain(domainName, mode, wildcard, &user.ID, user.Email)
+		if err != nil {
+			result.Status = "error"
+			result.Error = err.Error()
+			results = append(results, result)
+			continue
+		}
+		status := "created"
+		if lookupErr == nil {
+			status = "already_exists"
+		}
+		dto := domainWithCount(h.DB, *d)
+		result.Status = status
+		result.DomainRecord = &dto
+		result.DNS = &dns
+		results = append(results, result)
+		h.scheduleDomainMXAutoRetry(*d)
+	}
+	created(c, gin.H{"results": results})
+}
+
+func (h *Handler) scheduleDomainMXAutoRetry(d models.Domain) {
+	if !d.IsWaitingVerification() {
+		return
+	}
+	now := time.Now()
+	until := d.PendingDeleteAt()
+	if !until.After(now) {
+		return
+	}
+	if err := h.DB.Model(&models.Domain{}).Where("id = ? AND active = ?", d.ID, true).Updates(map[string]interface{}{
+		"mx_auto_retry_enabled":    true,
+		"mx_auto_retry_started_at": now,
+		"mx_auto_retry_until":      until,
+		"mx_auto_retry_next_at":    now,
+		"mx_auto_retry_last_at":    nil,
+		"mx_auto_retry_count":      0,
+	}).Error; err != nil {
+		return
+	}
+}
+
 func (h *Handler) checkMX(c *gin.Context) {
 	if _, loggedIn := h.requireLogin(c); !loggedIn {
 		return
@@ -707,9 +814,11 @@ func (h *Handler) availableDomains(c *gin.Context) {
 		return
 	}
 	if currentAPIKey(c) != nil {
+		publicDomains = h.filterCappedPublicDomains(publicDomains, actor)
 		publicOK(c, publicAvailableDomainsResponse{Domains: domainNames(publicDomains)})
 		return
 	}
+	publicDomains = h.filterCappedPublicDomains(publicDomains, actor)
 	privateQuery := h.DB.Order("domain asc").
 		Where("mode = ? AND active = ? AND mx_verified = ? AND (wildcard_requested = ? OR wildcard_enabled = ?)",
 			models.DomainModePrivate, true, true, false, true)
@@ -1180,6 +1289,7 @@ func (h *Handler) selectDomainForActor(input string, actor *requestActor) (*mode
 	if err := publicReadyDomainQuery(h.DB.Order("domain asc")).Find(&domains).Error; err != nil {
 		return nil, err
 	}
+	domains = h.filterCappedPublicDomains(domains, actor)
 	if len(domains) == 0 {
 		return nil, fmt.Errorf("暂无可用公共域名")
 	}
@@ -1696,4 +1806,141 @@ func (h *Handler) deleteMailbox(c *gin.Context) {
 	}
 	h.audit("mailbox.delete", actor.name(), mailbox.Email, "")
 	ok(c, gin.H{"deleted": true})
+}
+
+type httpStatusError struct {
+	Status  int
+	Message string
+}
+
+func (e httpStatusError) Error() string {
+	return e.Message
+}
+
+func (h *Handler) createMailboxWithAccounting(ownerID uint, d *models.Domain, email, local, host string, actor *requestActor) error {
+	return h.DB.Transaction(func(tx *gorm.DB) error {
+		var freshDomain models.Domain
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&freshDomain, "id = ?", d.ID).Error; err != nil {
+			return err
+		}
+		if !freshDomain.IsReady() {
+			return httpStatusError{Status: http.StatusBadRequest, Message: "域名未激活或 MX 未验证"}
+		}
+		if freshDomain.Mode == models.DomainModePrivate && !actor.isAdmin() {
+			if freshDomain.OwnerID == nil || *freshDomain.OwnerID != ownerID {
+				return httpStatusError{Status: http.StatusForbidden, Message: "该域名是私有域名，只有域名的所有者才能使用"}
+			}
+		}
+		mailbox := models.Mailbox{
+			OwnerID:   ownerID,
+			Email:     email,
+			LocalPart: local,
+			Host:      host,
+			DomainID:  freshDomain.ID,
+		}
+		if err := tx.Create(&mailbox).Error; err != nil {
+			return err
+		}
+		if err := h.applyMailboxAccounting(tx, ownerID, freshDomain, actor); err != nil {
+			return err
+		}
+		*d = freshDomain
+		return nil
+	})
+}
+
+func (h *Handler) applyMailboxAccounting(tx *gorm.DB, userID uint, d models.Domain, actor *requestActor) error {
+	if d.Mode == models.DomainModePublic {
+		settings, err := db.EnsureSystemQuotaSettings(tx)
+		if err != nil {
+			return err
+		}
+		if !actor.isAdmin() {
+			if err := h.enforcePublicMailboxRules(tx, userID, d, settings); err != nil {
+				return err
+			}
+		}
+		if err := incrementDomainMailboxCount(tx, d.ID, d, actor, settings); err != nil {
+			return err
+		}
+		return incrementUserPublicMailboxCount(tx, userID, settings, !actor.isAdmin())
+	}
+	if err := tx.Model(&models.Domain{}).Where("id = ?", d.ID).Update("mailbox_created_count", gorm.Expr("mailbox_created_count + 1")).Error; err != nil {
+		return err
+	}
+	return tx.Model(&models.User{}).Where("id = ?", userID).Update("private_mailbox_created", gorm.Expr("private_mailbox_created + 1")).Error
+}
+
+func (h *Handler) enforcePublicMailboxRules(tx *gorm.DB, userID uint, d models.Domain, settings *models.SystemQuotaSettings) error {
+	if settings.RequirePublicDomainForQuota {
+		var publicDomainCount int64
+		if err := tx.Model(&models.Domain{}).Where("owner_id = ? AND mode = ? AND active = ?", userID, models.DomainModePublic, true).Count(&publicDomainCount).Error; err != nil {
+			return err
+		}
+		if publicDomainCount == 0 {
+			return httpStatusError{Status: http.StatusForbidden, Message: "需要先上传公开域名后才可创建公开邮箱"}
+		}
+	}
+	return nil
+}
+
+func incrementDomainMailboxCount(tx *gorm.DB, domainID uint, d models.Domain, actor *requestActor, settings *models.SystemQuotaSettings) error {
+	isOwner := false
+	if ownerID, ok := actor.ownerID(); ok {
+		isOwner = d.OwnerID != nil && *d.OwnerID == ownerID
+	}
+	query := tx.Model(&models.Domain{}).Where("id = ?", domainID)
+	if d.Mode == models.DomainModePublic && !actor.isAdmin() && !isOwner && settings.PublicDomainMailboxLimit > 0 {
+		query = query.Where("mailbox_created_count < ?", settings.PublicDomainMailboxLimit)
+	}
+	result := query.Update("mailbox_created_count", gorm.Expr("mailbox_created_count + 1"))
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected == 0 {
+		return httpStatusError{Status: http.StatusForbidden, Message: "该公开域名邮箱创建已达上限，仅域名所有者可使用"}
+	}
+	return nil
+}
+
+func incrementUserPublicMailboxCount(tx *gorm.DB, userID uint, settings *models.SystemQuotaSettings, enforceDailyLimit bool) error {
+	today := time.Now().Format("2006-01-02")
+	query := tx.Model(&models.User{}).Where("id = ? AND enabled = ?", userID, true)
+	if enforceDailyLimit {
+		if settings.UserDailyPublicMailboxLimit > 0 {
+			query = query.Where("public_mailbox_date <> ? OR public_mailbox_today < ?", today, settings.UserDailyPublicMailboxLimit)
+		}
+		query = query.Where("daily_limit = 0 OR public_mailbox_date <> ? OR public_mailbox_today < daily_limit", today)
+	}
+	result := query.Updates(map[string]interface{}{
+		"public_mailbox_created": gorm.Expr("public_mailbox_created + 1"),
+		"public_mailbox_today":   gorm.Expr("CASE WHEN public_mailbox_date = ? THEN public_mailbox_today + 1 ELSE 1 END", today),
+		"public_mailbox_date":    today,
+	})
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected == 0 {
+		return httpStatusError{Status: http.StatusTooManyRequests, Message: "公开邮箱每日创建额度已用完"}
+	}
+	return nil
+}
+
+func (h *Handler) filterCappedPublicDomains(domains []models.Domain, actor *requestActor) []models.Domain {
+	settings, err := db.EnsureSystemQuotaSettings(h.DB)
+	if err != nil || settings.PublicDomainMailboxLimit <= 0 {
+		return domains
+	}
+	var ownerID uint
+	if id, ok := actor.ownerID(); ok {
+		ownerID = id
+	}
+	out := make([]models.Domain, 0, len(domains))
+	for _, d := range domains {
+		isOwner := d.OwnerID != nil && *d.OwnerID == ownerID
+		if actor.isAdmin() || isOwner || d.MailboxCreatedCount < settings.PublicDomainMailboxLimit {
+			out = append(out, d)
+		}
+	}
+	return out
 }

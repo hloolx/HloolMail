@@ -10,6 +10,7 @@ import { useText } from '../locales';
 import { useCountUp } from '../hooks/useCountUp';
 import { HeaderSettings } from '../components/layout/HeaderSettings';
 import { AppLogo } from '../components/shared/AppLogo';
+import { launchSuccessBurst } from '../lib/confetti';
 
 export function LandingPage({ status, onDone }: { status?: InstallStatus; onDone: () => void }) {
   const text = useText();
@@ -26,6 +27,7 @@ export function LandingPage({ status, onDone }: { status?: InstallStatus; onDone
     .replace('{users}', registeredUsers.toLocaleString())
     .replace('{domains}', hostedDomains.toLocaleString());
   const authPanelRef = useRef<HTMLElement>(null);
+  const authSubmitRef = useRef<HTMLButtonElement>(null);
   const [mode, setMode] = useState<'login' | 'register'>('login');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -55,6 +57,7 @@ export function LandingPage({ status, onDone }: { status?: InstallStatus; onDone
       return postJSON<User>('/api/auth/register', { email, password });
     },
     onSuccess: () => {
+      launchSuccessBurst({ origin: authSubmitRef.current, label: text.login.registerDone });
       toast.success(text.login.registerDone);
       onDone();
     },
@@ -137,7 +140,7 @@ export function LandingPage({ status, onDone }: { status?: InstallStatus; onDone
               <label htmlFor="auth-confirm-password" className="sr-only">{text.login.confirmPassword}</label>
               <input id="auth-confirm-password" className="input" value={confirmPassword} onChange={(event) => setConfirmPassword(event.target.value)} placeholder={text.login.confirmPassword} type="password" autoComplete="new-password" />
             </div>
-            <button className="btn-primary auth-submit" type="submit" disabled={pending}>
+            <button ref={authSubmitRef} className="btn-primary auth-submit" type="submit" disabled={pending}>
               {pending ? (
                 <span className="auth-submit-loading">{isRegister ? text.login.registerPending : text.login.loginPending}</span>
               ) : (
@@ -151,16 +154,17 @@ export function LandingPage({ status, onDone }: { status?: InstallStatus; onDone
               <div className="oauth-login-actions">
                 {(oauthProviders.data || []).map((provider) => {
                   const Icon = provider.provider === 'github' ? Github : CircleUserRound;
+                  const actionLabel = (isRegister ? text.oauth.register_with : text.oauth.login_with).replace('{provider}', provider.name);
                   return (
                     <button
                       className="oauth-login-button"
                       type="button"
                       key={provider.provider}
-                      aria-label={text.oauth.login_with.replace('{provider}', provider.name)}
+                      aria-label={actionLabel}
                       onClick={() => { window.location.href = provider.auth_url; }}
                     >
                       <Icon size={17} />
-                      {text.oauth.login_with.replace('{provider}', provider.name)}
+                      {actionLabel}
                     </button>
                   );
                 })}

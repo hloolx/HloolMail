@@ -67,8 +67,13 @@ type oauthStateCookie struct {
 	Provider  string `json:"provider"`
 	State     string `json:"state"`
 	Redirect  string `json:"redirect"`
+	Mode      string `json:"mode"`
+	UserID    uint   `json:"uid,omitempty"`
 	ExpiresAt int64  `json:"exp"`
 }
+
+const oauthModeLogin = "login"
+const oauthModeBind = "bind"
 
 type oauthHTTPError struct {
 	Status int
@@ -213,11 +218,28 @@ func (h *Handler) oauthRedirect(c *gin.Context) {
 		fail(c, http.StatusInternalServerError, err.Error())
 		return
 	}
+	mode := strings.ToLower(strings.TrimSpace(c.Query("mode")))
+	if mode == "" {
+		mode = oauthModeLogin
+	}
+	var userID uint
+	if mode == oauthModeBind {
+		user, ok := h.requireLogin(c)
+		if !ok {
+			return
+		}
+		userID = user.ID
+	} else if mode != oauthModeLogin {
+		fail(c, http.StatusBadRequest, "invalid oauth mode")
+		return
+	}
 	redirect := sanitizeOAuthRedirect(c.Query("redirect"))
 	cookieValue, err := h.encodeOAuthStateCookie(oauthStateCookie{
 		Provider:  provider,
 		State:     state,
 		Redirect:  redirect,
+		Mode:      mode,
+		UserID:    userID,
 		ExpiresAt: time.Now().Add(oauthStateTTL).Unix(),
 	})
 	if err != nil {
@@ -260,7 +282,30 @@ func (h *Handler) oauthCallback(c *gin.Context) {
 		fail(c, http.StatusBadGateway, err.Error())
 		return
 	}
-	user, err := h.loginOAuthUser(provider, info, token)
+
+	redirect := sanitizeOAuthRedirect(stateRecord.Redirect)
+
+	if stateRecord.Mode == oauthModeBind {
+		if stateRecord.UserID == 0 {
+			fail(c, http.StatusBadRequest, "invalid bind state")
+			return
+		}
+		user, err := h.bindOAuthIdentity(stateRecord.UserID, provider, info, token)
+		if err != nil {
+			status := http.StatusBadRequest
+			if strings.Contains(strings.ToLower(err.Error()), "already bound") {
+				status = http.StatusConflict
+			}
+			fail(c, status, err.Error())
+			return
+		}
+		h.audit("oauth.bind", user.Email, provider, "")
+		redirect = appendOAuthQuery(redirect, "oauth_bound", provider)
+		c.Redirect(http.StatusFound, redirect)
+		return
+	}
+
+	user, isNew, err := h.loginOAuthUser(provider, info, token)
 	if err != nil {
 		status := http.StatusBadRequest
 		if strings.Contains(strings.ToLower(err.Error()), "disabled") {
@@ -275,7 +320,10 @@ func (h *Handler) oauthCallback(c *gin.Context) {
 		return
 	}
 	setSessionCookie(c, sessionToken, 7*24*time.Hour)
-	c.Redirect(http.StatusFound, sanitizeOAuthRedirect(stateRecord.Redirect))
+	if isNew {
+		redirect = appendOAuthQuery(redirect, "oauth_register", provider)
+	}
+	c.Redirect(http.StatusFound, redirect)
 }
 
 func (h *Handler) oauthProviderForLogin(provider string) (config.OAuthProviderConfig, oauthProviderMeta, bool) {
@@ -705,16 +753,17 @@ func doOAuthRequest(req *http.Request) ([]byte, string, error) {
 	return raw, resp.Header.Get("Content-Type"), nil
 }
 
-func (h *Handler) loginOAuthUser(provider string, info OAuthUserInfo, token oauthToken) (*models.User, error) {
+func (h *Handler) loginOAuthUser(provider string, info OAuthUserInfo, token oauthToken) (*models.User, bool, error) {
 	info.ProviderUID = strings.TrimSpace(info.ProviderUID)
 	info.Email = strings.ToLower(strings.TrimSpace(info.Email))
 	info.AvatarURL = strings.TrimSpace(info.AvatarURL)
 	if info.ProviderUID == "" {
-		return nil, fmt.Errorf("oauth provider did not return a user id")
+		return nil, false, fmt.Errorf("oauth provider did not return a user id")
 	}
 	if !strings.Contains(info.Email, "@") {
-		return nil, fmt.Errorf("oauth provider did not return a verified email")
+		return nil, false, fmt.Errorf("oauth provider did not return a verified email")
 	}
+	isNew := false
 	var user models.User
 	err := h.DB.Transaction(func(tx *gorm.DB) error {
 		var identity models.OAuthIdentity
@@ -766,6 +815,7 @@ func (h *Handler) loginOAuthUser(provider string, info OAuthUserInfo, token oaut
 			if err := tx.Create(&user).Error; err != nil {
 				return err
 			}
+			isNew = true
 		} else {
 			return err
 		}
@@ -778,10 +828,59 @@ func (h *Handler) loginOAuthUser(provider string, info OAuthUserInfo, token oaut
 		return tx.Create(&identity).Error
 	})
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	h.audit("oauth.login", user.Email, provider, "")
+	return &user, isNew, nil
+}
+
+func (h *Handler) bindOAuthIdentity(userID uint, provider string, info OAuthUserInfo, token oauthToken) (*models.User, error) {
+	info.ProviderUID = strings.TrimSpace(info.ProviderUID)
+	info.Email = strings.ToLower(strings.TrimSpace(info.Email))
+	if info.ProviderUID == "" {
+		return nil, fmt.Errorf("oauth provider did not return a user id")
+	}
+	var user models.User
+	if err := h.DB.Transaction(func(tx *gorm.DB) error {
+		var existing models.OAuthIdentity
+		if err := tx.Where("user_id = ? AND provider = ?", userID, provider).First(&existing).Error; err == nil {
+			return fmt.Errorf("already bound to this account")
+		} else if !errors.Is(err, gorm.ErrRecordNotFound) {
+			return err
+		}
+		if err := tx.Where("provider = ? AND provider_uid = ?", provider, info.ProviderUID).First(&existing).Error; err == nil {
+			if existing.UserID == userID {
+				return fmt.Errorf("already bound to this account")
+			}
+			return fmt.Errorf("this %s account is already bound to another user", provider)
+		} else if !errors.Is(err, gorm.ErrRecordNotFound) {
+			return err
+		}
+		if err := tx.First(&user, "id = ? AND enabled = ?", userID, true).Error; err != nil {
+			return fmt.Errorf("user not found or disabled")
+		}
+		if err := updateOAuthUserProfile(tx, &user, info); err != nil {
+			return err
+		}
+		identity := models.OAuthIdentity{
+			UserID:      userID,
+			Provider:    provider,
+			ProviderUID: info.ProviderUID,
+			TokenExpiry: token.Expiry,
+		}
+		return tx.Create(&identity).Error
+	}); err != nil {
+		return nil, err
+	}
 	return &user, nil
+}
+
+func appendOAuthQuery(redirect, key, value string) string {
+	sep := "?"
+	if strings.Contains(redirect, "?") {
+		sep = "&"
+	}
+	return redirect + sep + url.QueryEscape(key) + "=" + url.QueryEscape(value)
 }
 
 func updateOAuthUserProfile(tx *gorm.DB, user *models.User, info OAuthUserInfo) error {
@@ -876,6 +975,72 @@ func sanitizeOAuthRedirect(value string) string {
 		return "/"
 	}
 	return value
+}
+
+type oauthIdentityDTO struct {
+	Provider  string `json:"provider"`
+	Name      string `json:"name"`
+	AvatarURL string `json:"avatar_url"`
+	BoundAt   string `json:"bound_at"`
+}
+
+func (h *Handler) listUserOAuthIdentities(c *gin.Context) {
+	user, loggedIn := h.requireLogin(c)
+	if !loggedIn {
+		return
+	}
+	var identities []models.OAuthIdentity
+	if err := h.DB.Where("user_id = ?", user.ID).Find(&identities).Error; err != nil {
+		fail(c, http.StatusInternalServerError, err.Error())
+		return
+	}
+	metas := oauthProviderMetas()
+	nameByProvider := make(map[string]string, len(metas))
+	for _, meta := range metas {
+		nameByProvider[meta.Provider] = meta.Name
+	}
+	result := make([]oauthIdentityDTO, 0, len(identities))
+	for _, idt := range identities {
+		name := nameByProvider[idt.Provider]
+		if name == "" {
+			name = idt.Provider
+		}
+		avatar := user.AvatarURL
+		result = append(result, oauthIdentityDTO{
+			Provider:  idt.Provider,
+			Name:      name,
+			AvatarURL: avatar,
+			BoundAt:   idt.CreatedAt.Format(time.RFC3339),
+		})
+	}
+	ok(c, result)
+}
+
+func (h *Handler) unbindUserOAuthIdentity(c *gin.Context) {
+	user, loggedIn := h.requireLogin(c)
+	if !loggedIn {
+		return
+	}
+	provider := strings.ToLower(strings.TrimSpace(c.Param("provider")))
+	if _, known := knownOAuthProvider(provider); !known {
+		fail(c, http.StatusNotFound, "oauth provider not found")
+		return
+	}
+	var identity models.OAuthIdentity
+	if err := h.DB.Where("user_id = ? AND provider = ?", user.ID, provider).First(&identity).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			fail(c, http.StatusNotFound, "no bound identity for this provider")
+			return
+		}
+		fail(c, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if err := h.DB.Where("user_id = ? AND provider = ?", user.ID, provider).Delete(&models.OAuthIdentity{}).Error; err != nil {
+		fail(c, http.StatusInternalServerError, err.Error())
+		return
+	}
+	h.audit("oauth.unbind", user.Email, provider, "")
+	ok(c, gin.H{"provider": provider, "unbound": true})
 }
 
 func randomURLToken(size int) (string, error) {

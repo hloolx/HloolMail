@@ -1,9 +1,11 @@
+import { useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { LogOut } from 'lucide-react';
 import { roleText, useText } from '../../locales';
 import type { User } from '../../api';
 import { postJSON } from '../../api';
 import { useAppStore } from '../../store';
+import { UserProfileDialog } from '../../pages/UserProfileDialog';
 import { navGroups } from './navGroups';
 
 export function Sidebar({ user }: { user: User }) {
@@ -11,6 +13,7 @@ export function Sidebar({ user }: { user: User }) {
   const { page, setPage, sidebarCollapsed, toggleSidebar } = useAppStore();
   const text = useText();
   const sidebarTitle = sidebarCollapsed ? text.nav.expandSidebar : text.nav.collapseSidebar;
+  const [profileOpen, setProfileOpen] = useState(false);
 
   const logout = useMutation({
     mutationFn: () => postJSON('/api/auth/logout', {}),
@@ -53,11 +56,19 @@ export function Sidebar({ user }: { user: User }) {
         </nav>
 
         <div className="sidebar-user-card" title={`${user.email} · ${roleText(user.role, text)}`}>
-          <div className="sidebar-user-avatar">{user.email.slice(0, 1).toUpperCase()}</div>
-          <div className="sidebar-user-copy sidebar-label">
-            <div>{user.email}</div>
-            <span>{roleText(user.role, text)}</span>
-          </div>
+          <button
+            className="sidebar-user-profile-btn"
+            type="button"
+            title={text.profile.open}
+            aria-label={text.profile.open}
+            onClick={() => setProfileOpen(true)}
+          >
+            <div className="sidebar-user-avatar">{user.email.slice(0, 1).toUpperCase()}</div>
+            <div className="sidebar-user-copy sidebar-label">
+              <div>{user.email}</div>
+              <span>{roleText(user.role, text)}</span>
+            </div>
+          </button>
           <button
             className="sidebar-logout-btn"
             type="button"
@@ -71,6 +82,7 @@ export function Sidebar({ user }: { user: User }) {
         </div>
       </div>
       <button className="sidebar-rail" title={sidebarTitle} aria-label={sidebarTitle} onClick={toggleSidebar} />
+      <UserProfileDialog open={profileOpen} onClose={() => setProfileOpen(false)} user={user} />
     </aside>
   );
 }

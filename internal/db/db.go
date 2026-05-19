@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"gptmail/internal/config"
 	"gptmail/internal/models"
@@ -95,7 +96,7 @@ func configureSQLite(db *gorm.DB) error {
 }
 
 func AutoMigrate(db *gorm.DB) error {
-	return db.AutoMigrate(
+	if err := db.AutoMigrate(
 		&models.User{},
 		&models.OAuthIdentity{},
 		&models.OAuthProviderSetting{},
@@ -112,5 +113,133 @@ func AutoMigrate(db *gorm.DB) error {
 		&models.AnnouncementRead{},
 		&models.DomainCheckResultRecord{},
 		&models.AuditLog{},
-	)
+		&models.SystemQuotaSettings{},
+	); err != nil {
+		return err
+	}
+	return BackfillMailboxCounters(db)
+}
+
+func BackfillMailboxCounters(db *gorm.DB) error {
+	return db.Transaction(func(tx *gorm.DB) error {
+		if err := backfillDomainMailboxCounters(tx); err != nil {
+			return err
+		}
+		if err := backfillUserMailboxCounters(tx); err != nil {
+			return err
+		}
+		return backfillUserPublicMailboxToday(tx, time.Now())
+	})
+}
+
+type mailboxCountRow struct {
+	ID    uint
+	Count int64
+}
+
+func backfillDomainMailboxCounters(db *gorm.DB) error {
+	var rows []mailboxCountRow
+	if err := db.Table("mailboxes").
+		Select("domain_id AS id, COUNT(*) AS count").
+		Group("domain_id").
+		Scan(&rows).Error; err != nil {
+		return err
+	}
+	for _, row := range rows {
+		if row.ID == 0 {
+			continue
+		}
+		if err := db.Model(&models.Domain{}).
+			Where("id = ? AND mailbox_created_count < ?", row.ID, row.Count).
+			Update("mailbox_created_count", row.Count).Error; err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func backfillUserMailboxCounters(db *gorm.DB) error {
+	for _, mode := range []struct {
+		domainMode string
+		column     string
+	}{
+		{domainMode: models.DomainModePublic, column: "public_mailbox_created"},
+		{domainMode: models.DomainModePrivate, column: "private_mailbox_created"},
+	} {
+		var rows []mailboxCountRow
+		if err := db.Table("mailboxes").
+			Select("mailboxes.owner_id AS id, COUNT(*) AS count").
+			Joins("JOIN domains ON domains.id = mailboxes.domain_id").
+			Where("domains.mode = ?", mode.domainMode).
+			Group("mailboxes.owner_id").
+			Scan(&rows).Error; err != nil {
+			return err
+		}
+		for _, row := range rows {
+			if row.ID == 0 {
+				continue
+			}
+			if err := db.Model(&models.User{}).
+				Where("id = ? AND "+mode.column+" < ?", row.ID, row.Count).
+				Update(mode.column, row.Count).Error; err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func backfillUserPublicMailboxToday(db *gorm.DB, now time.Time) error {
+	today := now.Format("2006-01-02")
+	start := startOfLocalDay(now)
+	var rows []mailboxCountRow
+	if err := db.Table("mailboxes").
+		Select("mailboxes.owner_id AS id, COUNT(*) AS count").
+		Joins("JOIN domains ON domains.id = mailboxes.domain_id").
+		Where("domains.mode = ? AND mailboxes.created_at >= ?", models.DomainModePublic, start).
+		Group("mailboxes.owner_id").
+		Scan(&rows).Error; err != nil {
+		return err
+	}
+	for _, row := range rows {
+		if row.ID == 0 {
+			continue
+		}
+		if err := db.Model(&models.User{}).
+			Where("id = ? AND (public_mailbox_date <> ? OR public_mailbox_today < ?)", row.ID, today, row.Count).
+			Updates(map[string]interface{}{
+				"public_mailbox_date":  today,
+				"public_mailbox_today": row.Count,
+			}).Error; err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func startOfLocalDay(t time.Time) time.Time {
+	y, m, d := t.Local().Date()
+	return time.Date(y, m, d, 0, 0, 0, 0, t.Location())
+}
+
+func EnsureSystemQuotaSettings(db *gorm.DB) (*models.SystemQuotaSettings, error) {
+	var settings models.SystemQuotaSettings
+	err := db.First(&settings).Error
+	if err == nil {
+		return &settings, nil
+	}
+	if err != gorm.ErrRecordNotFound {
+		return nil, err
+	}
+	settings = models.SystemQuotaSettings{
+		ID: 1,
+	}
+	if err := db.Create(&settings).Error; err != nil {
+		// race: another request may have created it
+		if err2 := db.First(&settings).Error; err2 != nil {
+			return nil, err
+		}
+		return &settings, nil
+	}
+	return &settings, nil
 }

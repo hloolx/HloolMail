@@ -15,12 +15,48 @@ func (h *Handler) listUsers(c *gin.Context) {
 	if !h.requireAdmin(c) {
 		return
 	}
-	var users []models.User
-	if err := h.DB.Order("created_at desc").Find(&users).Error; err != nil {
+	page := parsePage(c.Query("page"))
+	pageSize := parseLimit(c.Query("page_size"), 20, 100)
+	search := strings.TrimSpace(c.Query("search"))
+	role := strings.TrimSpace(c.Query("role"))
+	status := strings.TrimSpace(c.Query("status"))
+
+	db := h.DB.Model(&models.User{})
+	if search != "" {
+		db = db.Where("LOWER(email) LIKE ?", "%"+strings.ToLower(search)+"%")
+	}
+	if role == models.UserRoleAdmin || role == models.UserRoleUser {
+		db = db.Where("role = ?", role)
+	}
+	if status == "enabled" {
+		db = db.Where("enabled = ?", true)
+	} else if status == "disabled" {
+		db = db.Where("enabled = ?", false)
+	}
+
+	var total int64
+	if err := db.Count(&total).Error; err != nil {
 		fail(c, http.StatusInternalServerError, err.Error())
 		return
 	}
-	ok(c, users)
+	totalPages := pageCount(total, pageSize)
+	if page > totalPages {
+		page = totalPages
+	}
+
+	var users []models.User
+	if err := db.Order("created_at desc").Offset((page - 1) * pageSize).Limit(pageSize).Find(&users).Error; err != nil {
+		fail(c, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	ok(c, paginatedResponse[models.User]{
+		Items:      users,
+		Page:       page,
+		PerPage:    pageSize,
+		Total:      total,
+		TotalPages: totalPages,
+	})
 }
 
 func (h *Handler) createUser(c *gin.Context) {

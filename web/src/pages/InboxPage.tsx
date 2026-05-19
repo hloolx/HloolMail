@@ -2,9 +2,9 @@ import { useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { motion, useReducedMotion } from 'framer-motion';
 import type { Variants } from 'framer-motion';
-import { Check, ChevronDown, Copy, Inbox, Loader2, MailOpen, MailPlus, RefreshCw, Search, Trash2, X } from 'lucide-react';
+import { Check, ChevronDown, Copy, Inbox, Loader2, MailOpen, MailPlus, RefreshCw, Search, ShieldAlert, Trash2, X } from 'lucide-react';
 import { toast } from 'sonner';
-import type { DomainAvailability, InboxSSEEvent, MailboxInfo, MessageDetail, MessageSummary, PaginatedResponse, PublicDomainItem } from '../api';
+import type { DomainAvailability, InboxSSEEvent, MailboxInfo, MailboxStats, MessageDetail, MessageSummary, PaginatedResponse, PublicDomainItem } from '../api';
 import { ApiError, api, parseFromAddress, postJSON } from '../api';
 import { useText } from '../locales';
 import { useAppStore, type Language } from '../store';
@@ -85,6 +85,12 @@ export function InboxPage() {
     staleTime: 10_000,
     refetchInterval: mailboxesInterval
   });
+  const mailboxStats = useQuery({
+    queryKey: ['mailbox-stats', apiKey],
+    queryFn: () => api<MailboxStats>('/api/mailboxes/stats', { apiKey }),
+    staleTime: 15_000,
+    refetchInterval: mailboxesInterval
+  });
   const emails = useQuery({
     queryKey: ['emails', email, emailPage, apiKey],
     queryFn: () => {
@@ -127,6 +133,7 @@ export function InboxPage() {
       setMailboxPage(1);
       setMailboxSearch('');
       queryClient.invalidateQueries({ queryKey: ['mailboxes'] });
+      queryClient.invalidateQueries({ queryKey: ['mailbox-stats'] });
       toast.success(data.reuse ? text.inbox.emailReuse : text.toast.emailGenerated);
     },
     onError: (error) => toast.error(error.message)
@@ -136,6 +143,7 @@ export function InboxPage() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['emails'] });
       queryClient.invalidateQueries({ queryKey: ['mailboxes'] });
+      queryClient.invalidateQueries({ queryKey: ['mailbox-stats'] });
       setSelectedID('');
       setEmailPage(1);
       toast.success(text.toast.inboxCleared);
@@ -146,6 +154,7 @@ export function InboxPage() {
     mutationFn: (mailbox: MailboxInfo) => api(`/api/mailboxes/${mailbox.id}`, { method: 'DELETE', apiKey }),
     onSuccess: (_data, mailbox) => {
       queryClient.invalidateQueries({ queryKey: ['mailboxes'] });
+      queryClient.invalidateQueries({ queryKey: ['mailbox-stats'] });
       if (mailbox.email === email) {
         setEmail('');
         setSelectedID('');
@@ -294,6 +303,35 @@ export function InboxPage() {
             {text.inbox.generate}
           </button>
         </div>
+
+        {mailboxStats.data && (
+          <div className="mb-4 grid gap-1 rounded-lg border border-[var(--border)] bg-[var(--soft)] p-3 text-sm">
+            <div className="flex items-center gap-2">
+              <Inbox size={14} className="text-[var(--muted)]" />
+              <span>
+                {mailboxStats.data.public_mailbox_daily_limit > 0
+                  ? text.inbox.publicMailboxStats
+                      .replace('{today}', String(mailboxStats.data.public_mailbox_today))
+                      .replace('{dailyLimit}', String(mailboxStats.data.public_mailbox_daily_limit))
+                      .replace('{total}', String(mailboxStats.data.public_mailbox_created))
+                  : text.inbox.publicMailboxNoLimit
+                      .replace('{today}', String(mailboxStats.data.public_mailbox_today))
+                      .replace('{total}', String(mailboxStats.data.public_mailbox_created))
+                }
+              </span>
+            </div>
+            <div className="flex items-center gap-2">
+              <Inbox size={14} className="text-[var(--muted)]" />
+              <span>{text.inbox.privateMailboxStats.replace('{total}', String(mailboxStats.data.private_mailbox_created))}</span>
+            </div>
+            {mailboxStats.data.require_public_domain && !mailboxStats.data.has_public_domain && (
+              <div className="flex items-center gap-2 text-[var(--bad)]">
+                <ShieldAlert size={14} />
+                <span>{text.inbox.requirePublicDomainHint}</span>
+              </div>
+            )}
+          </div>
+        )}
 
         {(mailboxes.isLoading || mailboxSearch || mailboxTotal > 0) && (
           <div className="mb-4">

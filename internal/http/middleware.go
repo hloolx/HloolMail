@@ -223,7 +223,6 @@ func (h *Handler) consumeUserQuota(c *gin.Context) bool {
 	now := time.Now()
 	result := h.DB.Model(&models.User{}).
 		Where("id = ? AND enabled = ?", user.ID, true).
-		Where("(daily_limit = 0 OR last_used_at IS NULL OR DATE(last_used_at) != DATE(?) OR used_today < daily_limit)", now).
 		Where("(total_limit = 0 OR total_used < total_limit)").
 		Updates(map[string]interface{}{
 			"used_today":   gorm.Expr("CASE WHEN last_used_at IS NULL OR DATE(last_used_at) != DATE(?) THEN 1 ELSE used_today + 1 END", now),
@@ -237,10 +236,6 @@ func (h *Handler) consumeUserQuota(c *gin.Context) bool {
 	if result.RowsAffected == 0 {
 		var fresh models.User
 		if err := h.DB.First(&fresh, "id = ?", user.ID).Error; err == nil {
-			if fresh.DailyLimit > 0 && fresh.UsedToday >= fresh.DailyLimit && (fresh.LastUsedAt == nil || auth.SameLocalDay(*fresh.LastUsedAt, now)) {
-				fail(c, http.StatusTooManyRequests, "user daily quota exceeded")
-				return false
-			}
 			if fresh.TotalLimit > 0 && fresh.TotalUsed >= fresh.TotalLimit {
 				fail(c, http.StatusTooManyRequests, "user total quota exceeded")
 				return false

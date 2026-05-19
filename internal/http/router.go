@@ -82,6 +82,8 @@ func NewRouter(h *Handler) *gin.Engine {
 	authAPI := api.Group("", h.perAPIRateLimit(2, 10))
 	authAPI.POST("/auth/logout", h.logout)
 	authAPI.GET("/auth/me", h.me)
+	authAPI.GET("/user/oauth-identities", h.listUserOAuthIdentities)
+	authAPI.DELETE("/user/oauth-identities/:provider", h.unbindUserOAuthIdentity)
 	authAPI.GET("/stats", h.stats)
 	authAPI.GET("/stats/timeseries", h.statsTimeseries)
 
@@ -93,6 +95,7 @@ func NewRouter(h *Handler) *gin.Engine {
 	mailGroup.DELETE("/email/:id", h.deleteEmail)
 	mailGroup.DELETE("/emails/clear", h.clearEmails)
 	mailGroup.GET("/mailboxes", h.listMailboxes)
+	mailGroup.GET("/mailboxes/stats", h.mailboxStats)
 	mailGroup.DELETE("/mailboxes/:id", h.deleteMailbox)
 	api.GET("/inbox-stream", h.perAPIRateLimit(1.0/6, 3), h.inboxStream)
 
@@ -100,6 +103,7 @@ func NewRouter(h *Handler) *gin.Engine {
 
 	domainGroup := api.Group("", h.perAPIRateLimit(0.5, 5))
 	domainGroup.POST("/domains/request", h.requestDomain)
+	domainGroup.POST("/domains/batch-request", h.batchRequestDomain)
 	domainGroup.POST("/domains/check-mx", h.perAPIRateLimit(1.0/6, 2), h.checkMX)
 	domainGroup.GET("/domains", h.listDomains)
 	domainGroup.GET("/domains/available", h.availableDomains)
@@ -145,6 +149,8 @@ func NewRouter(h *Handler) *gin.Engine {
 	adminGroup.GET("/admin/oauth/providers", h.adminListOAuthProviders)
 	adminGroup.PATCH("/admin/oauth/providers/:provider", h.adminUpdateOAuthProvider)
 	adminGroup.GET("/admin/quota-alerts", h.adminQuotaAlerts)
+	adminGroup.GET("/admin/quota-settings", h.adminQuotaSettings)
+	adminGroup.PATCH("/admin/quota-settings", h.patchAdminQuotaSettings)
 	adminGroup.GET("/admin/audit-logs", h.adminAuditLogs)
 	adminGroup.GET("/admin/announcements", h.adminListAnnouncements)
 	adminGroup.POST("/admin/announcements", h.adminCreateAnnouncement)

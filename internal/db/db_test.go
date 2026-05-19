@@ -4,8 +4,10 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"gptmail/internal/config"
+	"gptmail/internal/models"
 
 	"gorm.io/gorm"
 )
@@ -110,6 +112,86 @@ func TestAutoMigrateCreatesIntegrityConstraints(t *testing.T) {
 	assertForeignKey(t, database, "notifications", "domain_id", "domains")
 	assertForeignKey(t, database, "domain_check_result_records", "run_id", "domain_check_runs")
 	assertForeignKey(t, database, "domain_check_result_records", "domain_id", "domains")
+}
+
+func TestBackfillMailboxCountersUsesExistingMailboxes(t *testing.T) {
+	database, err := Open(config.Config{
+		DatabaseDriver: "sqlite",
+		DatabaseURL:    filepath.Join(t.TempDir(), "mail.db"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sqlDB, err := database.DB()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer sqlDB.Close()
+
+	if err := AutoMigrate(database); err != nil {
+		t.Fatal(err)
+	}
+	user := models.User{
+		Email:        "owner@example.com",
+		PasswordHash: "hash",
+		Role:         models.UserRoleUser,
+		Enabled:      true,
+	}
+	if err := database.Create(&user).Error; err != nil {
+		t.Fatal(err)
+	}
+	publicDomain := models.Domain{
+		Domain:            "public.test",
+		Mode:              models.DomainModePublic,
+		Active:            true,
+		MXVerified:        true,
+		VerificationToken: "public-token",
+	}
+	privateDomain := models.Domain{
+		Domain:            "private.test",
+		Mode:              models.DomainModePrivate,
+		OwnerID:           &user.ID,
+		Active:            true,
+		MXVerified:        true,
+		VerificationToken: "private-token",
+	}
+	if err := database.Create(&publicDomain).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := database.Create(&privateDomain).Error; err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	old := now.AddDate(0, 0, -1)
+	mailboxes := []models.Mailbox{
+		{OwnerID: user.ID, Email: "today@public.test", LocalPart: "today", Host: "public.test", DomainID: publicDomain.ID, CreatedAt: now},
+		{OwnerID: user.ID, Email: "old@public.test", LocalPart: "old", Host: "public.test", DomainID: publicDomain.ID, CreatedAt: old},
+		{OwnerID: user.ID, Email: "mine@private.test", LocalPart: "mine", Host: "private.test", DomainID: privateDomain.ID, CreatedAt: now},
+	}
+	if err := database.Create(&mailboxes).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	if err := BackfillMailboxCounters(database); err != nil {
+		t.Fatal(err)
+	}
+	var refreshedUser models.User
+	if err := database.First(&refreshedUser, user.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if refreshedUser.PublicMailboxCreated != 2 || refreshedUser.PrivateMailboxCreated != 1 {
+		t.Fatalf("user counters public/private = %d/%d, want 2/1", refreshedUser.PublicMailboxCreated, refreshedUser.PrivateMailboxCreated)
+	}
+	if refreshedUser.PublicMailboxDate != now.Format("2006-01-02") || refreshedUser.PublicMailboxToday != 1 {
+		t.Fatalf("today counter date/count = %q/%d, want today/1", refreshedUser.PublicMailboxDate, refreshedUser.PublicMailboxToday)
+	}
+	var refreshedPublic models.Domain
+	if err := database.First(&refreshedPublic, publicDomain.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if refreshedPublic.MailboxCreatedCount != 2 {
+		t.Fatalf("public domain mailbox_created_count = %d, want 2", refreshedPublic.MailboxCreatedCount)
+	}
 }
 
 type tableColumn struct {

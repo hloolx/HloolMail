@@ -134,6 +134,10 @@ export type User = {
   total_limit: number;
   used_today: number;
   total_used: number;
+  public_mailbox_created: number;
+  public_mailbox_today: number;
+  public_mailbox_date?: string;
+  private_mailbox_created: number;
   last_used_at?: string;
   created_at: string;
 };
@@ -148,6 +152,24 @@ export type MailboxInfo = {
   message_count: number;
   last_message_at?: string;
   created_at: string;
+};
+
+export type MailboxStats = {
+  public_mailbox_created: number;
+  public_mailbox_today: number;
+  public_mailbox_daily_limit: number;
+  private_mailbox_created: number;
+  has_public_domain: boolean;
+  require_public_domain: boolean;
+};
+
+export type SystemQuotaSettings = {
+  id: number;
+  public_domain_mailbox_limit: number;
+  user_daily_public_mailbox_limit: number;
+  require_public_domain_for_quota: boolean;
+  created_at: string;
+  updated_at: string;
 };
 
 export type AppNotification = {
