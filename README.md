@@ -51,7 +51,7 @@ flowchart LR
 
 GitHub Release 会把前端静态资源内嵌进后端二进制。下载后不需要再单独构建或携带 `web/dist`，程序会直接托管 Web 控制台。
 
-`v0.1.8` 标注为 HLOOL Mail 的第一个正式版本。
+`v0.1.9` 标注为 HLOOL Mail 的最新正式版本。
 
 | 文件 | 适用环境 |
 | --- | --- |
@@ -145,7 +145,7 @@ docker compose up -d
 
 ```text
 ghcr.io/hloolx/hloolmail:latest
-ghcr.io/hloolx/hloolmail:v0.1.8
+ghcr.io/hloolx/hloolmail:v0.1.9
 ```
 
 如果本地 Docker 构建时访问 Go 或 npm 官方源较慢，可以在 `.env` 里调整：
