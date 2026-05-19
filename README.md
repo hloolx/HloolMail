@@ -15,6 +15,10 @@
   <a href="#dns--mx">DNS / MX</a>
 </p>
 
+<p align="center">
+  <a href="https://linux.do">学 AI 上 L 站</a>
+</p>
+
 ## 项目作用
 
 HLOOL Mail 用来搭建一个属于自己的临时邮箱服务。它可以接收公网邮件，为用户生成随机邮箱地址，也可以绑定自己的域名，让脚本、测试平台或 AI 助手通过 API 创建邮箱、等待验证码邮件、读取收件箱内容。
