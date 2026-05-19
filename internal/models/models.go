@@ -129,6 +129,14 @@ func (d Domain) HasCompleteVerification() bool {
 	return d.MXVerified && (!d.WildcardRequested || d.WildcardEnabled)
 }
 
+func (d Domain) IsRootMailboxReady() bool {
+	return d.Active && d.MXVerified
+}
+
+func (d Domain) IsWildcardReady() bool {
+	return d.Active && d.MXVerified && d.WildcardEnabled
+}
+
 func (d Domain) IsReady() bool {
 	return d.Active && d.HasCompleteVerification()
 }

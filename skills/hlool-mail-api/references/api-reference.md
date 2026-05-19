@@ -48,7 +48,7 @@ curl "$BASE_URL/api/domains/available" \
   -H "X-API-Key: $API_KEY"
 ```
 
-Use this to get active, MX-verified public domain names from `data.domains`. Public domains may be blocked by some websites.
+Use this to get active, MX-verified public domain names from legacy `data.domains`, richer public domain metadata from `data.public_domains`, and API-key-accessible private domains from `data.private_domains`. Public domains may be blocked by some websites.
 
 Response:
 
@@ -193,7 +193,10 @@ curl -X DELETE "$BASE_URL/api/emails/clear?email=verify@example.com" \
 
 Common `error` values and likely guidance:
 
-- `domain not found or not verified`: Ask the user to finish private-domain setup and MX verification in the web console.
+- `domain not found`: Ask the user to confirm the domain spelling and API key account.
+- `domain MX not verified`: Ask the user to finish MX verification in the web console.
+- `private domain access denied`: The private domain belongs to another account or the wrong API key is being used.
+- `no available public domains; pass domain to use a private domain`: Use a domain from `data.private_domains` explicitly.
 - `domain access denied`: The API key belongs to the wrong user or the domain belongs to another account.
 - `email address already in use`: Generate a random prefix or choose a different prefix.
 - `api key quota exceeded`: Ask the user to raise or reset their API key quota in the web console.

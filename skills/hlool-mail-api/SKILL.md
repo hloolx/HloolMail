@@ -46,7 +46,7 @@ Treat private-domain setup as successful only when `POST /api/generate-email` re
 Public domains are fast but less reliable with third-party websites. If the target website rejects an address or no verification email arrives, suggest:
 
 - Generate a different mailbox.
-- Try another public domain from `GET /api/domains/available` using `X-API-Key`, then read `data.domains`.
+- Try another public domain from `GET /api/domains/available` using `X-API-Key`, then read `data.public_domains` or legacy `data.domains`.
 - Use a different local-part prefix.
 - Wait briefly before requesting another verification email.
 - Use a private domain for important or long-running automation.

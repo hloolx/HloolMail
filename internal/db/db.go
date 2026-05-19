@@ -120,17 +120,37 @@ func AutoMigrate(db *gorm.DB) error {
 	); err != nil {
 		return err
 	}
+	if err := BackfillDomainBoolDefaults(db); err != nil {
+		return err
+	}
 	if err := BackfillMailboxCounters(db); err != nil {
 		return err
 	}
 	return BackfillDomainFirstVerifiedAt(db)
 }
 
+func BackfillDomainBoolDefaults(db *gorm.DB) error {
+	defaults := map[string]bool{
+		"active":             false,
+		"mx_verified":        false,
+		"wildcard_requested": false,
+		"wildcard_enabled":   false,
+	}
+	for column, value := range defaults {
+		if err := db.Model(&models.Domain{}).Where(column+" IS NULL").Update(column, value).Error; err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func BackfillDomainFirstVerifiedAt(db *gorm.DB) error {
 	return db.Model(&models.Domain{}).
-		Where("active = ? AND mx_verified = ? AND (wildcard_requested = ? OR wildcard_enabled = ?) AND first_verified_at IS NULL",
+		Where("active = ? AND mx_verified = ? AND (COALESCE(wildcard_requested, ?) = ? OR COALESCE(wildcard_enabled, ?) = ?) AND first_verified_at IS NULL",
 			true,
 			true,
+			false,
+			false,
 			false,
 			true,
 		).

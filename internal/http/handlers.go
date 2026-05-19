@@ -26,19 +26,32 @@ import (
 
 var htmlPolicy = bluemonday.UGCPolicy()
 
-const publicReadyDomainSQL = "mode = ? AND active = ? AND mx_verified = ? AND (wildcard_requested = ? OR wildcard_enabled = ?)"
+const rootReadyDomainSQL = "mode = ? AND active = ? AND mx_verified = ?"
+
+func rootReadyDomainArgs(mode string) []interface{} {
+	return []interface{}{mode, true, true}
+}
 
 func publicReadyDomainArgs() []interface{} {
-	return []interface{}{models.DomainModePublic, true, true, false, true}
+	return rootReadyDomainArgs(models.DomainModePublic)
 }
 
 func publicReadyDomainQuery(query *gorm.DB) *gorm.DB {
-	return query.Where(publicReadyDomainSQL, publicReadyDomainArgs()...)
+	return query.Where(rootReadyDomainSQL, publicReadyDomainArgs()...)
+}
+
+func privateReadyDomainQuery(query *gorm.DB) *gorm.DB {
+	return query.Where(rootReadyDomainSQL, rootReadyDomainArgs(models.DomainModePrivate)...)
+}
+
+func ownerRootReadyPublicDomainQuery(query *gorm.DB, ownerID uint) *gorm.DB {
+	args := append([]interface{}{ownerID}, publicReadyDomainArgs()...)
+	return query.Where("owner_id = ? AND "+rootReadyDomainSQL, args...)
 }
 
 func visibleDomainsForOwner(query *gorm.DB, ownerID uint) *gorm.DB {
 	args := append([]interface{}{ownerID}, publicReadyDomainArgs()...)
-	return query.Where("owner_id = ? OR ("+publicReadyDomainSQL+")", args...)
+	return query.Where("owner_id = ? OR ("+rootReadyDomainSQL+")", args...)
 }
 
 type requestActor struct {
@@ -768,7 +781,7 @@ func (h *Handler) checkMX(c *gin.Context) {
 		fail(c, http.StatusNotFound, "domain not found")
 		return
 	}
-	if !h.canManageDomain(c, d) && !(d.Mode == models.DomainModePublic && d.IsReady()) {
+	if !h.canManageDomain(c, d) && !(d.Mode == models.DomainModePublic && d.IsRootMailboxReady()) {
 		fail(c, http.StatusForbidden, "domain access denied")
 		return
 	}
@@ -781,29 +794,24 @@ func (h *Handler) checkMX(c *gin.Context) {
 }
 
 func (h *Handler) listDomains(c *gin.Context) {
-	user, loggedIn := h.requireLogin(c)
-	if !loggedIn {
+	actor, allowed := h.requireActor(c)
+	if !allowed {
 		return
 	}
 	var domains []models.Domain
-	query := h.DB.Order("domain asc")
-	if user.Role != models.UserRoleAdmin {
-		query = visibleDomainsForOwner(query, user.ID)
-	}
+	query := h.scopeDomains(actor).Order("domain asc")
 	if err := query.Find(&domains).Error; err != nil {
 		fail(c, http.StatusInternalServerError, err.Error())
 		return
 	}
-	webOK(c, webDomainsWithCounts(h.DB, domains))
+	ok(c, webDomainsWithCounts(h.DB, domains))
 }
 
 type availableDomainsResponse struct {
-	PublicDomains  []availableDomainDTO `json:"public_domains"`
-	PrivateDomains []availableDomainDTO `json:"private_domains"`
-}
-
-type publicAvailableDomainsResponse struct {
-	Domains []string `json:"domains"`
+	Domains                 []string             `json:"domains"`
+	PublicDomains           []availableDomainDTO `json:"public_domains"`
+	PrivateDomains          []availableDomainDTO `json:"private_domains"`
+	PublicUnavailableReason string               `json:"public_unavailable_reason,omitempty"`
 }
 
 func (h *Handler) availableDomains(c *gin.Context) {
@@ -816,21 +824,20 @@ func (h *Handler) availableDomains(c *gin.Context) {
 		fail(c, http.StatusInternalServerError, err.Error())
 		return
 	}
-	if currentAPIKey(c) != nil {
-		publicDomains = h.filterCappedPublicDomains(publicDomains, actor)
-		publicOK(c, publicAvailableDomainsResponse{Domains: domainNames(publicDomains)})
+	publicDomains, publicUnavailableReason, err := h.filterAvailablePublicDomains(publicDomains, actor)
+	if err != nil {
+		fail(c, http.StatusInternalServerError, err.Error())
 		return
 	}
-	publicDomains = h.filterCappedPublicDomains(publicDomains, actor)
-	privateQuery := h.DB.Order("domain asc").
-		Where("mode = ? AND active = ? AND mx_verified = ? AND (wildcard_requested = ? OR wildcard_enabled = ?)",
-			models.DomainModePrivate, true, true, false, true)
+	privateQuery := privateReadyDomainQuery(h.DB.Order("domain asc"))
 	if !actor.isAdmin() {
 		ownerID, hasOwner := actor.ownerID()
 		if !hasOwner {
-			webOK(c, availableDomainsResponse{
-				PublicDomains:  availableDomainDTOsWithCountsOrEmpty(h.DB, publicDomains),
-				PrivateDomains: []availableDomainDTO{},
+			ok(c, availableDomainsResponse{
+				Domains:                 domainNames(publicDomains),
+				PublicDomains:           availableDomainDTOsWithCountsOrEmpty(h.DB, publicDomains),
+				PrivateDomains:          []availableDomainDTO{},
+				PublicUnavailableReason: publicUnavailableReason,
 			})
 			return
 		}
@@ -841,9 +848,11 @@ func (h *Handler) availableDomains(c *gin.Context) {
 		fail(c, http.StatusInternalServerError, err.Error())
 		return
 	}
-	webOK(c, availableDomainsResponse{
-		PublicDomains:  availableDomainDTOsWithCountsOrEmpty(h.DB, publicDomains),
-		PrivateDomains: availableDomainDTOsWithCountsOrEmpty(h.DB, privateDomains),
+	ok(c, availableDomainsResponse{
+		Domains:                 domainNames(publicDomains),
+		PublicDomains:           availableDomainDTOsWithCountsOrEmpty(h.DB, publicDomains),
+		PrivateDomains:          availableDomainDTOsWithCountsOrEmpty(h.DB, privateDomains),
+		PublicUnavailableReason: publicUnavailableReason,
 	})
 }
 
@@ -912,6 +921,7 @@ func (h *Handler) patchDomain(c *gin.Context) {
 	if input.Mode == models.DomainModePublic || input.Mode == models.DomainModePrivate {
 		d.Mode = input.Mode
 	}
+	applyDomainVerificationLifecycle(&d, time.Now(), false)
 	if err := h.DB.Save(&d).Error; err != nil {
 		fail(c, http.StatusInternalServerError, err.Error())
 		return
@@ -1270,7 +1280,7 @@ func (h *Handler) canViewDomain(actor *requestActor, d models.Domain) bool {
 	if actor == nil {
 		return false
 	}
-	if d.Mode == models.DomainModePublic && d.IsReady() {
+	if d.Mode == models.DomainModePublic && d.IsRootMailboxReady() {
 		return true
 	}
 	if actor.isAdmin() {
@@ -1286,10 +1296,16 @@ func (h *Handler) selectDomainForActor(input string, actor *requestActor) (*mode
 		var d models.Domain
 		err := h.DB.Where("domain = ?", domainName).First(&d).Error
 		if err != nil {
-			return nil, fmt.Errorf("域名未激活或 MX 未验证")
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return nil, fmt.Errorf("域名不存在或当前 API key 无权使用该域名")
+			}
+			return nil, err
 		}
-		if !d.IsReady() {
-			return nil, fmt.Errorf("域名未激活或 MX 未验证")
+		if !d.Active {
+			return nil, fmt.Errorf("域名已停用")
+		}
+		if !d.MXVerified {
+			return nil, fmt.Errorf("域名 MX 未验证")
 		}
 		if d.Mode == models.DomainModePrivate {
 			if actor.isAdmin() {
@@ -1298,7 +1314,7 @@ func (h *Handler) selectDomainForActor(input string, actor *requestActor) (*mode
 			if ownerID, ok := actor.ownerID(); ok && d.OwnerID != nil && *d.OwnerID == ownerID {
 				return &d, nil
 			}
-			return nil, fmt.Errorf("该域名是私有域名，只有域名的所有者才能使用")
+			return nil, fmt.Errorf("该私有域名仅域名所有者或管理员可使用")
 		}
 		return &d, nil
 	}
@@ -1306,9 +1322,12 @@ func (h *Handler) selectDomainForActor(input string, actor *requestActor) (*mode
 	if err := publicReadyDomainQuery(h.DB.Order("domain asc")).Find(&domains).Error; err != nil {
 		return nil, err
 	}
-	domains = h.filterCappedPublicDomains(domains, actor)
+	domains, _, err := h.filterAvailablePublicDomains(domains, actor)
+	if err != nil {
+		return nil, err
+	}
 	if len(domains) == 0 {
-		return nil, fmt.Errorf("暂无可用公共域名")
+		return nil, fmt.Errorf("暂无可随机选择的公有域名；如需使用私有域名，请传入 domain")
 	}
 	index := randomIndex(len(domains))
 	return &domains[index], nil
@@ -1854,7 +1873,7 @@ func (h *Handler) createMailboxWithAccounting(ownerID uint, d *models.Domain, em
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&freshDomain, "id = ?", d.ID).Error; err != nil {
 			return err
 		}
-		if !freshDomain.IsReady() {
+		if !freshDomain.IsRootMailboxReady() {
 			return httpStatusError{Status: http.StatusBadRequest, Message: "域名未激活或 MX 未验证"}
 		}
 		if freshDomain.Mode == models.DomainModePrivate && !actor.isAdmin() {
@@ -1904,12 +1923,12 @@ func (h *Handler) applyMailboxAccounting(tx *gorm.DB, userID uint, d models.Doma
 
 func (h *Handler) enforcePublicMailboxRules(tx *gorm.DB, userID uint, d models.Domain, settings *models.SystemQuotaSettings) error {
 	if settings.RequirePublicDomainForQuota {
-		var publicDomainCount int64
-		if err := tx.Model(&models.Domain{}).Where("owner_id = ? AND mode = ? AND active = ?", userID, models.DomainModePublic, true).Count(&publicDomainCount).Error; err != nil {
+		hasPublicDomain, err := hasRootReadyPublicDomain(tx, userID)
+		if err != nil {
 			return err
 		}
-		if publicDomainCount == 0 {
-			return httpStatusError{Status: http.StatusForbidden, Message: "需要先上传公开域名后才可创建公开邮箱"}
+		if !hasPublicDomain {
+			return httpStatusError{Status: http.StatusForbidden, Message: "需要先上传并验证公开域名后才可创建公开邮箱"}
 		}
 	}
 	return nil
@@ -1957,21 +1976,47 @@ func incrementUserPublicMailboxCount(tx *gorm.DB, userID uint, settings *models.
 	return nil
 }
 
-func (h *Handler) filterCappedPublicDomains(domains []models.Domain, actor *requestActor) []models.Domain {
+func hasRootReadyPublicDomain(tx *gorm.DB, userID uint) (bool, error) {
+	var count int64
+	if err := ownerRootReadyPublicDomainQuery(tx.Model(&models.Domain{}), userID).Count(&count).Error; err != nil {
+		return false, err
+	}
+	return count > 0, nil
+}
+
+func (h *Handler) filterAvailablePublicDomains(domains []models.Domain, actor *requestActor) ([]models.Domain, string, error) {
 	settings, err := db.EnsureSystemQuotaSettings(h.DB)
-	if err != nil || settings.PublicDomainMailboxLimit <= 0 {
-		return domains
+	if err != nil {
+		return nil, "", err
+	}
+	if actor != nil && !actor.isAdmin() && settings.RequirePublicDomainForQuota {
+		ownerID, ok := actor.ownerID()
+		if !ok {
+			return []models.Domain{}, "public mailbox creation requires an owned active MX-verified public domain", nil
+		}
+		hasPublicDomain, err := hasRootReadyPublicDomain(h.DB, ownerID)
+		if err != nil {
+			return nil, "", err
+		}
+		if !hasPublicDomain {
+			return []models.Domain{}, "public mailbox creation requires an owned active MX-verified public domain", nil
+		}
+	}
+	if settings.PublicDomainMailboxLimit <= 0 {
+		return domains, "", nil
 	}
 	var ownerID uint
-	if id, ok := actor.ownerID(); ok {
-		ownerID = id
+	if actor != nil {
+		if id, ok := actor.ownerID(); ok {
+			ownerID = id
+		}
 	}
 	out := make([]models.Domain, 0, len(domains))
 	for _, d := range domains {
 		isOwner := d.OwnerID != nil && *d.OwnerID == ownerID
-		if actor.isAdmin() || isOwner || d.MailboxCreatedCount < settings.PublicDomainMailboxLimit {
+		if actor != nil && (actor.isAdmin() || isOwner) || d.MailboxCreatedCount < settings.PublicDomainMailboxLimit {
 			out = append(out, d)
 		}
 	}
-	return out
+	return out, "", nil
 }

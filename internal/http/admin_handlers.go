@@ -697,15 +697,17 @@ func (h *Handler) mailboxStats(c *gin.Context) {
 	if user.Role == models.UserRoleAdmin {
 		publicLimit = 0
 	}
-	var publicDomainCount int64
-	h.DB.Model(&models.Domain{}).Where("owner_id = ? AND mode = ? AND active = ?", ownerID, models.DomainModePublic, true).Count(&publicDomainCount)
+	hasPublicDomain, err := hasRootReadyPublicDomain(h.DB, ownerID)
+	if err != nil {
+		fail(c, http.StatusInternalServerError, err.Error())
+		return
+	}
 	publicToday := user.PublicMailboxToday
 	publicTotal := user.PublicMailboxCreated
 	privateTotal := user.PrivateMailboxCreated
 	if !isSameLocalDate(user.PublicMailboxDate) {
 		publicToday = 0
 	}
-	hasPublicDomain := publicDomainCount > 0
 	ok(c, gin.H{
 		"public_mailbox_created":     publicTotal,
 		"public_mailbox_today":       publicToday,

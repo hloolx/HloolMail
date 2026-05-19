@@ -55,16 +55,12 @@ export type PublicDomainItem = {
   message_count?: number;
 };
 
-export type PublicDomainAvailability = {
-  domains: string[];
+export type DomainAvailability = {
+  domains?: string[];
+  public_domains?: PublicDomainItem[];
+  private_domains?: PublicDomainItem[];
+  public_unavailable_reason?: string;
 };
-
-export type WebDomainAvailability = {
-  public_domains: PublicDomainItem[];
-  private_domains: PublicDomainItem[];
-};
-
-export type DomainAvailability = PublicDomainAvailability | WebDomainAvailability;
 
 export type MessageSummary = {
   id: string;

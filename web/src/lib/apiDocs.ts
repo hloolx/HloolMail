@@ -28,9 +28,9 @@ export const API_DOC_ENDPOINTS: DocEndpoint[] = [
     auth: 'apiKey',
     requestPath: '/api/domains/available',
     zhTitle: '可用域名',
-    zhDesc: '使用 API Key 时返回可用公开域名名称数组 data.domains。',
+    zhDesc: '使用 API Key 时返回可用公有域名、可访问私有域名，并保留 data.domains 兼容字段。',
     enTitle: 'Available domains',
-    enDesc: 'List available public domain names in data.domains.'
+    enDesc: 'List available public domains and API-key-accessible private domains.'
   },
   {
     method: 'POST',
@@ -226,7 +226,8 @@ export function apiDocMarkdown(baseURL: string, config?: InstallStatus['config']
     '1. Ask the user to add `example.com` as a private domain in the web console.',
     '2. Ask the user to add an MX record in their DNS provider pointing to the platform MX target.',
     '3. After DNS is ready, ask the user to complete MX verification in the web console.',
-    '4. Use `POST /api/generate-email` with the private domain. If the response returns that domain, API access is working.',
+    '4. You can discover API-key-accessible private domains from `GET /api/domains/available` in `data.private_domains`.',
+    '5. Use `POST /api/generate-email` with the private domain. If the response returns that domain, API access is working.',
     '',
     'DNS records the user should add:',
     '',
@@ -257,7 +258,7 @@ export function apiDocMarkdown(baseURL: string, config?: InstallStatus['config']
     '  -H "X-API-Key: YOUR_KEY"',
     '```',
     '',
-    'The API-key response is `{ "domains": ["public.example.com"] }` inside the standard envelope.',
+    'The API-key response keeps legacy public names in `data.domains` and also returns `data.public_domains` plus `data.private_domains` metadata. New clients should prefer the metadata arrays.',
     '',
     '```bash',
     `curl -X POST "${base}/api/generate-email" \\`,

@@ -488,15 +488,15 @@ export function InboxPage() {
 
 function domainAvailabilityGroups(data?: DomainAvailability) {
   if (!data) return { publicDomains: [] as PublicDomainItem[], privateDomains: [] as PublicDomainItem[] };
-  if ('domains' in data) {
+  if (data.public_domains || data.private_domains) {
     return {
-      publicDomains: data.domains.map((domain) => ({ domain, mode: 'public' as const })),
-      privateDomains: [] as PublicDomainItem[]
+      publicDomains: data.public_domains || [],
+      privateDomains: data.private_domains || []
     };
   }
   return {
-    publicDomains: data.public_domains || [],
-    privateDomains: data.private_domains || []
+    publicDomains: (data.domains || []).map((domain) => ({ domain, mode: 'public' as const })),
+    privateDomains: [] as PublicDomainItem[]
   };
 }
 

@@ -415,6 +415,125 @@ func TestAPIKeyCanGenerateAndReadOwnedMailbox(t *testing.T) {
 	}
 }
 
+func TestGenerateEmailUsesRootReadyForExplicitDomain(t *testing.T) {
+	db := httpTestDB(t)
+	hash, err := auth.HashSecret("password123")
+	if err != nil {
+		t.Fatal(err)
+	}
+	owner := models.User{
+		Email:        "owner@example.com",
+		PasswordHash: hash,
+		Role:         models.UserRoleUser,
+		Enabled:      true,
+		DailyLimit:   1000,
+	}
+	other := models.User{
+		Email:        "other@example.com",
+		PasswordHash: hash,
+		Role:         models.UserRoleUser,
+		Enabled:      true,
+		DailyLimit:   1000,
+	}
+	if err := db.Create(&owner).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&other).Error; err != nil {
+		t.Fatal(err)
+	}
+	privateDomain := models.Domain{
+		Domain:            "root-ready-private.test",
+		Mode:              models.DomainModePrivate,
+		OwnerID:           &owner.ID,
+		Active:            true,
+		MXVerified:        true,
+		WildcardRequested: true,
+	}
+	if err := db.Create(&privateDomain).Error; err != nil {
+		t.Fatal(err)
+	}
+	router := testRouter(t, db)
+	service := auth.APIKeyService{DB: db}
+	_, ownerPlain, err := service.CreateFor(&owner.ID, "owner-key", 20, 0, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, otherPlain, err := service.CreateFor(&other.ID, "other-key", 20, 0, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	created := perform(router, http.MethodPost, "/api/generate-email", map[string]any{
+		"prefix": "verify",
+		"domain": "root-ready-private.test",
+	}, map[string]string{"X-API-Key": ownerPlain})
+	if created.Code != http.StatusCreated {
+		t.Fatalf("generate on root-ready wildcard-pending private domain = %d: %s", created.Code, created.Body.String())
+	}
+	var body struct {
+		Data struct {
+			Email string `json:"email"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(created.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if body.Data.Email != "verify@root-ready-private.test" {
+		t.Fatalf("generated email = %q", body.Data.Email)
+	}
+
+	blocked := perform(router, http.MethodPost, "/api/generate-email", map[string]any{
+		"prefix": "verify",
+		"domain": "root-ready-private.test",
+	}, map[string]string{"X-API-Key": otherPlain})
+	if blocked.Code != http.StatusBadRequest {
+		t.Fatalf("other api key private generate = %d: %s", blocked.Code, blocked.Body.String())
+	}
+	if !strings.Contains(blocked.Body.String(), "仅域名所有者或管理员") {
+		t.Fatalf("private access error should be explicit: %s", blocked.Body.String())
+	}
+}
+
+func TestGenerateEmailWithoutDomainKeepsPublicOnlyDefault(t *testing.T) {
+	db := httpTestDB(t)
+	hash, err := auth.HashSecret("password123")
+	if err != nil {
+		t.Fatal(err)
+	}
+	owner := models.User{
+		Email:        "owner@example.com",
+		PasswordHash: hash,
+		Role:         models.UserRoleUser,
+		Enabled:      true,
+		DailyLimit:   1000,
+	}
+	if err := db.Create(&owner).Error; err != nil {
+		t.Fatal(err)
+	}
+	privateDomain := models.Domain{
+		Domain:     "only-private.test",
+		Mode:       models.DomainModePrivate,
+		OwnerID:    &owner.ID,
+		Active:     true,
+		MXVerified: true,
+	}
+	if err := db.Create(&privateDomain).Error; err != nil {
+		t.Fatal(err)
+	}
+	router := testRouter(t, db)
+	_, plain, err := (auth.APIKeyService{DB: db}).CreateFor(&owner.ID, "owner-key", 20, 0, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	response := perform(router, http.MethodPost, "/api/generate-email", map[string]any{}, map[string]string{"X-API-Key": plain})
+	if response.Code != http.StatusBadRequest {
+		t.Fatalf("generate without public domains = %d: %s", response.Code, response.Body.String())
+	}
+	if !strings.Contains(response.Body.String(), "私有域名") || !strings.Contains(response.Body.String(), "domain") {
+		t.Fatalf("expected explicit private-domain guidance, got: %s", response.Body.String())
+	}
+}
+
 func TestPublicMailboxDailyQuotaDoesNotAffectPrivateDomain(t *testing.T) {
 	db := httpTestDB(t)
 	hash, err := auth.HashSecret("password123")
@@ -706,6 +825,94 @@ func TestPublicDomainMailboxLimitFiltersAndEnforces(t *testing.T) {
 	}
 }
 
+func TestRequirePublicDomainQuotaUsesRootReadyForListAndCreate(t *testing.T) {
+	db := httpTestDB(t)
+	hash, err := auth.HashSecret("password123")
+	if err != nil {
+		t.Fatal(err)
+	}
+	owner := models.User{Email: "owner@example.com", PasswordHash: hash, Role: models.UserRoleUser, Enabled: true, DailyLimit: 1000}
+	if err := db.Create(&owner).Error; err != nil {
+		t.Fatal(err)
+	}
+	settings := models.SystemQuotaSettings{ID: 1, RequirePublicDomainForQuota: true}
+	if err := db.Create(&settings).Error; err != nil {
+		t.Fatal(err)
+	}
+	poolDomain := models.Domain{
+		Domain:     "pool-quota.test",
+		Mode:       models.DomainModePublic,
+		Active:     true,
+		MXVerified: true,
+	}
+	ownedPublic := models.Domain{
+		Domain:     "owned-unverified-public.test",
+		Mode:       models.DomainModePublic,
+		OwnerID:    &owner.ID,
+		Active:     true,
+		MXVerified: false,
+	}
+	if err := db.Create(&[]models.Domain{poolDomain, ownedPublic}).Error; err != nil {
+		t.Fatal(err)
+	}
+	router := testRouter(t, db)
+	_, plain, err := (auth.APIKeyService{DB: db}).CreateFor(&owner.ID, "owner-key", 20, 0, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	headers := map[string]string{"X-API-Key": plain}
+
+	initialStats := perform(router, http.MethodGet, "/api/mailboxes/stats", nil, headers)
+	if initialStats.Code != http.StatusOK {
+		t.Fatalf("mailbox stats before owned public ready = %d: %s", initialStats.Code, initialStats.Body.String())
+	}
+	if hasPublicDomain := decodeHasPublicDomain(t, initialStats.Body.Bytes()); hasPublicDomain {
+		t.Fatalf("mailbox stats should require root-ready owned public domain: %s", initialStats.Body.String())
+	}
+	hidden := perform(router, http.MethodGet, "/api/domains/available", nil, headers)
+	if hidden.Code != http.StatusOK {
+		t.Fatalf("available before owned public ready = %d: %s", hidden.Code, hidden.Body.String())
+	}
+	if names := decodeAPIKeyAvailableDomainNames(t, hidden.Body.Bytes()); names["pool-quota.test"] {
+		t.Fatalf("public pool should be hidden until owner has a root-ready public domain: %v", names)
+	}
+	blocked := perform(router, http.MethodPost, "/api/generate-email", map[string]any{
+		"prefix": "blocked",
+		"domain": "pool-quota.test",
+	}, headers)
+	if blocked.Code != http.StatusForbidden {
+		t.Fatalf("public generate before owned public ready = %d: %s", blocked.Code, blocked.Body.String())
+	}
+
+	if err := db.Model(&models.Domain{}).Where("domain = ?", "owned-unverified-public.test").Updates(map[string]any{
+		"mx_verified":        true,
+		"wildcard_requested": true,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	updatedStats := perform(router, http.MethodGet, "/api/mailboxes/stats", nil, headers)
+	if updatedStats.Code != http.StatusOK {
+		t.Fatalf("mailbox stats after owned public ready = %d: %s", updatedStats.Code, updatedStats.Body.String())
+	}
+	if hasPublicDomain := decodeHasPublicDomain(t, updatedStats.Body.Bytes()); !hasPublicDomain {
+		t.Fatalf("mailbox stats should accept root-ready owned public domain: %s", updatedStats.Body.String())
+	}
+	visible := perform(router, http.MethodGet, "/api/domains/available", nil, headers)
+	if visible.Code != http.StatusOK {
+		t.Fatalf("available after owned public ready = %d: %s", visible.Code, visible.Body.String())
+	}
+	if names := decodeAPIKeyAvailableDomainNames(t, visible.Body.Bytes()); !names["pool-quota.test"] {
+		t.Fatalf("public pool should be visible once owner has root-ready public domain: %v", names)
+	}
+	created := perform(router, http.MethodPost, "/api/generate-email", map[string]any{
+		"prefix": "allowed",
+		"domain": "pool-quota.test",
+	}, headers)
+	if created.Code != http.StatusCreated {
+		t.Fatalf("public generate after owned root-ready public domain = %d: %s", created.Code, created.Body.String())
+	}
+}
+
 func TestInboxPaginationAndMailboxSearch(t *testing.T) {
 	db := httpTestDB(t)
 	hash, err := auth.HashSecret("password123")
@@ -876,6 +1083,10 @@ func TestAvailableDomainsRequiresActorAndSeparatesModes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	_, adminPlain, err := (auth.APIKeyService{DB: db}).CreateFor(&admin.ID, "admin-key", 20, 0, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	anonymous := perform(router, http.MethodGet, "/api/domains/available", nil, nil)
 	if anonymous.Code != http.StatusUnauthorized {
@@ -895,16 +1106,28 @@ func TestAvailableDomainsRequiresActorAndSeparatesModes(t *testing.T) {
 	if response.Code != http.StatusOK {
 		t.Fatalf("available domains with api key = %d: %s", response.Code, response.Body.String())
 	}
-	publicNames := decodeAPIKeyAvailableDomainNames(t, response.Body.Bytes())
-	if !publicNames["public-ready.test"] || publicNames["public-pending.test"] || publicNames["public-wildcard-pending.test"] {
-		t.Fatalf("api key domain list was not filtered to ready public domains: %v", publicNames)
+	legacyPublicNames := decodeAPIKeyAvailableDomainNames(t, response.Body.Bytes())
+	if !legacyPublicNames["public-ready.test"] || !legacyPublicNames["public-wildcard-pending.test"] || legacyPublicNames["public-pending.test"] {
+		t.Fatalf("api key legacy domain list was not filtered to root-ready public domains: %v", legacyPublicNames)
 	}
-	if strings.Contains(response.Body.String(), "public_domains") || strings.Contains(response.Body.String(), "private_domains") || strings.Contains(response.Body.String(), "owner-ready.test") {
-		t.Fatalf("api key response should only expose public domain names: %s", response.Body.String())
+	apiPublicNames, apiPrivateNames := decodeAvailableDomainNames(t, response.Body.Bytes())
+	if !apiPublicNames["public-ready.test"] || !apiPublicNames["public-wildcard-pending.test"] || apiPublicNames["public-pending.test"] {
+		t.Fatalf("api key structured public domains mismatch: %v", apiPublicNames)
+	}
+	if !apiPrivateNames["owner-ready.test"] || apiPrivateNames["owner-pending.test"] || apiPrivateNames["owner-inactive.test"] || apiPrivateNames["other-ready.test"] {
+		t.Fatalf("api key private domains mismatch: %v", apiPrivateNames)
 	}
 	publicDetail := perform(router, http.MethodGet, "/api/domains/"+strconv.Itoa(int(domains[0].ID)), nil, headers)
 	if publicDetail.Code != http.StatusOK {
 		t.Fatalf("public domain detail with api key = %d: %s", publicDetail.Code, publicDetail.Body.String())
+	}
+	adminResponse := perform(router, http.MethodGet, "/api/domains/available", nil, map[string]string{"X-API-Key": adminPlain})
+	if adminResponse.Code != http.StatusOK {
+		t.Fatalf("available domains with admin api key = %d: %s", adminResponse.Code, adminResponse.Body.String())
+	}
+	_, adminPrivateNames := decodeAvailableDomainNames(t, adminResponse.Body.Bytes())
+	if !adminPrivateNames["owner-ready.test"] || !adminPrivateNames["other-ready.test"] {
+		t.Fatalf("admin api key private domain visibility mismatch: %v", adminPrivateNames)
 	}
 
 	login := perform(router, http.MethodPost, "/api/auth/login", map[string]any{
@@ -1315,6 +1538,10 @@ func TestListDomainsHidesOtherUsersWaitingDomains(t *testing.T) {
 		t.Fatal(err)
 	}
 	router := testRouter(t, db)
+	_, ownerPlain, err := (auth.APIKeyService{DB: db}).CreateFor(&owner.ID, "owner-key", 20, 0, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	ownerLogin := perform(router, http.MethodPost, "/api/auth/login", map[string]any{
 		"email":    "owner@example.com",
@@ -1330,11 +1557,19 @@ func TestListDomainsHidesOtherUsersWaitingDomains(t *testing.T) {
 		t.Fatalf("owner domains = %d: %s", ownerResponse.Code, ownerResponse.Body.String())
 	}
 	ownerDomains := decodeDomainNames(t, ownerResponse.Body.Bytes())
-	if ownerDomains["other-pending.test"] || ownerDomains["other-wildcard-pending.test"] {
+	if ownerDomains["other-pending.test"] {
 		t.Fatalf("owner saw another user's waiting domains: %v", ownerDomains)
 	}
-	if !ownerDomains["other-ready.test"] || !ownerDomains["owner-pending.test"] {
+	if !ownerDomains["other-ready.test"] || !ownerDomains["other-wildcard-pending.test"] || !ownerDomains["owner-pending.test"] {
 		t.Fatalf("owner domain visibility missing expected domains: %v", ownerDomains)
+	}
+	ownerAPIResponse := perform(router, http.MethodGet, "/api/domains", nil, map[string]string{"X-API-Key": ownerPlain})
+	if ownerAPIResponse.Code != http.StatusOK {
+		t.Fatalf("owner api key domains = %d: %s", ownerAPIResponse.Code, ownerAPIResponse.Body.String())
+	}
+	ownerAPIDomains := decodeDomainNames(t, ownerAPIResponse.Body.Bytes())
+	if ownerAPIDomains["other-pending.test"] || !ownerAPIDomains["other-ready.test"] || !ownerAPIDomains["other-wildcard-pending.test"] || !ownerAPIDomains["owner-pending.test"] {
+		t.Fatalf("owner api key domain visibility mismatch: %v", ownerAPIDomains)
 	}
 	for _, forbidden := range []string{"mx_auto_retry_", "health_failure_count", "health_recovery_count", "last_health_", "last_mx_records", "last_check_message"} {
 		if strings.Contains(ownerResponse.Body.String(), forbidden) {
@@ -1360,6 +1595,60 @@ func TestListDomainsHidesOtherUsersWaitingDomains(t *testing.T) {
 		if !adminDomains[domainName] {
 			t.Fatalf("admin did not see %s: %v", domainName, adminDomains)
 		}
+	}
+}
+
+func TestPatchDomainAppliesVerificationLifecycle(t *testing.T) {
+	db := httpTestDB(t)
+	hash, err := auth.HashSecret("password123")
+	if err != nil {
+		t.Fatal(err)
+	}
+	admin := models.User{
+		Email:        "admin@example.com",
+		PasswordHash: hash,
+		Role:         models.UserRoleAdmin,
+		Enabled:      true,
+	}
+	if err := db.Create(&admin).Error; err != nil {
+		t.Fatal(err)
+	}
+	pendingDeleteAt := time.Now().Add(-time.Minute)
+	domain := models.Domain{
+		Domain:          "manual-ready.test",
+		Mode:            models.DomainModePrivate,
+		Active:          true,
+		MXVerified:      false,
+		PendingDeleteAt: &pendingDeleteAt,
+	}
+	if err := db.Create(&domain).Error; err != nil {
+		t.Fatal(err)
+	}
+	router := testRouter(t, db)
+	login := perform(router, http.MethodPost, "/api/auth/login", map[string]any{
+		"email":    "admin@example.com",
+		"password": "password123",
+	}, nil)
+	if login.Code != http.StatusOK {
+		t.Fatalf("login = %d: %s", login.Code, login.Body.String())
+	}
+	cookies := make([]string, 0, len(login.Result().Cookies()))
+	for _, cookie := range login.Result().Cookies() {
+		cookies = append(cookies, cookie.Name+"="+cookie.Value)
+	}
+
+	patched := perform(router, http.MethodPatch, "/api/domains/"+strconv.Itoa(int(domain.ID)), map[string]any{
+		"mx_verified": true,
+	}, map[string]string{"Cookie": strings.Join(cookies, "; ")})
+	if patched.Code != http.StatusOK {
+		t.Fatalf("patch domain = %d: %s", patched.Code, patched.Body.String())
+	}
+	var refreshed models.Domain
+	if err := db.First(&refreshed, domain.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if refreshed.FirstVerifiedAt == nil || refreshed.PendingDeleteAt != nil {
+		t.Fatalf("verification lifecycle not applied, first=%v pending=%v", refreshed.FirstVerifiedAt, refreshed.PendingDeleteAt)
 	}
 }
 
@@ -2126,4 +2415,17 @@ func decodeAvailableDomainNames(t *testing.T, body []byte) (map[string]bool, map
 		privateNames[d.Domain] = true
 	}
 	return publicNames, privateNames
+}
+
+func decodeHasPublicDomain(t *testing.T, body []byte) bool {
+	t.Helper()
+	var payload struct {
+		Data struct {
+			HasPublicDomain bool `json:"has_public_domain"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(body, &payload); err != nil {
+		t.Fatal(err)
+	}
+	return payload.Data.HasPublicDomain
 }

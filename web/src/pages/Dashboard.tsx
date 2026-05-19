@@ -40,7 +40,7 @@ export function Dashboard({ user }: { user: User }) {
     retry: false,
   });
 
-  const publicDomains: PublicDomainItem[] = domains.data && 'public_domains' in domains.data ? domains.data.public_domains : [];
+  const publicDomains: PublicDomainItem[] = domains.data?.public_domains || [];
   const urgentNotifications = (notifications.data || []).filter(
     (item) => item.type === 'MX_FAILED' || item.type === 'DOMAIN_EXPIRING' || item.type === 'DOMAIN_EXPIRED',
   );
