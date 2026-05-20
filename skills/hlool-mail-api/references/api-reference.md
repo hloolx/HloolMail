@@ -2,7 +2,21 @@
 
 Use `X-API-Key` for protected calls. This reference covers API-key automation only; login, API-key creation, domain management, MX checks, admin work, user management, and live streams are web-console tasks.
 
+HLOOL Mail is open source and self-hostable. Set `BASE_URL` to the user's own HLOOL Mail instance, not to a fixed official API host:
+
+```bash
+BASE_URL="https://your-hlool-mail.example"
+API_KEY="key-hloolmail_xxx"
+```
+
 ## Generate Mailbox
+
+Recommended domain-selection flow:
+
+1. Call `GET /api/domains/available` with `X-API-Key`.
+2. Build choices from `data.public_domains` and `data.private_domains`.
+3. Let the user choose one or more domains when the workflow needs multiple mailboxes.
+4. Pass the selected domain to `POST /api/generate-email`.
 
 Private or specific public domain:
 
@@ -71,7 +85,9 @@ curl "$BASE_URL/api/domains/available" \
   -H "X-API-Key: $API_KEY"
 ```
 
-Use this to get active, MX-verified public domain names from legacy `data.domains`, richer public domain metadata from `data.public_domains`, and API-key-accessible private domains from `data.private_domains`. Public domains may be blocked by some websites.
+Use this as the domain-picker source of truth before creating mailboxes. It returns active, MX-verified public domains in `data.public_domains` and API-key-accessible private domains in `data.private_domains`. Legacy `data.domains` only contains public-domain strings and should be used as a fallback for older clients. Public domains may be blocked by some websites.
+
+Clients and AI agents should present `public_domains` and `private_domains` as grouped selectable options. Do not ask the user to type a private domain when it already appears in `private_domains`.
 
 Response:
 

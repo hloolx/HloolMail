@@ -1,12 +1,13 @@
 import { FormEvent, useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Check, Copy, ListChecks, RefreshCw, Share2, X } from 'lucide-react';
+import { Check, Copy, ListChecks, RefreshCw, Share2, Trash2, X } from 'lucide-react';
 import { toast } from 'sonner';
 import type { MailboxInfo, PaginatedResponse, ShareLinkAccessLogDTO, ShareLinkDTO } from '../api';
 import { api, postJSON } from '../api';
 import { useText } from '../locales';
 import { copy } from '../lib/clipboard';
 import { relativeTime } from '../lib/display';
+import { notifySuccess, runDeleteEffect } from '../lib/feedback';
 import { useCopyState } from '../hooks/useCopyState';
 import { ConfirmModal, DataTable, EmptyState, IconButton, PaginationControls } from '../components/shared';
 
@@ -18,9 +19,10 @@ export function ShareLinksPage() {
   const [page, setPage] = useState(1);
   const [createOpen, setCreateOpen] = useState(false);
   const [logsTarget, setLogsTarget] = useState<ShareLinkDTO | null>(null);
-  const [revokeTarget, setRevokeTarget] = useState<ShareLinkDTO | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<ShareLinkDTO | null>(null);
   const [rotateTarget, setRotateTarget] = useState<ShareLinkDTO | null>(null);
   const [oneTimeLink, setOneTimeLink] = useState<ShareLinkDTO | null>(null);
+  const [dissolveTarget, setDissolveTarget] = useState<HTMLElement | null>(null);
   const links = useQuery({
     queryKey: ['share-links', page],
     queryFn: () => api<PaginatedResponse<ShareLinkDTO>>(`/api/share-links?page=${page}&per_page=${SHARE_PER_PAGE}`),
@@ -28,12 +30,12 @@ export function ShareLinksPage() {
   });
   const list = links.data?.items || [];
 
-  const revoke = useMutation({
-    mutationFn: (link: ShareLinkDTO) => postJSON<ShareLinkDTO>(`/api/share-links/${link.id}/revoke`, {}),
+  const deleteLink = useMutation({
+    mutationFn: (link: ShareLinkDTO) => api(`/api/share-links/${link.id}`, { method: 'DELETE' }),
     onSuccess: () => {
-      setRevokeTarget(null);
+      setDeleteTarget(null);
       queryClient.invalidateQueries({ queryKey: ['share-links'] });
-      toast.success(text.shareLinks.revokedToast);
+      notifySuccess(text.shareLinks.deletedToast, { burst: false });
     },
     onError: (error) => toast.error(error.message)
   });
@@ -89,15 +91,19 @@ export function ShareLinksPage() {
                 formatDateTime(link.expires_at, text.shareLinks.noExpiry),
                 link.access_count,
                 link.last_accessed_at ? relativeTime(link.last_accessed_at) : '-',
-                <div className="table-actions">
+                <div className="table-actions" data-share-link-id={link.id}>
                   <IconButton title={text.shareLinks.logs} onClick={() => setLogsTarget(link)}>
                     <ListChecks size={14} />
                   </IconButton>
                   <IconButton title={text.shareLinks.rotate} onClick={() => setRotateTarget(link)} disabled={rotate.isPending}>
                     <RefreshCw size={14} />
                   </IconButton>
-                  <IconButton title={text.shareLinks.revoke} onClick={() => setRevokeTarget(link)} disabled={Boolean(link.revoked_at) || revoke.isPending}>
-                    <X size={14} />
+                  <IconButton title={text.shareLinks.deleteLink} onClick={() => {
+                    const row = document.querySelector(`[data-share-link-id="${link.id}"]`)?.closest('tr') as HTMLElement | null;
+                    setDissolveTarget(row);
+                    setDeleteTarget(link);
+                  }} disabled={deleteLink.isPending}>
+                    <Trash2 size={14} />
                   </IconButton>
                 </div>
               ]
@@ -123,14 +129,25 @@ export function ShareLinksPage() {
       )}
       {logsTarget && <ShareAccessLogsModal link={logsTarget} onClose={() => setLogsTarget(null)} />}
       <ConfirmModal
-        open={Boolean(revokeTarget)}
-        title={text.shareLinks.revoke}
-        description={text.shareLinks.revokeConfirmDesc}
+        open={Boolean(deleteTarget)}
+        title={text.shareLinks.deleteLink}
+        description={text.shareLinks.deleteConfirmDesc}
         danger
-        confirmText={text.shareLinks.revoke}
+        confirmText={text.common.delete}
         cancelText={text.common.cancel}
-        onConfirm={() => revokeTarget && revoke.mutate(revokeTarget)}
-        onCancel={() => setRevokeTarget(null)}
+        onConfirm={async () => {
+          const target = deleteTarget;
+          const targetEl = dissolveTarget;
+          setDeleteTarget(null);
+          setDissolveTarget(null);
+          await new Promise(r => requestAnimationFrame(r));
+          await runDeleteEffect(targetEl);
+          if (target) deleteLink.mutate(target);
+        }}
+        onCancel={() => {
+          setDeleteTarget(null);
+          setDissolveTarget(null);
+        }}
       />
       <ConfirmModal
         open={Boolean(rotateTarget)}

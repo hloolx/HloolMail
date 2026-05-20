@@ -136,6 +136,7 @@ func NewRouter(h *Handler) *gin.Engine {
 	shareLinkGroup.GET("/share-links", h.listShareLinks)
 	shareLinkGroup.GET("/share-links/:id", h.getShareLink)
 	shareLinkGroup.PATCH("/share-links/:id", h.patchShareLink)
+	shareLinkGroup.DELETE("/share-links/:id", h.deleteShareLink)
 	shareLinkGroup.POST("/share-links/:id/revoke", h.revokeShareLink)
 	shareLinkGroup.POST("/share-links/:id/rotate-token", h.rotateShareLinkToken)
 	shareLinkGroup.POST("/share-links/:id/rotate-key", h.rotateShareLinkKey)

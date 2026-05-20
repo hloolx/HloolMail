@@ -213,6 +213,27 @@ func (h *Handler) patchShareLink(c *gin.Context) {
 	webOK(c, h.shareLinkDTO(c, *link, "", ""))
 }
 
+func (h *Handler) deleteShareLink(c *gin.Context) {
+	user, loggedIn := h.requireLogin(c)
+	if !loggedIn {
+		return
+	}
+	link, ok := h.findShareLinkForUser(c, user)
+	if !ok {
+		return
+	}
+	if err := h.DB.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Where("share_link_id = ?", link.ID).Delete(&models.ShareLinkAccessLog{}).Error; err != nil {
+			return err
+		}
+		return tx.Delete(link).Error
+	}); err != nil {
+		fail(c, http.StatusInternalServerError, err.Error())
+		return
+	}
+	webOK(c, gin.H{"deleted": true})
+}
+
 func (h *Handler) revokeShareLink(c *gin.Context) {
 	user, loggedIn := h.requireLogin(c)
 	if !loggedIn {

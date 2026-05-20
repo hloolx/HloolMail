@@ -37,7 +37,7 @@ backend worker when `WEBHOOKS_ENABLED` is not `false`.
 
 | Surface | Auth | Enters API-key automation OpenAPI | Current routes | Planned or reserved routes | Notes |
 | --- | --- | --- | --- | --- | --- |
-| API-key automation | `X-API-Key` | Yes | `POST /api/generate-email`, `GET /api/domains/available`, mailbox routes, email routes, `GET /api/stats` | None | This is the stable automation surface for agents and scripts. `generate-email` may create a mailbox share when `share` is enabled. |
+| API-key automation | `X-API-Key` | Yes | `POST /api/generate-email`, `GET /api/domains/available`, mailbox routes, email routes, `GET /api/stats` | None | This is the stable automation surface for agents and scripts. `GET /api/domains/available` is the domain-selection source of truth for both public domains and API-key-accessible private domains. `generate-email` may create a mailbox share when `share` is enabled. |
 | Web session | `gptmail_session` cookie | No | auth/user/passkey/OAuth identity, domain management, API-key management, share-link management, webhook management, notifications, announcements, admin, install/web setup, SSE | None | API key headers must not grant access to session-only management routes. |
 | Public | None | Public metadata only, not API-key automation | `GET /api/health`, `GET /api/version`, `GET /api/version/check`, `GET /api/docs.md`, `GET /api/skill.md`, `GET /api/openapi.json`, `GET /api/openapi.yaml`, `GET /api/shared/:token`, `GET /api/shared/:token/messages`, `GET /api/shared/:token/messages/:message_id`, login/register/OAuth/install bootstrap routes | None | Public docs/meta/shared mailbox read paths must skip API-key authentication and quota consumption. |
 
@@ -47,7 +47,7 @@ These endpoints are allowed in the API-key automation OpenAPI group:
 
 | Method | Path | Purpose |
 | --- | --- | --- |
-| `GET` | `/api/domains/available` | List public domains and API-key-accessible private domains. |
+| `GET` | `/api/domains/available` | List selectable public domains and API-key-accessible private domains. Clients should prefer `data.public_domains` and `data.private_domains`; legacy `data.domains` is public-only fallback data. |
 | `POST` | `/api/generate-email` | Create or reuse a mailbox for the API-key actor. |
 | `GET` | `/api/mailboxes` | List generated mailboxes. |
 | `GET` | `/api/mailboxes/stats` | Read mailbox quota/usage stats visible to the actor. |
@@ -72,7 +72,7 @@ API-key automation OpenAPI group:
 | Family | Current or planned paths | Boundary |
 | --- | --- | --- |
 | Webhooks | Current: `GET/POST /api/webhooks`, `PATCH/DELETE /api/webhooks/:id`, `POST /api/webhooks/:id/rotate-secret`, `POST /api/webhooks/:id/test`, `GET /api/webhooks/:id/deliveries` | Session-only management. Delivery runtime is backend worker initiated. |
-| Share-link management | Current: `POST /api/share-links`, `GET /api/share-links`, `GET /api/share-links/:id`, `PATCH /api/share-links/:id`, `POST /api/share-links/:id/revoke`, `POST /api/share-links/:id/rotate-token`, `POST /api/share-links/:id/rotate-key`, `GET /api/share-links/:id/access-logs` | Session-only management for mailbox shares. `rotate-token` regenerates a complete one-time mailbox access URL. |
+| Share-link management | Current: `POST /api/share-links`, `GET /api/share-links`, `GET /api/share-links/:id`, `PATCH /api/share-links/:id`, `DELETE /api/share-links/:id`, `POST /api/share-links/:id/revoke`, `POST /api/share-links/:id/rotate-token`, `POST /api/share-links/:id/rotate-key`, `GET /api/share-links/:id/access-logs` | Session-only management for mailbox shares. `rotate-token` regenerates a complete one-time mailbox access URL. |
 | SSE | Current: `GET /api/inbox-stream`, `GET /api/notification-stream`, `GET /api/announcement-stream` | Session-only web realtime. Excluded from OpenAPI automation. |
 | Domain management | Current: `/api/domains`, `/api/domains/request`, `/api/domains/batch-request`, `/api/domains/check-mx`, `/api/domains/:id`, `/api/domains/:id/mx-auto-retry` | Web-console task, except `GET /api/domains/available` which is API-key automation. |
 | API-key management | Current: `/api/api-keys`, `/api/api-keys/:id`, `/api/api-keys/:id/reveal` | Session-only; API keys cannot create or manage API keys. |

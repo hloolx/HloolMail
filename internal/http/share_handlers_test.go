@@ -354,6 +354,62 @@ func TestMailboxShareKeyAccessRevokeAndRotate(t *testing.T) {
 	}
 }
 
+func TestShareLinkDeleteRemovesLinkAndAccessLogs(t *testing.T) {
+	db := httpTestDB(t)
+	owner := createShareTestUser(t, db, "delete-owner@example.test")
+	other := createShareTestUser(t, db, "delete-other@example.test")
+	domain := createShareTestDomain(t, db, "delete-share.test", models.DomainModePrivate, &owner.ID)
+	mailbox := createShareTestMailbox(t, db, owner, domain, "remove@delete-share.test")
+	router := testRouter(t, db)
+	ownerLogin := loginShareTestUser(t, router, owner.Email)
+	otherLogin := loginShareTestUser(t, router, other.Email)
+
+	create := perform(router, http.MethodPost, "/api/share-links", map[string]any{
+		"mailbox_id": mailbox.ID,
+	}, cookieHeaders(ownerLogin.Result().Cookies()))
+	if create.Code != http.StatusCreated {
+		t.Fatalf("create share = %d: %s", create.Code, create.Body.String())
+	}
+	created := decodeShareEnvelope[ShareLinkDTO](t, create.Body.Bytes()).Data
+
+	read := perform(router, http.MethodGet, "/api/shared/"+created.Token+"?key="+url.QueryEscape(created.AccessKey), nil, nil)
+	if read.Code != http.StatusOK {
+		t.Fatalf("shared read before delete = %d: %s", read.Code, read.Body.String())
+	}
+
+	otherDelete := perform(router, http.MethodDelete, "/api/share-links/"+uintPath(created.ID), nil, cookieHeaders(otherLogin.Result().Cookies()))
+	if otherDelete.Code != http.StatusNotFound {
+		t.Fatalf("other user delete = %d: %s", otherDelete.Code, otherDelete.Body.String())
+	}
+
+	deleteResponse := perform(router, http.MethodDelete, "/api/share-links/"+uintPath(created.ID), nil, cookieHeaders(ownerLogin.Result().Cookies()))
+	if deleteResponse.Code != http.StatusOK {
+		t.Fatalf("delete share = %d: %s", deleteResponse.Code, deleteResponse.Body.String())
+	}
+	if !strings.Contains(deleteResponse.Body.String(), `"deleted":true`) {
+		t.Fatalf("delete response did not confirm deletion: %s", deleteResponse.Body.String())
+	}
+
+	deletedRead := perform(router, http.MethodGet, "/api/shared/"+created.Token+"?key="+url.QueryEscape(created.AccessKey), nil, nil)
+	if deletedRead.Code != http.StatusNotFound {
+		t.Fatalf("shared read after delete = %d: %s", deletedRead.Code, deletedRead.Body.String())
+	}
+	var remainingLinks int64
+	if err := db.Model(&models.ShareLink{}).Where("id = ?", created.ID).Count(&remainingLinks).Error; err != nil {
+		t.Fatal(err)
+	}
+	if remainingLinks != 0 {
+		t.Fatalf("share link was not deleted, count=%d", remainingLinks)
+	}
+	var remainingLogs int64
+	if err := db.Model(&models.ShareLinkAccessLog{}).Where("share_link_id = ?", created.ID).Count(&remainingLogs).Error; err != nil {
+		t.Fatal(err)
+	}
+	if remainingLogs != 0 {
+		t.Fatalf("share access logs were not deleted, count=%d", remainingLogs)
+	}
+}
+
 func TestGenerateEmailMailboxSharePublicAccessAndDeletion(t *testing.T) {
 	db := httpTestDB(t)
 	owner := createShareTestUser(t, db, "mailbox-share-owner@example.test")

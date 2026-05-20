@@ -211,16 +211,20 @@ Web Console 中创建 API Key 后，明文只会显示一次；后续只能看�
 
 API 自动化使用 `X-API-Key` 请求头。当前稳定面向脚本和 AI 的接口主要是：可用域名、生成邮箱、邮箱列表、邮件读取、邮件删除、统计。完整契约以运行中服务导出的文档为准。
 
+HLOOL Mail 是开源项目，可以部署在你自己的域名或内网环境中。示例里的 `BASE_URL` 不是固定官方 API 地址，请替换为你的 HLOOL Mail 实例地址，例如 `https://your-hlool-mail.example`。
+
 完整接口不要复制到 README，请直接查看运行中服务：
 
-- [Markdown API Guide](https://mail.example.com/api/docs.md): `/api/docs.md`
-- [OpenAPI JSON](https://mail.example.com/api/openapi.json): `/api/openapi.json`
-- [OpenAPI YAML](https://mail.example.com/api/openapi.yaml): `/api/openapi.yaml`
+- Markdown API Guide: `$BASE_URL/api/docs.md`
+- OpenAPI JSON: `$BASE_URL/api/openapi.json`
+- OpenAPI YAML: `$BASE_URL/api/openapi.yaml`
+
+AI 助手或脚本创建邮箱前，推荐先调用 `GET /api/domains/available`。新客户端应优先读取 `data.public_domains` 和 `data.private_domains`，把公共域名和当前 API Key 可访问的私有域名分组展示给用户；需要处理多个邮箱或多个域名时，可以让用户多选后逐个生成。`data.domains` 只保留为旧客户端公共域名 fallback，不要因为它只含公共域名就要求用户手填私有域名。
 
 可跑的 curl 示例：
 
 ```bash
-BASE_URL=https://mail.example.com
+BASE_URL="https://your-hlool-mail.example"
 API_KEY=key-hloolmail_xxx
 
 curl "$BASE_URL/api/domains/available" \
@@ -249,7 +253,7 @@ Webhook 用于在新邮件到达后把事件投递到你的系统、队列或自
 已经登录 Web Console 并拿到 session Cookie 时，也可以直接调用管理接口：
 
 ```bash
-BASE_URL=https://mail.example.com
+BASE_URL="https://your-hlool-mail.example"
 SESSION_COOKIE=your-gptmail-session-cookie
 
 curl -X POST "$BASE_URL/api/webhooks" \
@@ -267,7 +271,7 @@ Share Link 用于把邮箱收件箱安全分享给外部访问者。分享对象
 API Key 自动化可以在生成邮箱时同步创建邮箱分享：
 
 ```bash
-BASE_URL=https://mail.example.com
+BASE_URL="https://your-hlool-mail.example"
 API_KEY=key-hloolmail_xxx
 
 curl -X POST "$BASE_URL/api/generate-email" \
@@ -289,7 +293,7 @@ curl -X POST "$BASE_URL/api/generate-email" \
 已经登录 Web Console 并拿到 session Cookie 时，可以创建邮箱分享：
 
 ```bash
-BASE_URL=https://mail.example.com
+BASE_URL="https://your-hlool-mail.example"
 SESSION_COOKIE=your-gptmail-session-cookie
 
 curl -X POST "$BASE_URL/api/share-links" \
@@ -301,7 +305,7 @@ curl -X POST "$BASE_URL/api/share-links" \
 公开读取分享邮箱邮件：
 
 ```bash
-BASE_URL=https://mail.example.com
+BASE_URL="https://your-hlool-mail.example"
 TOKEN=share-token
 KEY=sharekey-hloolmail_xxx
 
