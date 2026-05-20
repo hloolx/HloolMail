@@ -6,9 +6,10 @@ This document is intentionally about boundaries, not implementation. It records 
 current router surface and the API contract decisions that later phases must
 preserve.
 
-Phase 4 update: message share backend routes are now implemented. Share
-management remains web-session only, public shared-token routes skip API-key
-auth/consume/log, and mailbox share remains deferred.
+Phase 8 update: share is now documented as mailbox-only. API-key automation may
+create a mailbox share during `POST /api/generate-email`; share-link management
+remains web-session only, public shared mailbox reads skip API-key
+auth/consume/log, and full share links can be regenerated but not revealed.
 
 Phase 5 update: webhook backend routes are now implemented. Webhook management
 is web-session only, API key headers are ignored on `/api/webhooks*`, SMTP only
@@ -19,7 +20,7 @@ backend worker when `WEBHOOKS_ENABLED` is not `false`.
 
 | Check | Command | Result |
 | --- | --- | --- |
-| Go tests | `rtk go test ./...` | Passed: 94 tests in 14 packages |
+| Go tests | `rtk go test ./...` | Passed: 138 tests in 20 packages |
 | Web build | `rtk npm run build` in `web` | Passed: TypeScript + Vite build. Vite reported the existing large chunk warning for `assets/index-*.js` |
 
 ## Hard Rules
@@ -29,16 +30,16 @@ backend worker when `WEBHOOKS_ENABLED` is not `false`.
 - SSE is web-console realtime only. `/api/inbox-stream`, `/api/notification-stream`, and `/api/announcement-stream` must be session-only.
 - Automation realtime delivery must use Webhooks, not SSE.
 - Webhook management endpoints must be session-only.
-- Share phase 1 is message share only. Mailbox share is phase 2.
-- Public docs/OpenAPI/shared-token reads must not consume API-key quota, even if a bad API key header is sent.
+- Share is mailbox-only in the public API and docs. Public reads use token plus mailbox access key.
+- Public docs/OpenAPI/shared-token reads and session-only Web Console routes must not consume API-key quota, even if an API key header is sent.
 
 ## Boundary Matrix
 
 | Surface | Auth | Enters API-key automation OpenAPI | Current routes | Planned or reserved routes | Notes |
 | --- | --- | --- | --- | --- | --- |
-| API-key automation | `X-API-Key` | Yes | `POST /api/generate-email`, `GET /api/domains/available`, mailbox routes, email routes, `GET /api/stats` | None | This is the stable automation surface for agents and scripts. |
+| API-key automation | `X-API-Key` | Yes | `POST /api/generate-email`, `GET /api/domains/available`, mailbox routes, email routes, `GET /api/stats` | None | This is the stable automation surface for agents and scripts. `generate-email` may create a mailbox share when `share` is enabled. |
 | Web session | `gptmail_session` cookie | No | auth/user/passkey/OAuth identity, domain management, API-key management, share-link management, webhook management, notifications, announcements, admin, install/web setup, SSE | None | API key headers must not grant access to session-only management routes. |
-| Public | None | Public metadata only, not API-key automation | `GET /api/health`, `GET /api/version`, `GET /api/version/check`, `GET /api/docs.md`, `GET /api/skill.md`, `GET /api/shared/:token`, `POST /api/shared/:token/access`, login/register/OAuth/install bootstrap routes | `GET /api/openapi.json`, `GET /api/openapi.yaml` | Public docs/meta/shared-token read paths must skip API-key authentication and quota consumption. |
+| Public | None | Public metadata only, not API-key automation | `GET /api/health`, `GET /api/version`, `GET /api/version/check`, `GET /api/docs.md`, `GET /api/skill.md`, `GET /api/openapi.json`, `GET /api/openapi.yaml`, `GET /api/shared/:token`, `GET /api/shared/:token/messages`, `GET /api/shared/:token/messages/:message_id`, login/register/OAuth/install bootstrap routes | None | Public docs/meta/shared mailbox read paths must skip API-key authentication and quota consumption. |
 
 ## API-key Automation Surface
 
@@ -71,7 +72,7 @@ API-key automation OpenAPI group:
 | Family | Current or planned paths | Boundary |
 | --- | --- | --- |
 | Webhooks | Current: `GET/POST /api/webhooks`, `PATCH/DELETE /api/webhooks/:id`, `POST /api/webhooks/:id/rotate-secret`, `POST /api/webhooks/:id/test`, `GET /api/webhooks/:id/deliveries` | Session-only management. Delivery runtime is backend worker initiated. |
-| Share-link management | Current: `POST /api/share-links`, `GET /api/share-links`, `GET /api/share-links/:id`, `PATCH /api/share-links/:id`, `POST /api/share-links/:id/revoke`, `POST /api/share-links/:id/rotate-token`, `GET /api/share-links/:id/access-logs` | Session-only management. Phase 1 resource type is `message` only. |
+| Share-link management | Current: `POST /api/share-links`, `GET /api/share-links`, `GET /api/share-links/:id`, `PATCH /api/share-links/:id`, `POST /api/share-links/:id/revoke`, `POST /api/share-links/:id/rotate-token`, `POST /api/share-links/:id/rotate-key`, `GET /api/share-links/:id/access-logs` | Session-only management for mailbox shares. `rotate-token` regenerates a complete one-time mailbox access URL. |
 | SSE | Current: `GET /api/inbox-stream`, `GET /api/notification-stream`, `GET /api/announcement-stream` | Session-only web realtime. Excluded from OpenAPI automation. |
 | Domain management | Current: `/api/domains`, `/api/domains/request`, `/api/domains/batch-request`, `/api/domains/check-mx`, `/api/domains/:id`, `/api/domains/:id/mx-auto-retry` | Web-console task, except `GET /api/domains/available` which is API-key automation. |
 | API-key management | Current: `/api/api-keys`, `/api/api-keys/:id`, `/api/api-keys/:id/reveal` | Session-only; API keys cannot create or manage API keys. |
@@ -80,9 +81,9 @@ API-key automation OpenAPI group:
 | Auth and account | Current: `/api/auth/*`, `/api/user/oauth-identities*`, `/api/user/passkeys*`, `/api/oauth/*` | Browser account/session flows. |
 | Install/setup | Current: `/api/install*`, `/api/auth/login-settings` | Public or setup web flow, not automation API. |
 
-Webhook and share-link management may later appear in an OpenAPI document only
-under a clearly labeled "Web session API" group using cookie/session auth. They
-must not appear in the API-key automation group.
+Webhook and share-link management may appear in an OpenAPI document only under a
+clearly labeled "Web session API" group using cookie/session auth. They must not
+appear in the API-key automation group.
 
 ## Public Surface
 
@@ -90,22 +91,27 @@ must not appear in the API-key automation group.
 | --- | --- | --- | --- |
 | `GET` | `/api/docs.md` | Registered | Public, no API-key quota. |
 | `GET` | `/api/skill.md` | Registered | Public, no API-key quota. |
-| `GET` | `/api/openapi.json` | Planned | Public metadata, no API-key quota. |
-| `GET` | `/api/openapi.yaml` | Planned | Public metadata, no API-key quota. |
-| `GET` | `/api/shared/:token` | Registered | Anonymous read by token. Must not mark message seen. |
-| `POST` | `/api/shared/:token/access` | Registered | Anonymous password/access flow. Password must not be sent in query string. |
+| `GET` | `/api/openapi.json` | Registered | Public metadata, no API-key quota. |
+| `GET` | `/api/openapi.yaml` | Registered | Public metadata, no API-key quota. |
+| `GET` | `/api/shared/:token` | Registered | Anonymous mailbox share metadata/read by token and optional key. |
+| `GET` | `/api/shared/:token/messages` | Registered | Anonymous mailbox message list by token and key. |
+| `GET` | `/api/shared/:token/messages/:message_id` | Registered | Anonymous mailbox message detail by token, key, and mailbox-scoped message ID. |
 
 ## Share Boundary
 
-Phase 1 share links are message-only:
+Share links are mailbox-only:
 
-- `resource_type` must be `message`.
-- Public share read is anonymous token-based read only.
-- Public responses must not expose `headers_json`.
-- Public responses must sanitize `html_content`.
-- Public share access must not change `seen`.
-- Mailbox share is explicitly deferred to phase 2 because it can accidentally
-  expose future mail.
+- `resource_type` is `mailbox`.
+- `CreateShareLinkRequest` uses `mailbox_id`.
+- `PatchShareLinkRequest` updates share metadata such as `expires_at`, not credentials.
+- Full share token/key values are one-time secrets. Management APIs can rotate
+  them to produce a new complete `access_url`, but cannot reveal the old link.
+- Do not add a public `POST /api/shared/:token/access` unlock path; the public
+  read surface is token plus `?key=...` on GET requests.
+- Public share reads use token plus mailbox access key and must not consume API-key quota.
+- Public mailbox message details must not expose `headers_json`.
+- Public mailbox message details must sanitize `html_content`.
+- Public share reads must not change `seen`.
 
 ## Phase 0 Route Table From `internal/http/router.go`
 

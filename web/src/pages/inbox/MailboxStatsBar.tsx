@@ -11,7 +11,7 @@ export function MailboxStatsBar({ text, stats }: MailboxStatsBarProps) {
   if (!stats) return null;
 
   return (
-    <div className="mb-4 grid gap-1 rounded-lg border border-[var(--border)] bg-[var(--soft)] p-3 text-sm">
+    <div className="grid gap-1 rounded-lg border border-[var(--border)] bg-[var(--soft)] p-3 text-sm">
       <div className="flex items-center gap-2">
         <Inbox size={14} className="text-[var(--muted)]" />
         <span>

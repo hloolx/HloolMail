@@ -16,6 +16,7 @@ const (
 	PendingDomainTTL = 2 * time.Hour
 
 	ShareResourceTypeMessage = "message"
+	ShareResourceTypeMailbox = "mailbox"
 
 	WebhookEventMessageReceived = "message.received"
 	WebhookEventEndpointTest    = "endpoint.test"
@@ -232,9 +233,12 @@ type ShareLink struct {
 	Owner          User           `gorm:"foreignKey:OwnerID;constraint:OnUpdate:CASCADE,OnDelete:CASCADE;" json:"-"`
 	TokenHash      string         `gorm:"type:text;not null" json:"-"`
 	TokenPrefix    string         `gorm:"index;size:32;not null" json:"token_prefix"`
-	ResourceType   string         `gorm:"size:40;index;not null;default:message" json:"resource_type"`
-	MessageID      string         `gorm:"size:36;index;not null" json:"message_id"`
-	Message        Message        `gorm:"foreignKey:MessageID;references:ID;constraint:OnUpdate:CASCADE,OnDelete:CASCADE;" json:"-"`
+	ResourceType   string         `gorm:"size:40;index;not null;default:mailbox" json:"resource_type"`
+	MessageID      *string        `gorm:"size:36;index" json:"message_id,omitempty"`
+	Message        *Message       `gorm:"foreignKey:MessageID;references:ID;constraint:OnUpdate:CASCADE,OnDelete:CASCADE;" json:"-"`
+	MailboxID      *uint          `gorm:"index" json:"mailbox_id,omitempty"`
+	Mailbox        *Mailbox       `gorm:"foreignKey:MailboxID;constraint:OnUpdate:CASCADE,OnDelete:CASCADE;" json:"-"`
+	AccessKeyHash  string         `gorm:"type:text" json:"-"`
 	PasswordHash   string         `gorm:"type:text" json:"-"`
 	ExpiresAt      *time.Time     `gorm:"index" json:"expires_at,omitempty"`
 	RevokedAt      *time.Time     `gorm:"index" json:"revoked_at,omitempty"`
@@ -252,7 +256,8 @@ type ShareLinkAccessLog struct {
 	OwnerID       uint      `gorm:"index;not null" json:"owner_id"`
 	Owner         User      `gorm:"foreignKey:OwnerID;constraint:OnUpdate:CASCADE,OnDelete:CASCADE;" json:"-"`
 	ResourceType  string    `gorm:"size:40;index;not null" json:"resource_type"`
-	MessageID     string    `gorm:"size:36;index;not null" json:"message_id"`
+	MessageID     *string   `gorm:"size:36;index" json:"message_id,omitempty"`
+	MailboxID     *uint     `gorm:"index" json:"mailbox_id,omitempty"`
 	Success       bool      `gorm:"index;not null" json:"success"`
 	FailureReason string    `gorm:"size:120" json:"failure_reason,omitempty"`
 	IP            string    `gorm:"size:120;not null" json:"ip"`

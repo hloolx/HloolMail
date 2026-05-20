@@ -1,15 +1,18 @@
 package httpapi
 
 import (
+	"bytes"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strconv"
 	"strings"
 	"testing"
 	"time"
 
 	"gptmail/internal/auth"
+	"gptmail/internal/config"
 	"gptmail/internal/models"
 
 	"gorm.io/gorm"
@@ -36,14 +39,20 @@ func TestShareLinkPublicReadSkipsAPIKeyAndDoesNotRevealSecrets(t *testing.T) {
 	login := loginShareTestUser(t, router, owner.Email)
 
 	create := perform(router, http.MethodPost, "/api/share-links", map[string]any{
-		"message_id": message.ID,
+		"mailbox_id": mailbox.ID,
 	}, cookieHeaders(login.Result().Cookies()))
 	if create.Code != http.StatusCreated {
 		t.Fatalf("create share = %d: %s", create.Code, create.Body.String())
 	}
 	created := decodeShareEnvelope[ShareLinkDTO](t, create.Body.Bytes()).Data
+	if created.ResourceType != models.ShareResourceTypeMailbox || created.MailboxID == nil || *created.MailboxID != mailbox.ID {
+		t.Fatalf("created share is not a mailbox share: %+v", created)
+	}
 	if created.Token == "" {
 		t.Fatal("create response did not include one-time token")
+	}
+	if created.AccessKey == "" {
+		t.Fatal("create response did not include one-time access key")
 	}
 	if created.ShareURL == "" {
 		t.Fatal("create response did not include share_url")
@@ -56,20 +65,23 @@ func TestShareLinkPublicReadSkipsAPIKeyAndDoesNotRevealSecrets(t *testing.T) {
 	if stored.TokenHash == "" || stored.TokenHash == created.Token {
 		t.Fatalf("token hash was not stored safely: hash=%q token=%q", stored.TokenHash, created.Token)
 	}
+	if stored.AccessKeyHash == "" || stored.AccessKeyHash == created.AccessKey {
+		t.Fatalf("access key hash was not stored safely: hash=%q key=%q", stored.AccessKeyHash, created.AccessKey)
+	}
 
 	list := perform(router, http.MethodGet, "/api/share-links", nil, cookieHeaders(login.Result().Cookies()))
 	if list.Code != http.StatusOK {
 		t.Fatalf("list share links = %d: %s", list.Code, list.Body.String())
 	}
-	if strings.Contains(list.Body.String(), created.Token) {
-		t.Fatalf("list response leaked one-time token: %s", list.Body.String())
+	if strings.Contains(list.Body.String(), created.Token) || strings.Contains(list.Body.String(), created.AccessKey) {
+		t.Fatalf("list response leaked one-time token/key: %s", list.Body.String())
 	}
 	get := perform(router, http.MethodGet, "/api/share-links/"+uintPath(created.ID), nil, cookieHeaders(login.Result().Cookies()))
 	if get.Code != http.StatusOK {
 		t.Fatalf("get share link = %d: %s", get.Code, get.Body.String())
 	}
-	if strings.Contains(get.Body.String(), created.Token) {
-		t.Fatalf("get response leaked one-time token: %s", get.Body.String())
+	if strings.Contains(get.Body.String(), created.Token) || strings.Contains(get.Body.String(), created.AccessKey) {
+		t.Fatalf("get response leaked one-time token/key: %s", get.Body.String())
 	}
 
 	apiKey, plainAPIKey, err := (auth.APIKeyService{DB: db}).CreateFor(&owner.ID, "shared-read", 1, 0, nil)
@@ -82,13 +94,21 @@ func TestShareLinkPublicReadSkipsAPIKeyAndDoesNotRevealSecrets(t *testing.T) {
 	if apiKeyOnlyList.Code != http.StatusUnauthorized {
 		t.Fatalf("api key-only share link management = %d: %s", apiKeyOnlyList.Code, apiKeyOnlyList.Body.String())
 	}
+	apiKeyOnlyCreate := perform(router, http.MethodPost, "/api/share-links", map[string]any{
+		"mailbox_id": mailbox.ID,
+	}, map[string]string{
+		"X-API-Key": plainAPIKey,
+	})
+	if apiKeyOnlyCreate.Code != http.StatusUnauthorized {
+		t.Fatalf("api key-only share link create = %d: %s", apiKeyOnlyCreate.Code, apiKeyOnlyCreate.Body.String())
+	}
 	sessionWithBadAPIKeyHeaders := cookieHeaders(login.Result().Cookies())
 	sessionWithBadAPIKeyHeaders["X-API-Key"] = "definitely-wrong"
 	sessionWithBadAPIKey := perform(router, http.MethodGet, "/api/share-links", nil, sessionWithBadAPIKeyHeaders)
 	if sessionWithBadAPIKey.Code != http.StatusOK {
 		t.Fatalf("session share link management should ignore api key header, got %d: %s", sessionWithBadAPIKey.Code, sessionWithBadAPIKey.Body.String())
 	}
-	public := perform(router, http.MethodGet, "/api/shared/"+created.Token, nil, map[string]string{
+	public := perform(router, http.MethodGet, "/api/shared/"+created.Token+"/messages/"+message.ID+"?key="+url.QueryEscape(created.AccessKey), nil, map[string]string{
 		"X-API-Key": plainAPIKey,
 	})
 	if public.Code != http.StatusOK {
@@ -140,7 +160,7 @@ func TestShareLinkPublicReadSkipsAPIKeyAndDoesNotRevealSecrets(t *testing.T) {
 		t.Fatalf("share access accounting mismatch: %+v", stored)
 	}
 
-	badHeaderRead := perform(router, http.MethodGet, "/api/shared/"+created.Token, nil, map[string]string{
+	badHeaderRead := perform(router, http.MethodGet, "/api/shared/"+created.Token+"?key="+url.QueryEscape(created.AccessKey), nil, map[string]string{
 		"X-API-Key": "definitely-wrong",
 	})
 	if badHeaderRead.Code != http.StatusOK {
@@ -148,123 +168,135 @@ func TestShareLinkPublicReadSkipsAPIKeyAndDoesNotRevealSecrets(t *testing.T) {
 	}
 }
 
-func TestShareLinkCreationUsesMessageOwnerHelper(t *testing.T) {
+func TestShareLinkCreationIsMailboxOnly(t *testing.T) {
 	db := httpTestDB(t)
-	publicDomainOwner := createShareTestUser(t, db, "public-domain-owner@example.test")
 	mailboxOwner := createShareTestUser(t, db, "mailbox-owner@example.test")
-	privateDomainOwner := createShareTestUser(t, db, "private-domain-owner@example.test")
-
-	publicDomain := createShareTestDomain(t, db, "public-owned.test", models.DomainModePublic, &publicDomainOwner.ID)
-	mailbox := createShareTestMailbox(t, db, mailboxOwner, publicDomain, "demo@public-owned.test")
-	publicMessage := createShareTestMessage(t, db, "public-owned-message", mailbox.Email, publicDomain, false)
-
-	privateDomain := createShareTestDomain(t, db, "private-owned.test", models.DomainModePrivate, &privateDomainOwner.ID)
-	privateMessage := createShareTestMessage(t, db, "private-domain-message", "random@private-owned.test", privateDomain, false)
+	otherUser := createShareTestUser(t, db, "other-user@example.test")
+	domain := createShareTestDomain(t, db, "mailbox-only.test", models.DomainModePrivate, &mailboxOwner.ID)
+	mailbox := createShareTestMailbox(t, db, mailboxOwner, domain, "demo@mailbox-only.test")
+	message := createShareTestMessage(t, db, "mailbox-only-message", mailbox.Email, domain, false)
 
 	router := testRouter(t, db)
-	publicDomainOwnerLogin := loginShareTestUser(t, router, publicDomainOwner.Email)
-	publicDomainOwnerCreate := perform(router, http.MethodPost, "/api/share-links", map[string]any{
-		"message_id": publicMessage.ID,
-	}, cookieHeaders(publicDomainOwnerLogin.Result().Cookies()))
-	if publicDomainOwnerCreate.Code != http.StatusForbidden {
-		t.Fatalf("public domain owner created mailbox-owned share: %d %s", publicDomainOwnerCreate.Code, publicDomainOwnerCreate.Body.String())
-	}
-
 	mailboxOwnerLogin := loginShareTestUser(t, router, mailboxOwner.Email)
-	mailboxOwnerCreate := perform(router, http.MethodPost, "/api/share-links", map[string]any{
-		"message_id": publicMessage.ID,
+	implicitMessage := perform(router, http.MethodPost, "/api/share-links", map[string]any{
+		"message_id": message.ID,
 	}, cookieHeaders(mailboxOwnerLogin.Result().Cookies()))
-	if mailboxOwnerCreate.Code != http.StatusCreated {
-		t.Fatalf("mailbox owner create share = %d: %s", mailboxOwnerCreate.Code, mailboxOwnerCreate.Body.String())
+	if implicitMessage.Code != http.StatusBadRequest {
+		t.Fatalf("implicit message_id share request = %d: %s", implicitMessage.Code, implicitMessage.Body.String())
 	}
 
-	privateDomainOwnerLogin := loginShareTestUser(t, router, privateDomainOwner.Email)
-	privateDomainOwnerCreate := perform(router, http.MethodPost, "/api/share-links", map[string]any{
-		"message_id": privateMessage.ID,
-	}, cookieHeaders(privateDomainOwnerLogin.Result().Cookies()))
-	if privateDomainOwnerCreate.Code != http.StatusCreated {
-		t.Fatalf("private domain owner create share = %d: %s", privateDomainOwnerCreate.Code, privateDomainOwnerCreate.Body.String())
+	explicitMessage := perform(router, http.MethodPost, "/api/share-links", map[string]any{
+		"resource_type": "message",
+		"message_id":    message.ID,
+	}, cookieHeaders(mailboxOwnerLogin.Result().Cookies()))
+	if explicitMessage.Code != http.StatusBadRequest {
+		t.Fatalf("explicit message resource share request = %d: %s", explicitMessage.Code, explicitMessage.Body.String())
+	}
+
+	missingMailbox := perform(router, http.MethodPost, "/api/share-links", map[string]any{}, cookieHeaders(mailboxOwnerLogin.Result().Cookies()))
+	if missingMailbox.Code != http.StatusBadRequest {
+		t.Fatalf("default mailbox share without mailbox_id = %d: %s", missingMailbox.Code, missingMailbox.Body.String())
 	}
 
 	mailboxShare := perform(router, http.MethodPost, "/api/share-links", map[string]any{
 		"resource_type": "mailbox",
-		"message_id":    publicMessage.ID,
+		"mailbox_id":    mailbox.ID,
 	}, cookieHeaders(mailboxOwnerLogin.Result().Cookies()))
-	if mailboxShare.Code != http.StatusBadRequest {
-		t.Fatalf("mailbox share resource type = %d: %s", mailboxShare.Code, mailboxShare.Body.String())
+	if mailboxShare.Code != http.StatusCreated {
+		t.Fatalf("mailbox share = %d: %s", mailboxShare.Code, mailboxShare.Body.String())
+	}
+	created := decodeShareEnvelope[ShareLinkDTO](t, mailboxShare.Body.Bytes()).Data
+	if created.ResourceType != models.ShareResourceTypeMailbox || created.MailboxID == nil || *created.MailboxID != mailbox.ID {
+		t.Fatalf("created share should be mailbox-only: %+v", created)
+	}
+
+	mailboxShareWithMessage := perform(router, http.MethodPost, "/api/share-links", map[string]any{
+		"resource_type": "mailbox",
+		"mailbox_id":    mailbox.ID,
+		"message_id":    message.ID,
+	}, cookieHeaders(mailboxOwnerLogin.Result().Cookies()))
+	if mailboxShareWithMessage.Code != http.StatusBadRequest {
+		t.Fatalf("mailbox share with message_id = %d: %s", mailboxShareWithMessage.Code, mailboxShareWithMessage.Body.String())
+	}
+
+	otherLogin := loginShareTestUser(t, router, otherUser.Email)
+	otherCreate := perform(router, http.MethodPost, "/api/share-links", map[string]any{
+		"mailbox_id": mailbox.ID,
+	}, cookieHeaders(otherLogin.Result().Cookies()))
+	if otherCreate.Code != http.StatusForbidden {
+		t.Fatalf("other user mailbox share = %d: %s", otherCreate.Code, otherCreate.Body.String())
 	}
 }
 
-func TestShareLinkPasswordRevokeRotateAndSourceDeletion(t *testing.T) {
+func TestMailboxShareKeyAccessRevokeAndRotate(t *testing.T) {
 	db := httpTestDB(t)
 	owner := createShareTestUser(t, db, "owner@example.test")
 	domain := createShareTestDomain(t, db, "secure.test", models.DomainModePrivate, &owner.ID)
 	mailbox := createShareTestMailbox(t, db, owner, domain, "secret@secure.test")
-	message := createShareTestMessage(t, db, "password-message", mailbox.Email, domain, false)
 	router := testRouter(t, db)
 	login := loginShareTestUser(t, router, owner.Email)
 
 	expiresAt := time.Now().Add(time.Hour).UTC().Format(time.RFC3339)
 	create := perform(router, http.MethodPost, "/api/share-links", map[string]any{
-		"message_id":  message.ID,
-		"password":    "open-sesame",
+		"mailbox_id":  mailbox.ID,
 		"expires_at":  expiresAt,
 		"extra_field": "ignored",
 	}, cookieHeaders(login.Result().Cookies()))
 	if create.Code != http.StatusCreated {
-		t.Fatalf("create password share = %d: %s", create.Code, create.Body.String())
+		t.Fatalf("create mailbox share = %d: %s", create.Code, create.Body.String())
 	}
 	created := decodeShareEnvelope[ShareLinkDTO](t, create.Body.Bytes()).Data
-	if !created.PasswordSet {
-		t.Fatal("created password share did not report password_set")
+	if !created.KeySet || created.AccessKey == "" {
+		t.Fatalf("created mailbox share key fields mismatch: %+v", created)
 	}
 
 	locked := perform(router, http.MethodGet, "/api/shared/"+created.Token, nil, nil)
 	if locked.Code != http.StatusOK {
-		t.Fatalf("locked shared GET = %d: %s", locked.Code, locked.Body.String())
+		t.Fatalf("locked mailbox shared GET = %d: %s", locked.Code, locked.Body.String())
 	}
 	lockedBody := locked.Body.String()
-	if !strings.Contains(lockedBody, "password_required") || strings.Contains(lockedBody, "text_content") || strings.Contains(lockedBody, "html_content") {
-		t.Fatalf("locked response exposed content or missed password state: %s", lockedBody)
+	if !strings.Contains(lockedBody, "key_required") || strings.Contains(lockedBody, mailbox.Email) || strings.Contains(lockedBody, "text_content") || strings.Contains(lockedBody, "html_content") {
+		t.Fatalf("locked response exposed content or missed key state: %s", lockedBody)
 	}
 
-	queryPassword := perform(router, http.MethodGet, "/api/shared/"+created.Token+"?password=open-sesame", nil, nil)
-	if queryPassword.Code != http.StatusBadRequest {
-		t.Fatalf("query password response = %d: %s", queryPassword.Code, queryPassword.Body.String())
-	}
-
-	wrong := perform(router, http.MethodPost, "/api/shared/"+created.Token+"/access", map[string]any{
-		"password": "wrong",
-	}, nil)
+	wrong := perform(router, http.MethodGet, "/api/shared/"+created.Token+"?key=wrong", nil, nil)
 	if wrong.Code != http.StatusUnauthorized {
-		t.Fatalf("wrong password response = %d: %s", wrong.Code, wrong.Body.String())
+		t.Fatalf("wrong key response = %d: %s", wrong.Code, wrong.Body.String())
 	}
 	var link models.ShareLink
 	if err := db.First(&link, created.ID).Error; err != nil {
 		t.Fatal(err)
 	}
 	if link.AccessCount != 0 {
-		t.Fatalf("wrong password incremented access count: %d", link.AccessCount)
+		t.Fatalf("wrong key incremented access count: %d", link.AccessCount)
 	}
 
-	correct := perform(router, http.MethodPost, "/api/shared/"+created.Token+"/access", map[string]any{
-		"password": "open-sesame",
-	}, nil)
+	correct := perform(router, http.MethodGet, "/api/shared/"+created.Token+"?key="+url.QueryEscape(created.AccessKey), nil, nil)
 	if correct.Code != http.StatusOK {
-		t.Fatalf("correct password response = %d: %s", correct.Code, correct.Body.String())
+		t.Fatalf("correct key response = %d: %s", correct.Code, correct.Body.String())
+	}
+	unlocked := decodeShareEnvelope[publicSharedMailboxDTO](t, correct.Body.Bytes()).Data
+	if unlocked.Mailbox.ID != mailbox.ID || unlocked.Mailbox.Email != mailbox.Email {
+		t.Fatalf("unlocked mailbox metadata mismatch: %+v", unlocked)
 	}
 	if err := db.First(&link, created.ID).Error; err != nil {
 		t.Fatal(err)
 	}
 	if link.AccessCount != 1 {
-		t.Fatalf("correct password access count = %d, want 1", link.AccessCount)
+		t.Fatalf("correct key access count = %d, want 1", link.AccessCount)
 	}
 	var logs []models.ShareLinkAccessLog
 	if err := db.Order("created_at asc").Find(&logs, "share_link_id = ?", created.ID).Error; err != nil {
 		t.Fatal(err)
 	}
-	if len(logs) != 2 || logs[0].Success || logs[0].FailureReason != "invalid_password" || !logs[1].Success {
+	if len(logs) != 2 || logs[0].Success || logs[0].FailureReason != "invalid_key" || !logs[1].Success {
 		t.Fatalf("unexpected access logs: %+v", logs)
+	}
+	removedAccessEndpoint := perform(router, http.MethodPost, "/api/shared/"+created.Token+"/access", map[string]any{
+		"key": created.AccessKey,
+	}, nil)
+	if removedAccessEndpoint.Code != http.StatusNotFound {
+		t.Fatalf("removed shared access endpoint = %d: %s", removedAccessEndpoint.Code, removedAccessEndpoint.Body.String())
 	}
 
 	revoke := perform(router, http.MethodPost, "/api/share-links/"+uintPath(created.ID)+"/revoke", nil, cookieHeaders(login.Result().Cookies()))
@@ -276,9 +308,8 @@ func TestShareLinkPasswordRevokeRotateAndSourceDeletion(t *testing.T) {
 		t.Fatalf("revoked shared read = %d: %s", gone.Code, gone.Body.String())
 	}
 
-	rotateMessage := createShareTestMessage(t, db, "rotate-message", mailbox.Email, domain, false)
 	rotateCreate := perform(router, http.MethodPost, "/api/share-links", map[string]any{
-		"message_id": rotateMessage.ID,
+		"mailbox_id": mailbox.ID,
 	}, cookieHeaders(login.Result().Cookies()))
 	if rotateCreate.Code != http.StatusCreated {
 		t.Fatalf("create rotate share = %d: %s", rotateCreate.Code, rotateCreate.Body.String())
@@ -289,25 +320,181 @@ func TestShareLinkPasswordRevokeRotateAndSourceDeletion(t *testing.T) {
 		t.Fatalf("rotate token = %d: %s", rotate.Code, rotate.Body.String())
 	}
 	rotated := decodeShareEnvelope[ShareLinkDTO](t, rotate.Body.Bytes()).Data
-	if rotated.Token == "" || rotated.Token == rotating.Token {
-		t.Fatalf("rotate did not return a new one-time token: before=%q after=%q", rotating.Token, rotated.Token)
+	if rotated.Token == "" || rotated.Token == rotating.Token || rotated.AccessKey == "" || rotated.AccessKey == rotating.AccessKey || rotated.AccessURL == "" {
+		t.Fatalf("rotate did not return a complete new one-time link: before=%+v after=%+v", rotating, rotated)
 	}
-	oldToken := perform(router, http.MethodGet, "/api/shared/"+rotating.Token, nil, nil)
+	oldToken := perform(router, http.MethodGet, "/api/shared/"+rotating.Token+"?key="+url.QueryEscape(rotating.AccessKey), nil, nil)
 	if oldToken.Code != http.StatusNotFound {
 		t.Fatalf("old token response = %d: %s", oldToken.Code, oldToken.Body.String())
 	}
-	newToken := perform(router, http.MethodGet, "/api/shared/"+rotated.Token, nil, nil)
-	if newToken.Code != http.StatusOK {
-		t.Fatalf("new token response = %d: %s", newToken.Code, newToken.Body.String())
+	newToken := perform(router, http.MethodGet, "/api/shared/"+rotated.Token+"?key="+url.QueryEscape(rotating.AccessKey), nil, nil)
+	if newToken.Code != http.StatusUnauthorized {
+		t.Fatalf("new token with old key response = %d: %s", newToken.Code, newToken.Body.String())
+	}
+	newLink := perform(router, http.MethodGet, "/api/shared/"+rotated.Token+"?key="+url.QueryEscape(rotated.AccessKey), nil, nil)
+	if newLink.Code != http.StatusOK {
+		t.Fatalf("new token and key response = %d: %s", newLink.Code, newLink.Body.String())
 	}
 
-	deleteResponse := perform(router, http.MethodDelete, "/api/email/"+rotateMessage.ID, nil, cookieHeaders(login.Result().Cookies()))
-	if deleteResponse.Code != http.StatusOK {
-		t.Fatalf("delete source message = %d: %s", deleteResponse.Code, deleteResponse.Body.String())
+	rotateKey := perform(router, http.MethodPost, "/api/share-links/"+uintPath(rotating.ID)+"/rotate-key", nil, cookieHeaders(login.Result().Cookies()))
+	if rotateKey.Code != http.StatusOK {
+		t.Fatalf("rotate key = %d: %s", rotateKey.Code, rotateKey.Body.String())
 	}
-	deletedSource := perform(router, http.MethodGet, "/api/shared/"+rotated.Token, nil, nil)
-	if deletedSource.Code != http.StatusNotFound {
-		t.Fatalf("deleted source shared read = %d: %s", deletedSource.Code, deletedSource.Body.String())
+	keyRotated := decodeShareEnvelope[ShareLinkDTO](t, rotateKey.Body.Bytes()).Data
+	if keyRotated.AccessKey == "" || keyRotated.AccessKey == rotating.AccessKey {
+		t.Fatalf("rotate key did not return a new one-time key: before=%q after=%q", rotating.AccessKey, keyRotated.AccessKey)
+	}
+	oldKey := perform(router, http.MethodGet, "/api/shared/"+rotated.Token+"?key="+url.QueryEscape(rotated.AccessKey), nil, nil)
+	if oldKey.Code != http.StatusUnauthorized {
+		t.Fatalf("old key response = %d: %s", oldKey.Code, oldKey.Body.String())
+	}
+	newKey := perform(router, http.MethodGet, "/api/shared/"+rotated.Token+"?key="+url.QueryEscape(keyRotated.AccessKey), nil, nil)
+	if newKey.Code != http.StatusOK {
+		t.Fatalf("new key response = %d: %s", newKey.Code, newKey.Body.String())
+	}
+}
+
+func TestGenerateEmailMailboxSharePublicAccessAndDeletion(t *testing.T) {
+	db := httpTestDB(t)
+	owner := createShareTestUser(t, db, "mailbox-share-owner@example.test")
+	domain := createShareTestDomain(t, db, "generate-share.test", models.DomainModePrivate, &owner.ID)
+	_, plainAPIKey, err := (auth.APIKeyService{DB: db}).CreateFor(&owner.ID, "mailbox-share", 100, 0, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	router := testRouterWithConfig(t, db, func(cfg *config.Config) {
+		cfg.PublicBaseURL = "https://public.example.test/base"
+	})
+
+	requestBody, err := json.Marshal(map[string]any{
+		"prefix": "shared",
+		"domain": domain.Domain,
+		"share":  true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := httptest.NewRequest(http.MethodPost, "http://127.0.0.1:4321/api/generate-email", bytes.NewReader(requestBody))
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("X-API-Key", plainAPIKey)
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+	if response.Code != http.StatusCreated {
+		t.Fatalf("generate-email share = %d: %s", response.Code, response.Body.String())
+	}
+	generated := decodeShareEnvelope[generateEmailTestResponse](t, response.Body.Bytes()).Data
+	if generated.Email != "shared@"+domain.Domain {
+		t.Fatalf("generated email = %q", generated.Email)
+	}
+	if generated.Share.URL == "" || generated.Share.AccessURL == "" {
+		t.Fatalf("share response missing urls: %+v", generated.Share)
+	}
+	if strings.Contains(generated.Share.URL, "127.0.0.1") || strings.Contains(generated.Share.AccessURL, "127.0.0.1") {
+		t.Fatalf("share URLs used request host: %+v", generated.Share)
+	}
+	if !strings.HasPrefix(generated.Share.URL, "https://public.example.test/base/share/") {
+		t.Fatalf("share URL did not use PUBLIC_BASE_URL: %s", generated.Share.URL)
+	}
+	accessURL, err := url.Parse(generated.Share.AccessURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	accessKey := accessURL.Query().Get("key")
+	if accessKey == "" {
+		t.Fatalf("access_url missing key: %s", generated.Share.AccessURL)
+	}
+	if generated.Share.Key != "" && generated.Share.Key != accessKey {
+		t.Fatalf("share key field and access_url key differ: key=%q access_url=%q", generated.Share.Key, accessKey)
+	}
+
+	var stored models.ShareLink
+	if err := db.First(&stored, generated.Share.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if stored.ResourceType != models.ShareResourceTypeMailbox || stored.MailboxID == nil {
+		t.Fatalf("stored share is not mailbox share: %+v", stored)
+	}
+	if stored.TokenHash == "" || stored.TokenHash == generated.Share.Token {
+		t.Fatalf("token was not stored as hash only: %+v", stored)
+	}
+	if stored.AccessKeyHash == "" || stored.AccessKeyHash == accessKey {
+		t.Fatalf("access key was not stored as hash only: %+v", stored)
+	}
+
+	locked := perform(router, http.MethodGet, "/api/shared/"+generated.Share.Token, nil, nil)
+	if locked.Code != http.StatusOK {
+		t.Fatalf("locked mailbox share = %d: %s", locked.Code, locked.Body.String())
+	}
+	lockedData := decodeShareEnvelope[publicSharedMailboxLockedDTO](t, locked.Body.Bytes()).Data
+	if !lockedData.Locked || !lockedData.KeyRequired || strings.Contains(locked.Body.String(), generated.Email) {
+		t.Fatalf("locked response exposed mailbox or missed lock state: %s", locked.Body.String())
+	}
+
+	wrongKey := perform(router, http.MethodGet, "/api/shared/"+generated.Share.Token+"?key=wrong", nil, nil)
+	if wrongKey.Code != http.StatusUnauthorized {
+		t.Fatalf("wrong key response = %d: %s", wrongKey.Code, wrongKey.Body.String())
+	}
+
+	metadata := perform(router, http.MethodGet, "/api/shared/"+generated.Share.Token+"?key="+url.QueryEscape(accessKey), nil, nil)
+	if metadata.Code != http.StatusOK {
+		t.Fatalf("correct key metadata = %d: %s", metadata.Code, metadata.Body.String())
+	}
+	metadataData := decodeShareEnvelope[publicSharedMailboxDTO](t, metadata.Body.Bytes()).Data
+	if metadataData.Mailbox.Email != generated.Email || metadataData.Mailbox.ID != *stored.MailboxID {
+		t.Fatalf("metadata mismatch: %+v", metadataData)
+	}
+
+	message := createShareTestMessage(t, db, "mailbox-share-message", generated.Email, domain, false)
+	otherMailbox := createShareTestMailbox(t, db, owner, domain, "other@"+domain.Domain)
+	otherMessage := createShareTestMessage(t, db, "mailbox-share-other-message", otherMailbox.Email, domain, false)
+
+	list := perform(router, http.MethodGet, "/api/shared/"+generated.Share.Token+"/messages?key="+url.QueryEscape(accessKey), nil, nil)
+	if list.Code != http.StatusOK {
+		t.Fatalf("shared mailbox list = %d: %s", list.Code, list.Body.String())
+	}
+	listData := decodeShareEnvelope[[]messageSummary](t, list.Body.Bytes()).Data
+	if len(listData) != 1 || listData[0].ID != message.ID {
+		t.Fatalf("shared mailbox list = %+v, want only %s", listData, message.ID)
+	}
+
+	detail := perform(router, http.MethodGet, "/api/shared/"+generated.Share.Token+"/messages/"+message.ID+"?key="+url.QueryEscape(accessKey), nil, nil)
+	if detail.Code != http.StatusOK {
+		t.Fatalf("shared mailbox detail = %d: %s", detail.Code, detail.Body.String())
+	}
+	detailData := decodeShareEnvelope[PublicSharedMailboxMessageDTO](t, detail.Body.Bytes()).Data
+	if detailData.ID != message.ID || detailData.Recipient != generated.Email {
+		t.Fatalf("detail mismatch: %+v", detailData)
+	}
+	otherDetail := perform(router, http.MethodGet, "/api/shared/"+generated.Share.Token+"/messages/"+otherMessage.ID+"?key="+url.QueryEscape(accessKey), nil, nil)
+	if otherDetail.Code != http.StatusNotFound {
+		t.Fatalf("other mailbox detail = %d: %s", otherDetail.Code, otherDetail.Body.String())
+	}
+
+	var mailbox models.Mailbox
+	if err := db.First(&mailbox, "id = ?", *stored.MailboxID).Error; err != nil {
+		t.Fatal(err)
+	}
+	deleteResponse := perform(router, http.MethodDelete, "/api/mailboxes/"+uintPath(mailbox.ID), nil, map[string]string{"X-API-Key": plainAPIKey})
+	if deleteResponse.Code != http.StatusOK {
+		t.Fatalf("delete mailbox = %d: %s", deleteResponse.Code, deleteResponse.Body.String())
+	}
+	deletedShareRead := perform(router, http.MethodGet, "/api/shared/"+generated.Share.Token+"?key="+url.QueryEscape(accessKey), nil, nil)
+	if deletedShareRead.Code != http.StatusNotFound {
+		t.Fatalf("deleted mailbox share read = %d: %s", deletedShareRead.Code, deletedShareRead.Body.String())
+	}
+	var remainingLinks int64
+	if err := db.Model(&models.ShareLink{}).Where("id = ?", generated.Share.ID).Count(&remainingLinks).Error; err != nil {
+		t.Fatal(err)
+	}
+	if remainingLinks != 0 {
+		t.Fatalf("mailbox share link was not deleted, count=%d", remainingLinks)
+	}
+	var remainingLogs int64
+	if err := db.Model(&models.ShareLinkAccessLog{}).Where("share_link_id = ?", generated.Share.ID).Count(&remainingLogs).Error; err != nil {
+		t.Fatal(err)
+	}
+	if remainingLogs != 0 {
+		t.Fatalf("mailbox share access logs were not deleted, count=%d", remainingLogs)
 	}
 }
 
@@ -316,12 +503,11 @@ func TestShareLinkExpiredReturnsGone(t *testing.T) {
 	owner := createShareTestUser(t, db, "owner@example.test")
 	domain := createShareTestDomain(t, db, "expired-share.test", models.DomainModePrivate, &owner.ID)
 	mailbox := createShareTestMailbox(t, db, owner, domain, "gone@expired-share.test")
-	message := createShareTestMessage(t, db, "expired-share-message", mailbox.Email, domain, false)
 	router := testRouter(t, db)
 	login := loginShareTestUser(t, router, owner.Email)
 
 	create := perform(router, http.MethodPost, "/api/share-links", map[string]any{
-		"message_id": message.ID,
+		"mailbox_id": mailbox.ID,
 	}, cookieHeaders(login.Result().Cookies()))
 	if create.Code != http.StatusCreated {
 		t.Fatalf("create share = %d: %s", create.Code, create.Body.String())
@@ -341,6 +527,14 @@ type shareEnvelope[T any] struct {
 	Success bool `json:"success"`
 	Data    T    `json:"data"`
 	Error   any  `json:"error"`
+}
+
+type generateEmailTestResponse struct {
+	Email    string                `json:"email"`
+	DomainID uint                  `json:"domain_id"`
+	Domain   models.Domain         `json:"domain"`
+	Reuse    bool                  `json:"reuse"`
+	Share    generateEmailShareDTO `json:"share"`
 }
 
 func decodeShareEnvelope[T any](t *testing.T, body []byte) shareEnvelope[T] {
@@ -446,7 +640,7 @@ func createShareTestMessage(t *testing.T, db *gorm.DB, id, recipient string, dom
 		FromName:        "Sender",
 		Subject:         "Safe subject",
 		Seen:            seen,
-		TextContent:     "hello from shared message",
+		TextContent:     "hello from shared mailbox",
 		HTMLContent:     `<p>Safe</p><script>alert("x")</script>`,
 		HeadersJSON:     `{"x-secret":"do-not-share"}`,
 		ExpiresAt:       time.Now().Add(time.Hour),

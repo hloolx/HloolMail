@@ -34,7 +34,7 @@ export function InboxComposer({
   onGenerate
 }: InboxComposerProps) {
   return (
-    <div className="mb-4 grid gap-2 rounded-lg border border-[var(--border)] bg-[var(--soft)] p-3 md:grid-cols-2 lg:grid-cols-[1fr_14rem_auto]">
+    <div className="inbox-composer grid gap-2 rounded-lg border border-[var(--border)] bg-[var(--soft)] p-3">
       <input
         className="input"
         placeholder={text.inbox.customPrefix}
@@ -47,7 +47,7 @@ export function InboxComposer({
         {renderDomainOptions(availabilityGroups.privateDomains, text.domains.modePrivate, language)}
         {renderDomainOptions(availabilityGroups.publicDomains, text.domains.modePublic, language)}
       </select>
-      <button ref={generateButtonRef} className="btn-primary md:col-span-2 lg:col-span-1" onClick={onGenerate} disabled={isGenerating}>
+      <button ref={generateButtonRef} className="btn-primary" onClick={onGenerate} disabled={isGenerating}>
         {isGenerating ? <Loader2 size={16} className="animate-spin" /> : <MailPlus size={16} />}
         {text.inbox.generate}
       </button>

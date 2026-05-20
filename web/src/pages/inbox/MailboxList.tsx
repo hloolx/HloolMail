@@ -41,7 +41,7 @@ export function MailboxList({
   if (!isLoading && !search && total <= 0) return null;
 
   return (
-    <div className="mb-4">
+    <div className="inbox-list-section inbox-mailbox-list-section">
       <div className="inbox-section-heading">
         <p>{text.inbox.myMailboxes}</p>
         <span>{formatCount(text.inbox.mailboxCount, total)}</span>
@@ -64,7 +64,7 @@ export function MailboxList({
       {isLoading ? (
         <EmptyState label={text.common.loading} />
       ) : items.length > 0 ? (
-        <div className="grid gap-1" role="list">
+        <div className="inbox-scroll-list inbox-mailbox-list" role="list">
           {items.map((mailbox) => (
             <MailboxRow
               key={mailbox.id}

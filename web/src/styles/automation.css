@@ -105,6 +105,22 @@
   margin: 0 auto;
 }
 
+.shared-mailbox-shell {
+  width: min(100%, 78rem);
+}
+
+.shared-mailbox-layout {
+  display: block;
+}
+
+.shared-mailbox-layout .mail-detail-panel {
+  min-height: calc(100vh - 6.5rem);
+}
+
+.shared-mailbox-layout .attachment-list {
+  margin-bottom: 0.75rem;
+}
+
 .shared-brand {
   display: inline-flex;
   align-items: center;
@@ -208,5 +224,26 @@
 
   .automation-log-modal {
     width: 100%;
+  }
+}
+
+@media (min-width: 1280px) {
+  .shared-mailbox-layout {
+    display: grid;
+    min-height: calc(100vh - 6.5rem);
+    grid-template-columns: minmax(20rem, 0.9fr) minmax(25rem, 1.35fr);
+    align-items: stretch;
+    gap: 1rem;
+  }
+
+  .shared-mailbox-layout .inbox-column,
+  .shared-mailbox-layout .inbox-detail-pane,
+  .shared-mailbox-layout .mail-detail-panel {
+    height: calc(100vh - 6.5rem);
+    min-height: 0;
+  }
+
+  .shared-mailbox-layout .inbox-drilldown-hidden {
+    display: flex !important;
   }
 }

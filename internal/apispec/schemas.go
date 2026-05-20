@@ -113,12 +113,28 @@ func Schemas() map[string]Schema {
 		"GenerateEmailRequest": objectSchema(nil, map[string]any{
 			"prefix": stringSchema(""),
 			"domain": stringSchema(""),
+			"share":  Schema{"oneOf": []any{boolSchema(), schemaRef("GenerateEmailShareOptions")}},
+		}),
+		"GenerateEmailShareOptions": objectSchema(nil, map[string]any{
+			"enabled":    boolSchema(),
+			"expires_at": stringSchema("date-time"),
 		}),
 		"GenerateEmailData": objectSchema([]string{"email", "domain_id", "domain"}, map[string]any{
 			"email":     stringSchema("email"),
 			"domain_id": integerSchema("uint64"),
 			"domain":    schemaRef("Domain"),
 			"reuse":     boolSchema(),
+			"share":     schemaRef("GeneratedMailboxShare"),
+		}),
+		"GeneratedMailboxShare": objectSchema([]string{"id", "resource_type", "token_prefix", "url", "access_url"}, map[string]any{
+			"id":            integerSchema("uint64"),
+			"resource_type": stringSchema(""),
+			"token":         stringSchema(""),
+			"key":           stringSchema(""),
+			"token_prefix":  stringSchema(""),
+			"url":           stringSchema("uri"),
+			"access_url":    stringSchema("uri"),
+			"expires_at":    stringSchema("date-time"),
 		}),
 		"Mailbox": objectSchema([]string{"id", "owner_id", "email", "local_part", "host", "domain_id", "created_at", "updated_at"}, map[string]any{
 			"id":              integerSchema("uint64"),
@@ -200,14 +216,16 @@ func Schemas() map[string]Schema {
 			"public_domains":  integerSchema("int64"),
 			"api_calls_today": integerSchema("int64"),
 		}),
-		"ShareLink": objectSchema([]string{"id", "resource_type", "token_prefix", "password_set", "access_count", "created_at", "updated_at"}, map[string]any{
+		"ShareLink": objectSchema([]string{"id", "resource_type", "mailbox_id", "token_prefix", "key_set", "access_count", "created_at", "updated_at"}, map[string]any{
 			"id":               integerSchema("uint64"),
 			"resource_type":    stringSchema(""),
-			"message_id":       stringSchema(""),
+			"mailbox_id":       integerSchema("uint64"),
 			"token":            stringSchema(""),
+			"access_key":       stringSchema(""),
 			"token_prefix":     stringSchema(""),
 			"share_url":        stringSchema("uri"),
-			"password_set":     boolSchema(),
+			"access_url":       stringSchema("uri"),
+			"key_set":          boolSchema(),
 			"expires_at":       stringSchema("date-time"),
 			"revoked_at":       stringSchema("date-time"),
 			"access_count":     integerSchema("int64"),
@@ -216,22 +234,56 @@ func Schemas() map[string]Schema {
 			"updated_at":       stringSchema("date-time"),
 		}),
 		"ShareLinkPage": pageSchema(schemaRef("ShareLink")),
-		"CreateShareLinkRequest": objectSchema([]string{"message_id"}, map[string]any{
+		"CreateShareLinkRequest": objectSchema([]string{"mailbox_id"}, map[string]any{
 			"resource_type": stringSchema(""),
-			"message_id":    stringSchema(""),
-			"password":      stringSchema(""),
+			"mailbox_id":    integerSchema("uint64"),
 			"expires_at":    stringSchema("date-time"),
 		}),
 		"PatchShareLinkRequest": objectSchema(nil, map[string]any{
-			"password":       stringSchema(""),
-			"clear_password": boolSchema(),
-			"expires_at":     stringSchema("date-time"),
+			"expires_at": stringSchema("date-time"),
 		}),
-		"ShareLinkAccessLog": objectSchema([]string{"id", "share_link_id", "resource_type", "message_id", "success", "ip", "user_agent", "created_at"}, map[string]any{
+		"PublicSharedMailboxMetadata": objectSchema([]string{"id", "email", "message_count", "created_at"}, map[string]any{
+			"id":              integerSchema("uint64"),
+			"email":           stringSchema("email"),
+			"local_part":      stringSchema(""),
+			"host":            stringSchema(""),
+			"domain_id":       integerSchema("uint64"),
+			"message_count":   integerSchema("int64"),
+			"last_message_at": stringSchema("date-time"),
+			"created_at":      stringSchema("date-time"),
+		}),
+		"PublicSharedLocked": objectSchema([]string{"resource_type", "token_prefix", "key_required"}, map[string]any{
+			"resource_type": stringSchema(""),
+			"token_prefix":  stringSchema(""),
+			"key_required":  boolSchema(),
+			"locked":        boolSchema(),
+			"expires_at":    stringSchema("date-time"),
+			"mailbox":       schemaRef("PublicSharedMailboxMetadata"),
+		}),
+		"PublicSharedMailboxMessage": objectSchema([]string{"id", "recipient", "from_address", "subject", "attachments", "created_at", "expires_at"}, map[string]any{
+			"resource_type": stringSchema(""),
+			"id":            stringSchema(""),
+			"recipient":     stringSchema("email"),
+			"from_address":  stringSchema("email"),
+			"from_name":     stringSchema(""),
+			"subject":       stringSchema(""),
+			"text_content":  stringSchema(""),
+			"html_content":  stringSchema(""),
+			"attachments":   arraySchema(schemaRef("AttachmentMetadata")),
+			"created_at":    stringSchema("date-time"),
+			"expires_at":    stringSchema("date-time"),
+		}),
+		"PublicSharedMailbox": objectSchema([]string{"resource_type", "token_prefix", "mailbox"}, map[string]any{
+			"resource_type": stringSchema(""),
+			"token_prefix":  stringSchema(""),
+			"expires_at":    stringSchema("date-time"),
+			"mailbox":       schemaRef("PublicSharedMailboxMetadata"),
+		}),
+		"ShareLinkAccessLog": objectSchema([]string{"id", "share_link_id", "resource_type", "success", "ip", "user_agent", "created_at"}, map[string]any{
 			"id":             integerSchema("uint64"),
 			"share_link_id":  integerSchema("uint64"),
 			"resource_type":  stringSchema(""),
-			"message_id":     stringSchema(""),
+			"mailbox_id":     integerSchema("uint64"),
 			"success":        boolSchema(),
 			"failure_reason": stringSchema(""),
 			"ip":             stringSchema(""),
@@ -328,6 +380,12 @@ func EnvelopeSchemas() map[string]Schema {
 	for envelopeName, dataName := range dataSchemas {
 		out[envelopeName] = envelopeSchema(schemaRef(dataName))
 	}
+	out["EnvelopePublicShared"] = envelopeSchema(Schema{"oneOf": []any{
+		schemaRef("PublicSharedLocked"),
+		schemaRef("PublicSharedMailbox"),
+	}})
+	out["EnvelopePublicSharedMailboxMessages"] = envelopeSchema(schemaRef("MessagePage"))
+	out["EnvelopePublicSharedMailboxMessage"] = envelopeSchema(schemaRef("PublicSharedMailboxMessage"))
 	return out
 }
 

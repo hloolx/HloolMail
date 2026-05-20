@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import type { FormEvent } from 'react';
 import { useMutation, useQuery } from '@tanstack/react-query';
-import { ArrowRight, Check, CircleUserRound, Code2, Fingerprint, Github, Globe2, Inbox, KeyRound, MailPlus, Network, Share2, ShieldCheck, Sparkles, Terminal, Users, Zap } from 'lucide-react';
+import { ArrowRight, Bot, Check, CircleUserRound, Code2, Fingerprint, Github, Globe2, Inbox, KeyRound, LockKeyhole, MailCheck, MailPlus, Network, PackageCheck, Share2, ShieldCheck, Sparkles, Terminal, Users, Zap } from 'lucide-react';
 import { toast } from 'sonner';
 import type { InstallStatus, User } from '../api';
 import { api, postJSON } from '../api';
@@ -263,6 +263,27 @@ export function LandingPage({ status, onDone }: { status?: InstallStatus; onDone
               {text.login.secondaryAction}
             </a>
           </div>
+          <aside className="landing-domain-card" aria-label={text.login.domainCardTitle}>
+            <div className="landing-domain-card-top">
+              <span>
+                <Network size={15} />
+                {text.login.domainCardBadge}
+              </span>
+              <code>{text.login.domainCardMx.replace('{mx}', mxTarget)}</code>
+            </div>
+            <h2>{text.login.domainCardTitle}</h2>
+            <p>{text.login.domainCardDesc}</p>
+            <div className="landing-domain-card-points">
+              <span>
+                <Code2 size={15} />
+                {text.login.domainCardApi}
+              </span>
+              <span>
+                <Share2 size={15} />
+                {text.login.domainCardShare}
+              </span>
+            </div>
+          </aside>
         </section>
 
         <section id="auth-panel" ref={authPanelRef} className="auth-panel" aria-label={isRegister ? text.login.registerTitle : text.login.title}>
@@ -443,6 +464,41 @@ export function LandingPage({ status, onDone }: { status?: InstallStatus; onDone
             <h3>{text.login.featureFourTitle}</h3>
             <p>{text.login.featureFourDesc}</p>
           </article>
+          <article>
+            <MailCheck size={20} />
+            <h3>{text.login.featureFiveTitle}</h3>
+            <p>{text.login.featureFiveDesc}</p>
+          </article>
+        </div>
+      </section>
+
+      <section className="landing-use-cases" id="use-cases">
+        <div className="landing-section-head">
+          <h2>{text.login.useCasesTitle}</h2>
+          <p>{text.login.useCasesDesc}</p>
+        </div>
+        <div className="landing-use-cases-grid">
+          <article>
+            <span className="landing-use-case-icon">
+              <Bot size={20} />
+            </span>
+            <b>{text.login.useCaseBatchTitle}</b>
+            <p>{text.login.useCaseBatchDesc}</p>
+          </article>
+          <article>
+            <span className="landing-use-case-icon">
+              <PackageCheck size={20} />
+            </span>
+            <b>{text.login.useCaseAccountTitle}</b>
+            <p>{text.login.useCaseAccountDesc}</p>
+          </article>
+          <article>
+            <span className="landing-use-case-icon">
+              <LockKeyhole size={20} />
+            </span>
+            <b>{text.login.useCasePrivacyTitle}</b>
+            <p>{text.login.useCasePrivacyDesc}</p>
+          </article>
         </div>
       </section>
 
@@ -471,6 +527,35 @@ export function LandingPage({ status, onDone }: { status?: InstallStatus; onDone
         </div>
       </section>
 
+      <section className="landing-deploy" id="deploy">
+        <div className="landing-deploy-copy">
+          <span>{text.login.deployEyebrow}</span>
+          <h2>{text.login.deployTitle}</h2>
+          <p>{text.login.deployDesc}</p>
+        </div>
+        <div className="landing-deploy-panel" aria-label={text.login.deployTitle}>
+          <a href="https://github.com/hloolx/HloolMail" target="_blank" rel="noopener noreferrer">
+            <Github size={17} />
+            <span>{text.login.deployGithub}</span>
+            <ArrowRight size={15} />
+          </a>
+          <div className="landing-deploy-method">
+            <Terminal size={17} />
+            <div>
+              <b>{text.login.deployBinary}</b>
+              <code>./hlool-mail serve</code>
+            </div>
+          </div>
+          <div className="landing-deploy-method">
+            <Code2 size={17} />
+            <div>
+              <b>{text.login.deployDocker}</b>
+              <code>docker compose up -d</code>
+            </div>
+          </div>
+        </div>
+      </section>
+
       <footer className="landing-footer">
         <div className="landing-footer-inner">
           <div className="landing-footer-brand">
@@ -482,6 +567,8 @@ export function LandingPage({ status, onDone }: { status?: InstallStatus; onDone
           <nav className="landing-footer-links">
             <a href="#how">{text.login.howTitle}</a>
             <a href="#features">{text.login.featuresSectionTitle}</a>
+            <a href="#use-cases">{text.login.useCasesTitle}</a>
+            <a href="#deploy">{text.login.deployNav}</a>
             <a href="https://github.com/hloolx/HloolMail" target="_blank" rel="noopener noreferrer">
               <Github size={14} />
               hloolx/HloolMail

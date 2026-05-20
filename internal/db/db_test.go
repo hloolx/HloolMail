@@ -96,8 +96,8 @@ func TestAutoMigrateCreatesIntegrityConstraints(t *testing.T) {
 	assertNotNullColumns(t, database, "api_keys", "name", "key_prefix", "key_hash", "key_value")
 	assertNotNullColumns(t, database, "messages", "recipient", "recipient_domain", "root_domain", "from_address", "subject", "expires_at")
 	assertNotNullColumns(t, database, "message_attachments", "id", "message_id", "sequence", "size_bytes", "sha256")
-	assertNotNullColumns(t, database, "share_links", "owner_id", "token_hash", "token_prefix", "resource_type", "message_id", "access_count")
-	assertNotNullColumns(t, database, "share_link_access_logs", "share_link_id", "owner_id", "resource_type", "message_id", "success", "ip", "user_agent")
+	assertNotNullColumns(t, database, "share_links", "owner_id", "token_hash", "token_prefix", "resource_type", "access_count")
+	assertNotNullColumns(t, database, "share_link_access_logs", "share_link_id", "owner_id", "resource_type", "success", "ip", "user_agent")
 	assertNotNullColumns(t, database, "mailboxes", "owner_id", "email", "local_part", "host", "domain_id")
 	assertNotNullColumns(t, database, "domain_check_result_records", "run_id", "domain_id", "domain", "status", "mx_records_json", "probes_json")
 
@@ -110,6 +110,7 @@ func TestAutoMigrateCreatesIntegrityConstraints(t *testing.T) {
 	assertForeignKey(t, database, "message_attachments", "message_id", "messages")
 	assertForeignKey(t, database, "share_links", "owner_id", "users")
 	assertForeignKey(t, database, "share_links", "message_id", "messages")
+	assertForeignKey(t, database, "share_links", "mailbox_id", "mailboxes")
 	assertForeignKey(t, database, "share_link_access_logs", "share_link_id", "share_links")
 	assertForeignKey(t, database, "share_link_access_logs", "owner_id", "users")
 	assertForeignKey(t, database, "mailboxes", "owner_id", "users")
@@ -120,6 +121,47 @@ func TestAutoMigrateCreatesIntegrityConstraints(t *testing.T) {
 	assertForeignKey(t, database, "notifications", "domain_id", "domains")
 	assertForeignKey(t, database, "domain_check_result_records", "run_id", "domain_check_runs")
 	assertForeignKey(t, database, "domain_check_result_records", "domain_id", "domains")
+	if got := columnDefault(t, database, "share_links", "resource_type"); got != models.ShareResourceTypeMailbox {
+		t.Fatalf("share_links.resource_type default = %q, want %q", got, models.ShareResourceTypeMailbox)
+	}
+}
+
+func TestAutoMigrateUpgradesLegacyShareLinksForMailboxShares(t *testing.T) {
+	database, err := Open(config.Config{
+		DatabaseDriver: "sqlite",
+		DatabaseURL:    filepath.Join(t.TempDir(), "mail.db"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sqlDB, err := database.DB()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer sqlDB.Close()
+
+	if err := database.AutoMigrate(&legacyShareLink{}); err != nil {
+		t.Fatal(err)
+	}
+	if nullable := columnNullable(t, database, "share_links", "message_id"); nullable {
+		t.Fatal("legacy message_id should start as NOT NULL")
+	}
+
+	if err := AutoMigrate(database); err != nil {
+		t.Fatal(err)
+	}
+	if nullable := columnNullable(t, database, "share_links", "message_id"); !nullable {
+		t.Fatal("message_id should be nullable after mailbox share migration")
+	}
+	if !database.Migrator().HasColumn(&models.ShareLink{}, "MailboxID") {
+		t.Fatal("mailbox_id column was not created")
+	}
+	if !database.Migrator().HasColumn(&models.ShareLink{}, "AccessKeyHash") {
+		t.Fatal("access_key_hash column was not created")
+	}
+	if got := columnDefault(t, database, "share_links", "resource_type"); got != models.ShareResourceTypeMailbox {
+		t.Fatalf("resource_type default = %q, want %q", got, models.ShareResourceTypeMailbox)
+	}
 }
 
 func TestBackfillMailboxCountersUsesExistingMailboxes(t *testing.T) {
@@ -200,6 +242,58 @@ func TestBackfillMailboxCountersUsesExistingMailboxes(t *testing.T) {
 	if refreshedPublic.MailboxCreatedCount != 2 {
 		t.Fatalf("public domain mailbox_created_count = %d, want 2", refreshedPublic.MailboxCreatedCount)
 	}
+}
+
+type legacyShareLink struct {
+	ID           uint   `gorm:"primaryKey"`
+	OwnerID      uint   `gorm:"index;not null"`
+	TokenHash    string `gorm:"type:text;not null"`
+	TokenPrefix  string `gorm:"index;size:32;not null"`
+	ResourceType string `gorm:"size:40;index;not null;default:message"`
+	MessageID    string `gorm:"size:36;index;not null"`
+	AccessCount  int64  `gorm:"not null;default:0"`
+}
+
+func (legacyShareLink) TableName() string {
+	return "share_links"
+}
+
+func columnNullable(t *testing.T, database *gorm.DB, table, column string) bool {
+	t.Helper()
+	columns, err := database.Migrator().ColumnTypes(table)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, candidate := range columns {
+		if strings.EqualFold(candidate.Name(), column) {
+			nullable, ok := candidate.Nullable()
+			if !ok {
+				t.Fatalf("nullable metadata unavailable for %s.%s", table, column)
+			}
+			return nullable
+		}
+	}
+	t.Fatalf("column %s.%s not found", table, column)
+	return false
+}
+
+func columnDefault(t *testing.T, database *gorm.DB, table, column string) string {
+	t.Helper()
+	columns, err := database.Migrator().ColumnTypes(table)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, candidate := range columns {
+		if strings.EqualFold(candidate.Name(), column) {
+			value, ok := candidate.DefaultValue()
+			if !ok {
+				return ""
+			}
+			return strings.Trim(value, "'\"")
+		}
+	}
+	t.Fatalf("column %s.%s not found", table, column)
+	return ""
 }
 
 func TestBackfillDomainFirstVerifiedAtProtectsOnlyCurrentlyReadyDomains(t *testing.T) {

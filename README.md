@@ -262,14 +262,31 @@ Webhook 请求会带上 `X-Hlool-Event`、`X-Hlool-Delivery`、`X-Hlool-Timestam
 
 ## Share Link
 
-Share Link 用于把单封邮件安全分享给外部访问者。分享第一阶段是单封邮件 message share，不是 mailbox share；mailbox share 会暴露未来邮件，属于后续阶段。
+Share Link 用于把邮箱收件箱安全分享给外部访问者。分享对象是 mailbox，公开读取使用不可猜测 token 和访问 key。
 
-管理接口是 Web Console session-only；公开访问走匿名 token：
+API Key 自动化可以在生成邮箱时同步创建邮箱分享：
+
+```bash
+BASE_URL=https://mail.example.com
+API_KEY=key-hloolmail_xxx
+
+curl -X POST "$BASE_URL/api/generate-email" \
+  -H "Content-Type: application/json" \
+  -H "X-API-Key: $API_KEY" \
+  -d '{"prefix":"demo","domain":"example.com","share":true}'
+```
+
+响应中的 `data.share.url` 是不带 key 的分享页 URL；`data.share.access_url` 会带上 `?key=...`，可直接访问分享邮箱。完整 token 和 key 只在创建或重新生成时返回一次；后台只保存 hash，不能再次查看旧完整链接，需要再次复制时请重新生成分享链接。
+
+管理接口是 Web Console session-only；公开读取走匿名 token 和 key：
 
 - `GET /api/shared/:token`
-- `POST /api/shared/:token/access`
+- `GET /api/shared/:token/messages`
+- `GET /api/shared/:token/messages/:message_id`
 
-已经登录 Web Console 并拿到 session Cookie 时，可以创建单封邮件分享：
+公开分享不提供 `POST /api/shared/:token/access` 解锁接口；带 `key` 的只读 GET 路径就是唯一公开读取面。
+
+已经登录 Web Console 并拿到 session Cookie 时，可以创建邮箱分享：
 
 ```bash
 BASE_URL=https://mail.example.com
@@ -278,18 +295,19 @@ SESSION_COOKIE=your-gptmail-session-cookie
 curl -X POST "$BASE_URL/api/share-links" \
   -H "Content-Type: application/json" \
   -H "Cookie: gptmail_session=$SESSION_COOKIE" \
-  -d '{"resource_type":"message","message_id":"msg-uuid"}'
+  -d '{"resource_type":"mailbox","mailbox_id":45}'
 ```
 
-带密码的公开访问必须把密码放在 JSON body，不能放到 query string：
+公开读取分享邮箱邮件：
 
 ```bash
 BASE_URL=https://mail.example.com
 TOKEN=share-token
+KEY=sharekey-hloolmail_xxx
 
-curl -X POST "$BASE_URL/api/shared/$TOKEN/access" \
-  -H "Content-Type: application/json" \
-  -d '{"password":"optional-password"}'
+curl "$BASE_URL/api/shared/$TOKEN?key=$KEY"
+curl "$BASE_URL/api/shared/$TOKEN/messages?key=$KEY&page=1&per_page=20"
+curl "$BASE_URL/api/shared/$TOKEN/messages/msg-uuid?key=$KEY"
 ```
 
 ## 附件策略
@@ -469,7 +487,7 @@ export SMTP_ADDR=:2525
 ### API 401 或收不到邮件
 
 - API 自动化必须带 `X-API-Key`，不要用 Web Console Cookie 代替。
-- Webhook 和 Share Link 管理必须是 Web Console session，API Key 不能创建或管理它们。
+- Webhook 和 Share Link 管理必须是 Web Console session；API Key 只能在 `generate-email` 时创建邮箱分享，不能管理分享链接。
 - 私有域名要先在 Web Console 添加并完成 MX 验证，再用 API 生成该域名邮箱。
 - 如果目标网站拦截临时邮箱域名，换公共域名或使用自己的私有域名。
 - 公网收不到邮件时，先检查 DNS MX、云厂商入站 TCP 25、服务器防火墙、Compose `SMTP_PORT` 或 25 -> 2525 转发。

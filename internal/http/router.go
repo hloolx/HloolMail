@@ -84,7 +84,8 @@ func NewRouter(h *Handler) *gin.Engine {
 	api.GET("/openapi.json", h.perIPRateLimit(0.5, 2), h.openAPIJSON)
 	api.GET("/openapi.yaml", h.perIPRateLimit(0.5, 2), h.openAPIYAML)
 	api.GET("/shared/:token", h.perIPRateLimit(2, 10), h.getSharedLink)
-	api.POST("/shared/:token/access", h.perIPRateLimit(2, 10), h.accessSharedLink)
+	api.GET("/shared/:token/messages", h.perIPRateLimit(2, 10), h.listSharedMailboxMessages)
+	api.GET("/shared/:token/messages/:message_id", h.perIPRateLimit(2, 10), h.getSharedMailboxMessage)
 
 	authAPI := api.Group("", h.perAPIRateLimit(2, 10))
 	authAPI.POST("/auth/logout", h.logout)
@@ -137,6 +138,7 @@ func NewRouter(h *Handler) *gin.Engine {
 	shareLinkGroup.PATCH("/share-links/:id", h.patchShareLink)
 	shareLinkGroup.POST("/share-links/:id/revoke", h.revokeShareLink)
 	shareLinkGroup.POST("/share-links/:id/rotate-token", h.rotateShareLinkToken)
+	shareLinkGroup.POST("/share-links/:id/rotate-key", h.rotateShareLinkKey)
 	shareLinkGroup.GET("/share-links/:id/access-logs", h.listShareLinkAccessLogs)
 
 	webhookGroup := api.Group("", h.perAPIRateLimit(0.5, 5))

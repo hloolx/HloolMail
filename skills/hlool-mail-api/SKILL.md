@@ -17,7 +17,7 @@ X-API-Key: YOUR_KEY
 
 Ask the user for the API base URL and API key if they are not already available. Do not print the full API key back to the user.
 
-This skill is for API-key automation only. Login, API-key creation, domain management, MX checks, admin work, user management, and live streams are web-console tasks.
+This skill is for API-key automation only. Login, API-key creation, domain management, MX checks, share-link management, admin work, user management, and live streams are web-console tasks. API-key automation may request a mailbox share only during `POST /api/generate-email`.
 
 ## Workflow
 
@@ -42,6 +42,16 @@ Guide the user, do not silently proceed:
 - Verify API readiness by generating a mailbox on that domain.
 
 Treat private-domain setup as successful only when `POST /api/generate-email` returns an email on that private domain and the response `domain.domain` matches the requested domain.
+
+## Mailbox Sharing
+
+When the user needs a shareable mailbox, pass `"share": true` or `"share": {"enabled": true}` to `POST /api/generate-email`. The response may include `data.share.url` for the share page and `data.share.access_url`, which includes `?key=...` and can open the shared mailbox directly. Full token/key values are returned once and cannot be viewed again later.
+
+Public shared mailbox reads use GET token/key endpoints:
+
+- `GET /api/shared/:token?key=...`
+- `GET /api/shared/:token/messages?key=...&page=1&per_page=20`
+- `GET /api/shared/:token/messages/:message_id?key=...`
 
 ## Public Domains
 

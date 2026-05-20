@@ -55,23 +55,26 @@ export type OpenAPIDocument = {
 // Generated fallback snapshot from internal/apispec.FrontendProjection.
 // The live /api/openapi.json projection is used when available.
 const GENERATED_FRONTEND_PROJECTION: OpenAPIFrontendOperation[] = [
-  { method: 'GET', path: '/api/docs.md', auth: 'public', requestPath: '/api/docs.md', title: 'Markdown docs', description: 'Read the AI-readable Markdown API reference.' },
-  { method: 'GET', path: '/api/domains/available', auth: 'apiKey', requestPath: '/api/domains/available', title: 'Available domains', description: 'List public domains and API-key-accessible private domains.' },
-  { method: 'DELETE', path: '/api/email/:id', auth: 'apiKey', requestPath: '/api/email/msg-uuid', dangerous: true, title: 'Delete message', description: 'Delete one message the API-key actor can access.' },
-  { method: 'GET', path: '/api/email/:id', auth: 'apiKey', requestPath: '/api/email/msg-uuid', title: 'Read message', description: 'Read text body, headers, read state, and attachment metadata for one message.' },
-  { method: 'PATCH', path: '/api/email/:id/read', auth: 'apiKey', requestPath: '/api/email/msg-uuid/read', title: 'Mark as read', description: 'Mark one message as read.' },
-  { method: 'GET', path: '/api/emails', auth: 'apiKey', requestPath: '/api/emails', queryTemplate: 'email=verify@example.com&page=1&per_page=20', title: 'List messages', description: 'List messages for a mailbox without auto-marking them read.' },
-  { method: 'DELETE', path: '/api/emails/clear', auth: 'apiKey', requestPath: '/api/emails/clear', queryTemplate: 'email=verify@example.com', dangerous: true, title: 'Clear inbox', description: 'Delete all messages for one mailbox.' },
-  { method: 'GET', path: '/api/emails/next', auth: 'apiKey', requestPath: '/api/emails/next', queryTemplate: 'email=verify@example.com', title: 'Next unread email', description: 'Poll for the newest unread message and mark it read automatically.' },
-  { method: 'POST', path: '/api/generate-email', auth: 'apiKey', requestPath: '/api/generate-email', bodyTemplate: '{\n  "prefix": "verify",\n  "domain": ""\n}', title: 'Generate mailbox', description: 'Create a mailbox on a chosen domain or a random public domain.' },
-  { method: 'GET', path: '/api/health', auth: 'public', requestPath: '/api/health', title: 'Health', description: 'Check whether the API service is reachable.' },
-  { method: 'DELETE', path: '/api/mailboxes/:id', auth: 'apiKey', requestPath: '/api/mailboxes/45', dangerous: true, title: 'Delete mailbox', description: 'Delete one mailbox record and its stored messages.' },
-  { method: 'GET', path: '/api/mailboxes', auth: 'apiKey', requestPath: '/api/mailboxes', queryTemplate: 'page=1&per_page=20', title: 'List mailboxes', description: 'List mailboxes created by the API-key owner.' },
-  { method: 'GET', path: '/api/openapi.json', auth: 'public', requestPath: '/api/openapi.json', title: 'OpenAPI JSON', description: 'Read the machine-readable OpenAPI document.' },
-  { method: 'GET', path: '/api/openapi.yaml', auth: 'public', requestPath: '/api/openapi.yaml', title: 'OpenAPI YAML', description: 'Read the machine-readable OpenAPI document as YAML.' },
-  { method: 'GET', path: '/api/skill.md', auth: 'public', requestPath: '/api/skill.md', title: 'Skill guide', description: 'Read the AI assistant skill instructions.' },
-  { method: 'GET', path: '/api/stats', auth: 'apiKey', requestPath: '/api/stats', title: 'Stats', description: 'Fetch stats visible to the API-key owner.' },
-  { method: 'GET', path: '/api/version', auth: 'public', requestPath: '/api/version', title: 'Version', description: 'Read service version metadata.' }
+  { method: 'GET', path: '/api/docs.md', auth: 'public', requestPath: '/api/docs.md', title: 'Markdown 文档', description: '读取适合 AI 阅读的 Markdown API 参考。' },
+  { method: 'GET', path: '/api/domains/available', auth: 'apiKey', requestPath: '/api/domains/available', title: '可用域名', description: '列出公共域名和当前 API Key 可访问的私有域名。' },
+  { method: 'DELETE', path: '/api/email/:id', auth: 'apiKey', requestPath: '/api/email/msg-uuid', dangerous: true, title: '删除邮件', description: '删除当前 API Key 可访问的一封邮件。' },
+  { method: 'GET', path: '/api/email/:id', auth: 'apiKey', requestPath: '/api/email/msg-uuid', title: '读取邮件', description: '读取一封邮件的正文、邮件头、已读状态和附件元数据。' },
+  { method: 'PATCH', path: '/api/email/:id/read', auth: 'apiKey', requestPath: '/api/email/msg-uuid/read', title: '标记已读', description: '将一封邮件标记为已读。' },
+  { method: 'GET', path: '/api/emails', auth: 'apiKey', requestPath: '/api/emails', queryTemplate: 'email=verify@example.com&page=1&per_page=20', title: '邮件列表', description: '列出邮箱邮件，不会自动标记已读。' },
+  { method: 'DELETE', path: '/api/emails/clear', auth: 'apiKey', requestPath: '/api/emails/clear', queryTemplate: 'email=verify@example.com', dangerous: true, title: '清空收件箱', description: '删除一个邮箱中的全部邮件。' },
+  { method: 'GET', path: '/api/emails/next', auth: 'apiKey', requestPath: '/api/emails/next', queryTemplate: 'email=verify@example.com', title: '下一封未读邮件', description: '轮询最新未读邮件，并自动标记为已读。' },
+  { method: 'POST', path: '/api/generate-email', auth: 'apiKey', requestPath: '/api/generate-email', bodyTemplate: '{\n  "prefix": "verify",\n  "domain": "",\n  "share": false\n}', title: '生成邮箱', description: '创建邮箱，可同时生成带访问 key 的一次性分享 URL。' },
+  { method: 'GET', path: '/api/health', auth: 'public', requestPath: '/api/health', title: '健康状态', description: '检查 API 服务是否可访问。' },
+  { method: 'DELETE', path: '/api/mailboxes/:id', auth: 'apiKey', requestPath: '/api/mailboxes/45', dangerous: true, title: '删除邮箱', description: '删除一个邮箱记录及其已存储邮件。' },
+  { method: 'GET', path: '/api/mailboxes', auth: 'apiKey', requestPath: '/api/mailboxes', queryTemplate: 'page=1&per_page=20', title: '邮箱列表', description: '列出 API Key 拥有者创建的邮箱。' },
+  { method: 'GET', path: '/api/openapi.json', auth: 'public', requestPath: '/api/openapi.json', title: 'OpenAPI JSON', description: '读取机器可读的 OpenAPI 文档。' },
+  { method: 'GET', path: '/api/openapi.yaml', auth: 'public', requestPath: '/api/openapi.yaml', title: 'OpenAPI YAML', description: '读取 YAML 格式的机器可读 OpenAPI 文档。' },
+  { method: 'GET', path: '/api/shared/:token', auth: 'public', requestPath: '/api/shared/share-hloolmail_xxx', queryTemplate: 'key=sharekey-hloolmail_xxx', title: '读取分享邮箱', description: '打开分享 token；邮箱分享使用 share key 访问。' },
+  { method: 'GET', path: '/api/shared/:token/messages', auth: 'public', requestPath: '/api/shared/share-hloolmail_xxx/messages', queryTemplate: 'key=sharekey-hloolmail_xxx&page=1&per_page=20', title: '分享邮箱邮件列表', description: '列出带 share key 的邮箱分享中的邮件。' },
+  { method: 'GET', path: '/api/shared/:token/messages/:message_id', auth: 'public', requestPath: '/api/shared/share-hloolmail_xxx/messages/msg-uuid', queryTemplate: 'key=sharekey-hloolmail_xxx', title: '读取分享邮箱邮件', description: '从带 share key 的邮箱分享中读取一封邮件。' },
+  { method: 'GET', path: '/api/skill.md', auth: 'public', requestPath: '/api/skill.md', title: 'Skill 指南', description: '读取 AI 助手 Skill 使用说明。' },
+  { method: 'GET', path: '/api/stats', auth: 'apiKey', requestPath: '/api/stats', title: '统计信息', description: '获取 API Key 拥有者可见的统计数据。' },
+  { method: 'GET', path: '/api/version', auth: 'public', requestPath: '/api/version', title: '版本信息', description: '读取服务版本元数据。' }
 ];
 
 export const API_DOC_ENDPOINTS_FALLBACK = endpointsFromProjection(GENERATED_FRONTEND_PROJECTION);
@@ -188,14 +191,14 @@ function fallbackTitle(method: DocMethod, path: string) {
 
 function markdownAuthLabel(auth: DocAuth) {
   return {
-    public: 'None',
-    apiKey: 'API key',
-    session: 'cookie/session'
+    public: '公开',
+    apiKey: 'API Key',
+    session: 'Cookie/会话'
   }[auth];
 }
 
 function endpointMarkdownRow(endpoint: DocEndpoint) {
-  return `| \`${endpoint.method}\` | \`${endpoint.path}\` | ${markdownAuthLabel(endpoint.auth)} | ${endpoint.enDesc} |`;
+  return `| \`${endpoint.method}\` | \`${endpoint.path}\` | ${markdownAuthLabel(endpoint.auth)} | ${endpoint.zhDesc || endpoint.enDesc} |`;
 }
 
 export function endpointTitle(endpoint: DocEndpoint, language: Language) {
@@ -224,13 +227,13 @@ export function explorerDefaults(endpoint: DocEndpoint) {
 
 export function apiSkillPrompt(skillURL: string, docsURL: string) {
   return [
-    'Please use this HLOOL Mail skill:',
+    '请使用这个 HLOOL Mail Skill：',
     skillURL,
     '',
-    'Then read the API reference here:',
+    '然后读取这里的 API 参考：',
     docsURL,
     '',
-    'Use only the documented /api/ endpoints. Ask me for my X-API-Key and target mailbox/domain before making protected calls. For verification codes, call GET /api/emails/next?email=MAILBOX every 3 seconds for up to 120 seconds. If has_email=false, keep polling; if has_email=true, extract the code from message.subject, message.text_content, or message.html_content. The endpoint marks the message read automatically.'
+    '只使用文档中列出的 /api/ 端点。调用受保护接口前，先向我索要 X-API-Key 和目标邮箱/域名。验证码场景中，每 3 秒调用一次 GET /api/emails/next?email=MAILBOX，最多等待 120 秒。若 has_email=false 就继续轮询；若 has_email=true，就从 message.subject、message.text_content 或 message.html_content 中提取验证码。该端点会自动将返回邮件标记为已读。'
   ].join('\n');
 }
 
@@ -238,44 +241,44 @@ export function apiDocMarkdown(baseURL: string, config?: InstallStatus['config']
   const base = (config?.public_base_url || baseURL).replace(/\/$/, '');
   const expectedMX = (config?.expected_mx || config?.mail_hostname || 'mail.example.com').replace(/\.$/, '');
   return [
-    '# HLOOL Mail API Guide for AI Assistants',
+    '# HLOOL Mail API 助手指南',
     '',
-    'This document is generated from the OpenAPI projection fallback. The server copy at `/api/docs.md` is authoritative when available.',
+    '本文档由 OpenAPI projection fallback 生成。可访问时，以服务端 `/api/docs.md` 为准。',
     '',
-    `API base URL: \`${base}\``,
-    `Markdown docs: \`${base}${API_DOCS_MD_PATH}\``,
+    `API 基础 URL: \`${base}\``,
+    `Markdown 文档: \`${base}${API_DOCS_MD_PATH}\``,
     `OpenAPI JSON: \`${base}${API_OPENAPI_JSON_PATH}\``,
     '',
-    '## Authentication',
+    '## 认证',
     '',
-    'Use the API key header for API-key automation calls:',
+    'API Key 自动化调用使用请求头：',
     '',
     '```http',
     'X-API-Key: YOUR_KEY',
     '```',
     '',
-    'Domain creation, MX verification, login, and API key creation are web-console tasks.',
+    '域名创建、MX 验证、登录和 API Key 创建都属于 Web Console 任务。',
     '',
-    '## Private Domain Flow',
+    '## 私有域名流程',
     '',
-    'Ask the user to add and verify their domain in the web console, then call `POST /api/generate-email` with the requested domain.',
+    '让用户先在 Web Console 中添加并验证域名，然后调用 `POST /api/generate-email` 并传入该域名。',
     '',
     '```dns',
     `example.com.    MX  10 ${expectedMX}.`,
     `*.example.com.  MX  10 ${expectedMX}.`,
     '```',
     '',
-    '## Reading Mail',
+    '## 读取邮件',
     '',
-    'For verification-code automation, call `GET /api/emails/next?email=MAILBOX` every 3 seconds for up to 120 seconds. Stop after `has_email=true`; the endpoint marks that message read automatically.',
+    '验证码自动化建议每 3 秒调用一次 `GET /api/emails/next?email=MAILBOX`，最多等待 120 秒。拿到 `has_email=true` 后停止；该端点会自动将返回邮件标记为已读。',
     '',
-    '## API Endpoints',
+    '## API 端点',
     '',
-    '| Method | Path | Auth | Purpose |',
+    '| 方法 | 路径 | 认证 | 用途 |',
     '| --- | --- | --- | --- |',
     ...endpoints.map(endpointMarkdownRow),
     '',
-    '## Response Envelope',
+    '## 响应信封',
     '',
     '```json',
     '{',

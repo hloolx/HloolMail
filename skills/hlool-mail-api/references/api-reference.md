@@ -22,6 +22,15 @@ curl -X POST "$BASE_URL/api/generate-email" \
   -d '{}'
 ```
 
+Create a mailbox and a mailbox share in the same API-key call:
+
+```bash
+curl -X POST "$BASE_URL/api/generate-email" \
+  -H "Content-Type: application/json" \
+  -H "X-API-Key: $API_KEY" \
+  -d '{"prefix":"verify","domain":"example.com","share":true}'
+```
+
 Success:
 
 ```json
@@ -42,6 +51,18 @@ Success:
 ```
 
 New mailbox creation returns HTTP `201`. Reusing an existing mailbox owned by the same API-key owner returns HTTP `200` with `data.reuse=true`. `prefix` is optional and is normalized to lowercase letters, digits, `.`, `-`, and `_`; if it normalizes to empty, the API generates a random local part.
+
+When `share` is `true` or an object such as `{ "enabled": true, "expires_at": "2026-06-01T00:00:00Z" }`, `data.share` describes the mailbox share. `data.share.url` is the share page URL, and `data.share.access_url` includes `?key=...` for direct shared mailbox access. Full token/key values are returned once; the server stores only hashes, so old complete links cannot be viewed again.
+
+## Read Shared Mailbox
+
+Shared mailbox reads are public token/key GET endpoints; do not send `X-API-Key` and do not use a POST unlock endpoint:
+
+```bash
+curl "$BASE_URL/api/shared/$SHARE_TOKEN?key=$SHARE_KEY"
+curl "$BASE_URL/api/shared/$SHARE_TOKEN/messages?key=$SHARE_KEY&page=1&per_page=20"
+curl "$BASE_URL/api/shared/$SHARE_TOKEN/messages/msg-uuid?key=$SHARE_KEY"
+```
 
 ## List Available Domains
 

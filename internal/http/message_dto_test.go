@@ -64,22 +64,20 @@ func TestFutureMessageDTOHelpersSanitizeSharedAndWebhookHTML(t *testing.T) {
 		FromAddress: "sender@example.com",
 		Subject:     "Subject",
 		TextContent: "hello text",
-		HTMLContent: `<p>hello</p><script>alert("x")</script>`,
+		HTMLContent: `<table role="presentation" width="600" cellpadding="0" cellspacing="0" style="width: 600px; max-width: 100%; margin: 0 auto; border-collapse: collapse; background-color: #ffffff"><tbody><tr><td align="center" bgcolor="#f7f7f7" style="padding: 16px 24px; color: #333333; font-family: Arial, sans-serif; text-align: center; line-height: 1.5"><script>alert("x")</script><a href="javascript:alert(1)" onclick="alert(1)" style="color: #2563eb; text-decoration: underline; background-image: url(javascript:alert(1))">hello</a><form action="/x"><input name="code"></form></td></tr></tbody></table>`,
 		HeadersJSON: `{"x-test":"yes"}`,
 		CreatedAt:   now,
 		ExpiresAt:   now.Add(time.Hour),
 	}
 
-	shared := mustJSONMap(t, publicSharedMessageDTO(msg, nil))
+	shared := mustJSONMap(t, publicSharedMailboxMessageDTO(msg, nil))
 	if _, ok := shared["headers_json"]; ok {
 		t.Fatalf("shared DTO must not expose headers_json: %+v", shared)
 	}
 	if !hasJSONArray(shared, "attachments") {
 		t.Fatalf("shared DTO should expose an attachments array: %+v", shared)
 	}
-	if html, _ := shared["html_content"].(string); strings.Contains(html, "<script") {
-		t.Fatalf("shared html_content was not sanitized: %s", html)
-	}
+	assertMailHTMLSanitized(t, "shared", shared["html_content"].(string))
 
 	webhook := mustJSONMap(t, webhookMessagePayloadDTO(msg, nil))
 	if !hasJSONArray(webhook, "attachments") {
@@ -88,8 +86,43 @@ func TestFutureMessageDTOHelpersSanitizeSharedAndWebhookHTML(t *testing.T) {
 	if webhook["headers_json"] != `{"x-test":"yes"}` {
 		t.Fatalf("webhook headers_json = %v", webhook["headers_json"])
 	}
-	if html, _ := webhook["html_content"].(string); strings.Contains(html, "<script") {
-		t.Fatalf("webhook html_content was not sanitized: %s", html)
+	assertMailHTMLSanitized(t, "webhook", webhook["html_content"].(string))
+}
+
+func assertMailHTMLSanitized(t *testing.T, label, html string) {
+	t.Helper()
+	for _, blocked := range []string{"<script", "onclick", "javascript:", "<form", "<input", "background-image"} {
+		if strings.Contains(strings.ToLower(html), blocked) {
+			t.Fatalf("%s html_content kept blocked content %q: %s", label, blocked, html)
+		}
+	}
+	for _, want := range []string{
+		"<table",
+		"<tbody",
+		"<tr",
+		"<td",
+		`role="presentation"`,
+		`cellpadding="0"`,
+		`cellspacing="0"`,
+		`align="center"`,
+		`bgcolor="#f7f7f7"`,
+		"style=",
+		"width: 600px",
+		"max-width: 100%",
+		"margin: 0 auto",
+		"border-collapse: collapse",
+		"background-color: #ffffff",
+		"padding: 16px 24px",
+		"color: #333333",
+		"font-family: Arial, sans-serif",
+		"text-align: center",
+		"line-height: 1.5",
+		"color: #2563eb",
+		"text-decoration: underline",
+	} {
+		if !strings.Contains(html, want) {
+			t.Fatalf("%s html_content missing %q: %s", label, want, html)
+		}
 	}
 }
 

@@ -79,7 +79,7 @@ func (op Operation) DisplayPath() string {
 
 func (op Operation) PrimaryResponse() OperationResponse {
 	if len(op.Responses) == 0 {
-		return OperationResponse{Status: 200, Description: "Success", SchemaName: "SuccessEnvelope"}
+		return OperationResponse{Status: 200, Description: "成功", SchemaName: "SuccessEnvelope"}
 	}
 	return op.Responses[0]
 }
@@ -90,6 +90,10 @@ func (op Operation) IsAutomation() bool {
 
 func (op Operation) IsPublicMeta() bool {
 	return op.Auth == AuthPublic && hasTag(op.Tags, TagPublicMeta)
+}
+
+func (op Operation) IsPublicShare() bool {
+	return op.Auth == AuthPublic && hasTag(op.Tags, TagPublicShare)
 }
 
 func (op Operation) IsWebSession() bool {
@@ -106,9 +110,10 @@ func hasTag(tags []string, tag string) bool {
 }
 
 const (
-	TagAutomation = "API Key automation"
-	TagPublicMeta = "Public metadata"
-	TagWebSession = "Web session API"
+	TagAutomation  = "API Key 自动化"
+	TagPublicMeta  = "公开元数据"
+	TagPublicShare = "公开分享 API"
+	TagWebSession  = "网页登录会话 API"
 )
 
 type FrontendOperation struct {

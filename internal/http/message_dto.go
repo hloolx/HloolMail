@@ -4,6 +4,7 @@ import (
 	"strings"
 	"time"
 
+	"gptmail/internal/mailhtml"
 	"gptmail/internal/messagekit"
 	"gptmail/internal/models"
 )
@@ -43,7 +44,7 @@ type MessageDetailDTO struct {
 	HTMLContent string `json:"html_content,omitempty"`
 }
 
-type PublicSharedMessageDTO struct {
+type PublicSharedMailboxMessageDTO struct {
 	ID          string               `json:"id"`
 	Recipient   string               `json:"recipient"`
 	FromAddress string               `json:"from_address"`
@@ -61,11 +62,13 @@ type WebhookMessagePayloadDTO = messagekit.WebhookMessagePayloadDTO
 type ShareLinkDTO struct {
 	ID             uint       `json:"id"`
 	ResourceType   string     `json:"resource_type"`
-	MessageID      string     `json:"message_id,omitempty"`
+	MailboxID      *uint      `json:"mailbox_id,omitempty"`
 	Token          string     `json:"token,omitempty"`
+	AccessKey      string     `json:"access_key,omitempty"`
 	TokenPrefix    string     `json:"token_prefix"`
 	ShareURL       string     `json:"share_url,omitempty"`
-	PasswordSet    bool       `json:"password_set"`
+	AccessURL      string     `json:"access_url,omitempty"`
+	KeySet         bool       `json:"key_set"`
 	ExpiresAt      *time.Time `json:"expires_at,omitempty"`
 	RevokedAt      *time.Time `json:"revoked_at,omitempty"`
 	AccessCount    int64      `json:"access_count"`
@@ -180,15 +183,15 @@ func webMessageDetail(msg models.Message, attachments ...[]AttachmentMetadata) w
 	}
 }
 
-func publicSharedMessageDTO(msg models.Message, attachments []AttachmentMetadata) PublicSharedMessageDTO {
-	return PublicSharedMessageDTO{
+func publicSharedMailboxMessageDTO(msg models.Message, attachments []AttachmentMetadata) PublicSharedMailboxMessageDTO {
+	return PublicSharedMailboxMessageDTO{
 		ID:          msg.ID,
 		Recipient:   msg.Recipient,
 		FromAddress: msg.FromAddress,
 		FromName:    msg.FromName,
 		Subject:     msg.Subject,
 		TextContent: msg.TextContent,
-		HTMLContent: htmlPolicy.Sanitize(msg.HTMLContent),
+		HTMLContent: mailhtml.Sanitize(msg.HTMLContent),
 		Attachments: attachmentsOrEmpty(attachments),
 		CreatedAt:   msg.CreatedAt,
 		ExpiresAt:   msg.ExpiresAt,

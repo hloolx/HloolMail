@@ -3,7 +3,7 @@ import { motion } from 'framer-motion';
 import { ChevronDown, MailOpen } from 'lucide-react';
 import type { MessageSummary } from '../../api';
 import { EmptyState, PaginationControls } from '../../components/shared';
-import { extractCode, relativeTime } from '../../lib/display';
+import { extractCode, relativeTime, VerificationCodeCopyButton } from '../../lib/display';
 import { formatCount, mailListVariants, mailRowVariants } from './utils';
 import type { InboxText } from './types';
 
@@ -39,12 +39,12 @@ export const MessageList = forwardRef<HTMLDivElement, MessageListProps>(function
   onPageChange
 }, ref) {
   return (
-    <>
+    <div className="inbox-list-section inbox-message-list-section">
       <div className="inbox-section-heading">
         <p>{text.inbox.messages}</p>
         <span>{formatCount(text.inbox.messageCount, total)}</span>
       </div>
-      <motion.div ref={ref} className="mail-list" variants={mailListVariants(shouldReduceMotion, items.length)} initial="hidden" animate="show" role="list">
+      <motion.div ref={ref} className="mail-list inbox-scroll-list" variants={mailListVariants(shouldReduceMotion, items.length)} initial="hidden" animate="show" role="list">
         {items.map((message) => (
           <MessageRow
             key={message.id}
@@ -67,7 +67,7 @@ export const MessageList = forwardRef<HTMLDivElement, MessageListProps>(function
           onPageChange={onPageChange}
         />
       )}
-    </>
+    </div>
   );
 });
 
@@ -97,26 +97,29 @@ export function MessageRow({
       style={pulsing ? { animation: 'mail-pulse 2.5s ease-out both' } : undefined}
       role="listitem"
     >
-      <button
-        className={`mail-row ${expanded ? 'mail-row-active' : ''}`}
-        onClick={onSelect}
-        aria-expanded={expanded}
-      >
-        <div className="min-w-0">
-          <div className="flex items-center gap-2">
-            {expanded ? <MailOpen size={15} className="shrink-0 text-[var(--focus)]" /> : null}
-            <span className="truncate text-sm font-medium">{message.subject || text.common.noSubject}</span>
-            {code && <span className="badge strong">{code}</span>}
+      <div className={`mail-row ${expanded ? 'mail-row-active' : ''}`}>
+        <button
+          type="button"
+          className="mail-row-select"
+          onClick={onSelect}
+          aria-expanded={expanded}
+        >
+          <div className="min-w-0">
+            <div className="flex items-center gap-2">
+              {expanded ? <MailOpen size={15} className="shrink-0 text-[var(--focus)]" /> : null}
+              <span className="truncate text-sm font-medium">{message.subject || text.common.noSubject}</span>
+            </div>
+            <div className="truncate text-xs text-[var(--muted)]">
+              {message.from_address || 'unknown'}
+            </div>
           </div>
-          <div className="truncate text-xs text-[var(--muted)]">
-            {message.from_address || 'unknown'}
+          <div className="mail-row-side">
+            <time className="text-xs text-[var(--muted)]">{relativeTime(message.created_at)}</time>
+            <ChevronDown size={15} className={expanded ? 'rotate-180' : ''} />
           </div>
-        </div>
-        <div className="mail-row-side">
-          <time className="text-xs text-[var(--muted)]">{relativeTime(message.created_at)}</time>
-          <ChevronDown size={15} className={expanded ? 'rotate-180' : ''} />
-        </div>
-      </button>
+        </button>
+        {code && <VerificationCodeCopyButton code={code} compact className="mail-code-pill" />}
+      </div>
       {expanded && (
         <motion.div
           className="mail-row-details"

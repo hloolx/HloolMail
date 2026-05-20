@@ -3,12 +3,9 @@ package messagekit
 import (
 	"time"
 
+	"gptmail/internal/mailhtml"
 	"gptmail/internal/models"
-
-	"github.com/microcosm-cc/bluemonday"
 )
-
-var htmlPolicy = bluemonday.UGCPolicy()
 
 type AttachmentMetadata struct {
 	ID               string    `json:"id"`
@@ -47,7 +44,7 @@ func WebhookMessagePayload(msg models.Message, attachments []AttachmentMetadata)
 		FromName:    msg.FromName,
 		Subject:     msg.Subject,
 		TextContent: msg.TextContent,
-		HTMLContent: htmlPolicy.Sanitize(msg.HTMLContent),
+		HTMLContent: mailhtml.Sanitize(msg.HTMLContent),
 		HeadersJSON: msg.HeadersJSON,
 		Attachments: AttachmentsOrEmpty(attachments),
 		CreatedAt:   msg.CreatedAt,

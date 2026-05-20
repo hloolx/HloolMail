@@ -45,6 +45,9 @@ func (h *Handler) loadSession() gin.HandlerFunc {
 
 func (h *Handler) optionalAPIKey() gin.HandlerFunc {
 	return func(c *gin.Context) {
+		// These paths are intentionally outside API-key automation. Ignore any
+		// X-API-Key header so public docs/share reads and Web Console session
+		// routes do not consume API-key quota or create APIUsageLog rows.
 		if isPublicDocsPath(c.Request.URL.Path) || isPublicSharedPath(c.Request.URL.Path) || isSessionOnlyStreamPath(c.Request.URL.Path) || isSessionOnlyManagementPath(c.Request.URL.Path) {
 			c.Next()
 			return
@@ -121,6 +124,7 @@ func isPublicSharedPath(path string) bool {
 }
 
 func isSessionOnlyStreamPath(path string) bool {
+	// SSE is browser-console realtime only. Automation should use Webhooks.
 	switch path {
 	case "/api/inbox-stream", "/api/notification-stream", "/api/announcement-stream":
 		return true
@@ -130,7 +134,21 @@ func isSessionOnlyStreamPath(path string) bool {
 }
 
 func isSessionOnlyManagementPath(path string) bool {
-	return strings.HasPrefix(path, "/api/webhooks") || strings.HasPrefix(path, "/api/share-links")
+	for _, prefix := range []string{
+		"/api/webhooks",
+		"/api/share-links",
+		"/api/api-keys",
+		"/api/admin",
+		"/api/users",
+		"/api/user/",
+		"/api/auth",
+		"/api/oauth",
+	} {
+		if strings.HasPrefix(path, prefix) {
+			return true
+		}
+	}
+	return false
 }
 
 func (h *Handler) securityHeaders() gin.HandlerFunc {

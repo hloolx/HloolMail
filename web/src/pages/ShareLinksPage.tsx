@@ -1,8 +1,8 @@
 import { FormEvent, useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Check, Copy, KeyRound, ListChecks, RefreshCw, Share2, X } from 'lucide-react';
+import { Check, Copy, ListChecks, RefreshCw, Share2, X } from 'lucide-react';
 import { toast } from 'sonner';
-import type { PaginatedResponse, ShareLinkAccessLogDTO, ShareLinkDTO } from '../api';
+import type { MailboxInfo, PaginatedResponse, ShareLinkAccessLogDTO, ShareLinkDTO } from '../api';
 import { api, postJSON } from '../api';
 import { useText } from '../locales';
 import { copy } from '../lib/clipboard';
@@ -69,10 +69,10 @@ export function ShareLinksPage() {
           <DataTable
             ariaLabel={text.shareLinks.title}
             columns={[
-              { key: 'message', header: text.shareLinks.message, minWidth: '14rem' },
+              { key: 'target', header: text.shareLinks.target, minWidth: '14rem' },
               { key: 'token', header: text.shareLinks.tokenPrefix, minWidth: '12rem' },
               { key: 'status', header: text.shareLinks.status, align: 'center', width: '7rem' },
-              { key: 'password', header: text.shareLinks.passwordSet, align: 'center', width: '7rem' },
+              { key: 'shareKey', header: text.shareLinks.shareKeySet, align: 'center', width: '7rem' },
               { key: 'expires', header: text.shareLinks.expiresAt, width: '9rem' },
               { key: 'accesses', header: text.shareLinks.accesses, align: 'right', width: '6rem' },
               { key: 'last', header: text.shareLinks.lastAccessed, width: '8rem' },
@@ -82,10 +82,10 @@ export function ShareLinksPage() {
             rows={list.map((link) => ({
               key: link.id,
               cells: [
-                <span className="automation-primary-cell">{link.message_id || '-'}</span>,
+                shareTarget(link, text),
                 <code className="automation-code">{link.token_prefix}</code>,
                 shareStatus(link, text),
-                link.password_set ? text.common.yes : text.common.no,
+                link.key_set ? text.common.yes : text.common.no,
                 formatDateTime(link.expires_at, text.shareLinks.noExpiry),
                 link.access_count,
                 link.last_accessed_at ? relativeTime(link.last_accessed_at) : '-',
@@ -147,16 +147,24 @@ export function ShareLinksPage() {
 
 function CreateShareLinkDialog({ onClose, onCreated }: { onClose: () => void; onCreated: (link: ShareLinkDTO) => void }) {
   const text = useText();
-  const [messageId, setMessageId] = useState('');
-  const [password, setPassword] = useState('');
+  const [mailboxInput, setMailboxInput] = useState('');
   const [expiresAt, setExpiresAt] = useState('');
+  const mailboxes = useQuery({
+    queryKey: ['mailboxes', 'share-links-create'],
+    queryFn: () => api<PaginatedResponse<MailboxInfo>>('/api/mailboxes?page=1&per_page=50'),
+    retry: false
+  });
+  const mailboxOptions = mailboxes.data?.items || [];
   const create = useMutation({
-    mutationFn: () => postJSON<ShareLinkDTO>('/api/share-links', {
-      resource_type: 'message',
-      message_id: messageId.trim(),
-      password: password.trim(),
-      expires_at: toRFC3339(expiresAt)
-    }),
+    mutationFn: async () => {
+      const mailboxID = await resolveMailboxID(mailboxInput, mailboxOptions);
+      if (!mailboxID) throw new Error(text.shareLinks.mailboxRequired);
+      return postJSON<ShareLinkDTO>('/api/share-links', {
+        resource_type: 'mailbox',
+        mailbox_id: mailboxID,
+        expires_at: toRFC3339(expiresAt)
+      });
+    },
     onSuccess: (data) => {
       toast.success(text.shareLinks.createdToast);
       onCreated(data);
@@ -183,12 +191,21 @@ function CreateShareLinkDialog({ onClose, onCreated }: { onClose: () => void; on
         </div>
         <div className="automation-form">
           <label className="api-key-field">
-            {text.shareLinks.messageId}
-            <input className="input" value={messageId} onChange={(event) => setMessageId(event.target.value)} placeholder={text.shareLinks.messageIdPlaceholder} required />
-          </label>
-          <label className="api-key-field">
-            {text.shareLinks.password}
-            <input className="input" type="password" value={password} onChange={(event) => setPassword(event.target.value)} placeholder={text.shareLinks.passwordPlaceholder} />
+            {text.shareLinks.mailboxIdOrEmail}
+            <input
+              className="input"
+              list="share-mailbox-options"
+              value={mailboxInput}
+              onChange={(event) => setMailboxInput(event.target.value)}
+              placeholder={text.shareLinks.mailboxIdOrEmailPlaceholder}
+              required
+            />
+            <datalist id="share-mailbox-options">
+              {mailboxOptions.flatMap((mailbox) => [
+                <option key={`${mailbox.id}-email`} value={mailbox.email}>{`#${mailbox.id}`}</option>,
+                <option key={`${mailbox.id}-id`} value={String(mailbox.id)}>{mailbox.email}</option>
+              ])}
+            </datalist>
           </label>
           <label className="api-key-field">
             {text.shareLinks.expiresAt}
@@ -197,7 +214,7 @@ function CreateShareLinkDialog({ onClose, onCreated }: { onClose: () => void; on
         </div>
         <div className="modal-footer">
           <button type="button" className="btn-secondary" onClick={onClose}>{text.common.cancel}</button>
-          <button className="btn-primary" disabled={create.isPending || !messageId.trim()}>
+          <button className="btn-primary" disabled={create.isPending || !mailboxInput.trim()}>
             <Share2 size={16} />
             {text.common.create}
           </button>
@@ -246,7 +263,7 @@ function ShareAccessLogsModal({ link, onClose }: { link: ShareLinkDTO; onClose: 
         <div className="modal-header">
           <div>
             <h2>{text.shareLinks.accessLogsTitle}</h2>
-            <p>{link.message_id}</p>
+            <p>{shareTargetText(link, text)}</p>
           </div>
           <IconButton title={text.common.close} onClick={onClose}>
             <X size={16} />
@@ -283,8 +300,14 @@ function ShareAccessLogsModal({ link, onClose }: { link: ShareLinkDTO; onClose: 
 }
 
 export function publicShareURL(link: ShareLinkDTO) {
+  if (link.access_url) {
+    return link.access_url.startsWith('/') ? `${window.location.origin}${link.access_url}` : link.access_url;
+  }
   if (link.share_url) {
     return link.share_url.startsWith('/') ? `${window.location.origin}${link.share_url}` : link.share_url;
+  }
+  if (link.token && link.access_key) {
+    return `${window.location.origin}/share/${encodeURIComponent(link.token)}?key=${encodeURIComponent(link.access_key)}`;
   }
   if (!link.token) return '';
   return `${window.location.origin}/share/${encodeURIComponent(link.token)}`;
@@ -294,6 +317,17 @@ function shareStatus(link: ShareLinkDTO, text: ReturnType<typeof useText>) {
   if (link.revoked_at) return <span className="status-pill status-bad">{text.shareLinks.revoked}</span>;
   if (link.expires_at && new Date(link.expires_at).getTime() <= Date.now()) return <span className="status-pill status-warn">{text.shareLinks.expired}</span>;
   return <span className="status-pill status-ok">{text.shareLinks.active}</span>;
+}
+
+function shareTarget(link: ShareLinkDTO, text: ReturnType<typeof useText>) {
+  return <span className="automation-primary-cell">{shareTargetText(link, text)}</span>;
+}
+
+function shareTargetText(link: ShareLinkDTO, text: ReturnType<typeof useText>) {
+  if (link.resource_type === 'mailbox') {
+    return link.mailbox_id ? `${text.shareLinks.mailbox} #${link.mailbox_id}` : text.shareLinks.mailbox;
+  }
+  return text.shareLinks.unsupportedResource;
 }
 
 function formatDateTime(value: string | undefined, empty: string) {
@@ -308,4 +342,27 @@ function toRFC3339(value: string) {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return '';
   return date.toISOString();
+}
+
+async function resolveMailboxID(value: string, mailboxes: MailboxInfo[]) {
+  const trimmed = value.trim();
+  if (/^\d+$/.test(trimmed)) {
+    const parsed = Number(trimmed);
+    return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : 0;
+  }
+  const localMatch = findMailboxByEmail(trimmed, mailboxes);
+  if (localMatch) return localMatch.id;
+  if (!trimmed.includes('@')) return 0;
+
+  const params = new URLSearchParams({
+    q: trimmed,
+    page: '1',
+    per_page: '50'
+  });
+  const result = await api<PaginatedResponse<MailboxInfo>>(`/api/mailboxes?${params.toString()}`);
+  return findMailboxByEmail(trimmed, result.items || [])?.id || 0;
+}
+
+function findMailboxByEmail(email: string, mailboxes: MailboxInfo[]) {
+  return mailboxes.find((mailbox) => mailbox.email.toLowerCase() === email.toLowerCase());
 }

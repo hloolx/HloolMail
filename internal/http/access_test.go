@@ -130,7 +130,7 @@ func TestAPIDocsMarkdownEndpoint(t *testing.T) {
 	if strings.Contains(strings.ToLower(body), "<!doctype html") {
 		t.Fatalf("docs endpoint returned html fallback: %s", body[:min(len(body), 120)])
 	}
-	for _, want := range []string{"HLOOL Mail API Guide for AI Assistants", "Public API Boundary", "X-API-Key", "/api/generate-email", "/api/mailboxes?page=1&per_page=20", "/api/emails/next?email=", "/api/email/:id/read", "items", "per_page", "total_pages", "messages_deleted"} {
+	for _, want := range []string{"HLOOL Mail API 助手指南", "公开 API 边界", "X-API-Key", "/api/generate-email", "/api/mailboxes?page=1&per_page=20", "/api/emails/next?email=", "/api/email/:id/read", "items", "per_page", "total_pages", "messages_deleted"} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("docs body missing %q", want)
 		}
@@ -180,7 +180,7 @@ func TestOpenAPIEndpointsArePublicAndScoped(t *testing.T) {
 			t.Fatalf("openapi json missing %q", want)
 		}
 	}
-	for _, forbidden := range []string{"/api/v1", "/api/admin", "/api/inbox-stream", "/api/api-keys", "SSE"} {
+	for _, forbidden := range []string{"/api/v1", "/api/admin", "/api/auth", "/api/oauth", "/api/user/", "/api/users", "/api/inbox-stream", "/api/api-keys", "SSE", "/api/shared/{token}/access", "PublicSharedMessage", "password_required", "clear_password", `"password"`, "message share", "邮件分享"} {
 		if strings.Contains(body, forbidden) {
 			t.Fatalf("openapi json should not contain %q", forbidden)
 		}
@@ -1669,6 +1669,52 @@ func TestInboxStreamRequiresSessionCookie(t *testing.T) {
 	}
 	if !strings.Contains(response.Body.String(), ": connected") {
 		t.Fatalf("stream did not flush initial connected frame: %s", response.Body.String())
+	}
+}
+
+func TestSessionOnlyRoutesIgnoreAPIKeyQuota(t *testing.T) {
+	db := httpTestDB(t)
+	key, plain, err := (auth.APIKeyService{DB: db}).Create("session-skip", 1, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	router := testRouter(t, db)
+	headers := map[string]string{"X-API-Key": plain}
+	paths := map[string]int{
+		"/api/share-links":         http.StatusUnauthorized,
+		"/api/webhooks":            http.StatusUnauthorized,
+		"/api/api-keys":            http.StatusUnauthorized,
+		"/api/auth/me":             http.StatusOK,
+		"/api/user/passkeys":       http.StatusUnauthorized,
+		"/api/admin/stats":         http.StatusForbidden,
+		"/api/users":               http.StatusForbidden,
+		"/api/oauth/providers":     http.StatusOK,
+		"/api/auth/login-settings": http.StatusOK,
+		"/api/auth/logout":         http.StatusOK,
+	}
+	for path, want := range paths {
+		method := http.MethodGet
+		if path == "/api/auth/logout" {
+			method = http.MethodPost
+		}
+		response := perform(router, method, path, nil, headers)
+		if response.Code != want {
+			t.Fatalf("%s %s with api key = %d, want %d: %s", method, path, response.Code, want, response.Body.String())
+		}
+	}
+	var refreshed models.APIKey
+	if err := db.First(&refreshed, key.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if refreshed.UsedToday != 0 || refreshed.TotalUsed != 0 || refreshed.LastUsedAt != nil {
+		t.Fatalf("session-only routes consumed API key quota: used_today=%d total_used=%d last_used_at=%v", refreshed.UsedToday, refreshed.TotalUsed, refreshed.LastUsedAt)
+	}
+	var usageLogs int64
+	if err := db.Model(&models.APIUsageLog{}).Where("api_key_id = ?", key.ID).Count(&usageLogs).Error; err != nil {
+		t.Fatal(err)
+	}
+	if usageLogs != 0 {
+		t.Fatalf("session-only routes wrote %d APIUsageLog rows", usageLogs)
 	}
 }
 

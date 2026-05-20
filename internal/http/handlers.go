@@ -15,16 +15,14 @@ import (
 
 	"gptmail/internal/db"
 	domaindb "gptmail/internal/domain"
+	"gptmail/internal/mailhtml"
 	"gptmail/internal/models"
 	"gptmail/internal/version"
 
 	"github.com/gin-gonic/gin"
-	"github.com/microcosm-cc/bluemonday"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
-
-var htmlPolicy = bluemonday.UGCPolicy()
 
 const rootReadyDomainSQL = "mode = ? AND active = ? AND mx_verified = ?"
 
@@ -333,6 +331,28 @@ func (h *Handler) adminStats(c *gin.Context) {
 	})
 }
 
+type generateEmailRequest struct {
+	Prefix string          `json:"prefix"`
+	Domain string          `json:"domain"`
+	Share  json.RawMessage `json:"share"`
+}
+
+type generateEmailShareOptions struct {
+	Enabled   bool
+	ExpiresAt *time.Time
+}
+
+type generateEmailShareDTO struct {
+	ID           uint       `json:"id"`
+	ResourceType string     `json:"resource_type"`
+	Token        string     `json:"token,omitempty"`
+	Key          string     `json:"key,omitempty"`
+	TokenPrefix  string     `json:"token_prefix"`
+	URL          string     `json:"url"`
+	AccessURL    string     `json:"access_url"`
+	ExpiresAt    *time.Time `json:"expires_at,omitempty"`
+}
+
 func (h *Handler) generateEmail(c *gin.Context) {
 	actor, allowed := h.requireActor(c)
 	if !allowed {
@@ -341,12 +361,14 @@ func (h *Handler) generateEmail(c *gin.Context) {
 	if currentAPIKey(c) == nil && !h.consumeUserQuota(c) {
 		return
 	}
-	var input struct {
-		Prefix string `json:"prefix"`
-		Domain string `json:"domain"`
-	}
+	var input generateEmailRequest
 	if err := c.ShouldBindJSON(&input); err != nil && !errors.Is(err, io.EOF) {
 		fail(c, http.StatusBadRequest, "invalid json")
+		return
+	}
+	shareOptions, err := parseGenerateEmailShareOptions(input.Share)
+	if err != nil {
+		fail(c, http.StatusBadRequest, err.Error())
 		return
 	}
 	d, err := h.selectDomainForActor(input.Domain, actor)
@@ -374,7 +396,13 @@ func (h *Handler) generateEmail(c *gin.Context) {
 		var existing models.Mailbox
 		err := h.DB.Where("email = ?", email).First(&existing).Error
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			if err := h.createMailboxWithAccounting(ownerID, d, email, local, host, actor); err != nil {
+			shareDraft, err := newPendingMailboxShare(shareOptions)
+			if err != nil {
+				fail(c, http.StatusInternalServerError, err.Error())
+				return
+			}
+			mailbox, link, err := h.createMailboxWithAccounting(ownerID, d, email, local, host, actor, shareDraft)
+			if err != nil {
 				if isUniqueConstraintError(err) {
 					attempt++
 					if attempt >= maxRetries {
@@ -393,7 +421,7 @@ func (h *Handler) generateEmail(c *gin.Context) {
 				return
 			}
 			h.audit("mailbox.create", actor.name(), email, "")
-			created(c, gin.H{"email": email, "domain_id": d.ID, "domain": d})
+			created(c, h.generateEmailResponse(c, mailbox, d, false, link, shareDraft))
 			return
 		}
 		if !errors.Is(err, gorm.ErrRecordNotFound) && err != nil {
@@ -401,8 +429,21 @@ func (h *Handler) generateEmail(c *gin.Context) {
 			return
 		}
 		if existing.OwnerID == ownerID || actor.isAdmin() {
+			var link *models.ShareLink
+			var token string
+			var accessKey string
+			if shareOptions.Enabled {
+				createdLink, createdToken, createdAccessKey, err := h.createMailboxShare(existing, shareOptions.ExpiresAt)
+				if err != nil {
+					fail(c, http.StatusInternalServerError, err.Error())
+					return
+				}
+				link = createdLink
+				token = createdToken
+				accessKey = createdAccessKey
+			}
 			h.audit("mailbox.reuse", actor.name(), email, "")
-			ok(c, gin.H{"email": email, "domain_id": d.ID, "domain": d, "reuse": true})
+			ok(c, h.generateEmailResponseWithShare(c, existing, d, true, link, token, accessKey))
 			return
 		}
 		attempt++
@@ -411,6 +452,99 @@ func (h *Handler) generateEmail(c *gin.Context) {
 			return
 		}
 		local = ""
+	}
+}
+
+func parseGenerateEmailShareOptions(raw json.RawMessage) (generateEmailShareOptions, error) {
+	value := strings.TrimSpace(string(raw))
+	if value == "" || value == "null" {
+		return generateEmailShareOptions{}, nil
+	}
+	var enabled bool
+	if err := json.Unmarshal(raw, &enabled); err == nil {
+		return generateEmailShareOptions{Enabled: enabled}, nil
+	}
+	var input struct {
+		Enabled   *bool  `json:"enabled"`
+		ExpiresAt string `json:"expires_at"`
+	}
+	if err := json.Unmarshal(raw, &input); err != nil {
+		return generateEmailShareOptions{}, fmt.Errorf("share must be a boolean or object")
+	}
+	enabled = true
+	if input.Enabled != nil {
+		enabled = *input.Enabled
+	}
+	expiresAt, err := parseShareExpiresAt(input.ExpiresAt, true)
+	if err != nil {
+		return generateEmailShareOptions{}, err
+	}
+	return generateEmailShareOptions{Enabled: enabled, ExpiresAt: expiresAt}, nil
+}
+
+type pendingMailboxShare struct {
+	Token         string
+	AccessKey     string
+	TokenHash     string
+	TokenPrefix   string
+	AccessKeyHash string
+	ExpiresAt     *time.Time
+}
+
+func newPendingMailboxShare(options generateEmailShareOptions) (*pendingMailboxShare, error) {
+	if !options.Enabled {
+		return nil, nil
+	}
+	token, prefix, tokenHash, err := newShareToken()
+	if err != nil {
+		return nil, err
+	}
+	accessKey, accessKeyHash, err := newShareAccessKey()
+	if err != nil {
+		return nil, err
+	}
+	return &pendingMailboxShare{
+		Token:         token,
+		AccessKey:     accessKey,
+		TokenHash:     tokenHash,
+		TokenPrefix:   prefix,
+		AccessKeyHash: accessKeyHash,
+		ExpiresAt:     options.ExpiresAt,
+	}, nil
+}
+
+func (h *Handler) generateEmailResponse(c *gin.Context, mailbox models.Mailbox, domain *models.Domain, reuse bool, link *models.ShareLink, share *pendingMailboxShare) gin.H {
+	token := ""
+	accessKey := ""
+	if share != nil {
+		token = share.Token
+		accessKey = share.AccessKey
+	}
+	return h.generateEmailResponseWithShare(c, mailbox, domain, reuse, link, token, accessKey)
+}
+
+func (h *Handler) generateEmailResponseWithShare(c *gin.Context, mailbox models.Mailbox, domain *models.Domain, reuse bool, link *models.ShareLink, token, accessKey string) gin.H {
+	out := gin.H{"email": mailbox.Email, "domain_id": domain.ID, "domain": domain}
+	if reuse {
+		out["reuse"] = true
+	}
+	if link != nil {
+		out["share"] = h.generateEmailShareDTO(c, *link, token, accessKey)
+	}
+	return out
+}
+
+func (h *Handler) generateEmailShareDTO(c *gin.Context, link models.ShareLink, token, accessKey string) generateEmailShareDTO {
+	shareURL := h.shareWebURL(c, token)
+	return generateEmailShareDTO{
+		ID:           link.ID,
+		ResourceType: link.ResourceType,
+		Token:        token,
+		Key:          accessKey,
+		TokenPrefix:  link.TokenPrefix,
+		URL:          shareURL,
+		AccessURL:    shareAccessURL(shareURL, accessKey),
+		ExpiresAt:    link.ExpiresAt,
 	}
 }
 
@@ -508,7 +642,7 @@ func (h *Handler) nextEmail(c *gin.Context) {
 			continue
 		}
 		msg.Seen = true
-		msg.HTMLContent = htmlPolicy.Sanitize(msg.HTMLContent)
+		msg.HTMLContent = mailhtml.Sanitize(msg.HTMLContent)
 		attachments, err := h.attachmentMetadataForMessage(msg.ID)
 		if err != nil {
 			fail(c, http.StatusInternalServerError, err.Error())
@@ -533,7 +667,7 @@ func (h *Handler) getEmail(c *gin.Context) {
 	if _, _, allowed := h.authorizeInbox(c, msg.Recipient); !allowed {
 		return
 	}
-	msg.HTMLContent = htmlPolicy.Sanitize(msg.HTMLContent)
+	msg.HTMLContent = mailhtml.Sanitize(msg.HTMLContent)
 	attachments, err := h.attachmentMetadataForMessage(msg.ID)
 	if err != nil {
 		fail(c, http.StatusInternalServerError, err.Error())
@@ -1803,6 +1937,9 @@ func (h *Handler) deleteMailbox(c *gin.Context) {
 	}
 	var messagesDeleted int64
 	if err := h.DB.Transaction(func(tx *gorm.DB) error {
+		if err := deleteShareLinksForMailboxQuery(tx, mailbox.ID); err != nil {
+			return err
+		}
 		messageQuery := tx.Model(&models.Message{}).Where("recipient = ?", mailbox.Email)
 		if err := deleteShareLinksForMessageQuery(tx, messageQuery); err != nil {
 			return err
@@ -1833,8 +1970,10 @@ func (e httpStatusError) Error() string {
 	return e.Message
 }
 
-func (h *Handler) createMailboxWithAccounting(ownerID uint, d *models.Domain, email, local, host string, actor *requestActor) error {
-	return h.DB.Transaction(func(tx *gorm.DB) error {
+func (h *Handler) createMailboxWithAccounting(ownerID uint, d *models.Domain, email, local, host string, actor *requestActor, share *pendingMailboxShare) (models.Mailbox, *models.ShareLink, error) {
+	var mailbox models.Mailbox
+	var link *models.ShareLink
+	err := h.DB.Transaction(func(tx *gorm.DB) error {
 		var freshDomain models.Domain
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&freshDomain, "id = ?", d.ID).Error; err != nil {
 			return err
@@ -1847,7 +1986,7 @@ func (h *Handler) createMailboxWithAccounting(ownerID uint, d *models.Domain, em
 				return httpStatusError{Status: http.StatusForbidden, Message: "该域名是私有域名，只有域名的所有者才能使用"}
 			}
 		}
-		mailbox := models.Mailbox{
+		mailbox = models.Mailbox{
 			OwnerID:   ownerID,
 			Email:     email,
 			LocalPart: local,
@@ -1860,9 +1999,28 @@ func (h *Handler) createMailboxWithAccounting(ownerID uint, d *models.Domain, em
 		if err := h.applyMailboxAccounting(tx, ownerID, freshDomain, actor); err != nil {
 			return err
 		}
+		if share != nil {
+			createdLink := models.ShareLink{
+				OwnerID:       mailbox.OwnerID,
+				TokenHash:     share.TokenHash,
+				TokenPrefix:   share.TokenPrefix,
+				ResourceType:  models.ShareResourceTypeMailbox,
+				MailboxID:     &mailbox.ID,
+				AccessKeyHash: share.AccessKeyHash,
+				ExpiresAt:     share.ExpiresAt,
+			}
+			if err := tx.Create(&createdLink).Error; err != nil {
+				return err
+			}
+			link = &createdLink
+		}
 		*d = freshDomain
 		return nil
 	})
+	if err != nil {
+		return models.Mailbox{}, nil, err
+	}
+	return mailbox, link, nil
 }
 
 func (h *Handler) applyMailboxAccounting(tx *gorm.DB, userID uint, d models.Domain, actor *requestActor) error {

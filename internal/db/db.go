@@ -125,6 +125,9 @@ func AutoMigrate(db *gorm.DB) error {
 	); err != nil {
 		return err
 	}
+	if err := EnsureShareLinkMailboxShareSchema(db); err != nil {
+		return err
+	}
 	if err := BackfillDomainBoolDefaults(db); err != nil {
 		return err
 	}
@@ -132,6 +135,38 @@ func AutoMigrate(db *gorm.DB) error {
 		return err
 	}
 	return BackfillDomainFirstVerifiedAt(db)
+}
+
+func EnsureShareLinkMailboxShareSchema(db *gorm.DB) error {
+	if !db.Migrator().HasTable(&models.ShareLink{}) {
+		return nil
+	}
+	columns, err := db.Migrator().ColumnTypes(&models.ShareLink{})
+	if err != nil {
+		return err
+	}
+	for _, column := range columns {
+		if strings.EqualFold(column.Name(), "message_id") {
+			if nullable, ok := column.Nullable(); ok && nullable {
+				continue
+			}
+			if err := db.Migrator().AlterColumn(&models.ShareLink{}, "MessageID"); err != nil {
+				return err
+			}
+			continue
+		}
+		if strings.EqualFold(column.Name(), "resource_type") {
+			defaultValue, _ := column.DefaultValue()
+			defaultValue = strings.Trim(defaultValue, "'\"")
+			if strings.EqualFold(defaultValue, models.ShareResourceTypeMailbox) {
+				continue
+			}
+			if err := db.Migrator().AlterColumn(&models.ShareLink{}, "ResourceType"); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 func BackfillDomainBoolDefaults(db *gorm.DB) error {

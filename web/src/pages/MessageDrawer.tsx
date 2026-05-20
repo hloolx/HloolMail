@@ -1,15 +1,11 @@
-import { useEffect, useState } from 'react';
-import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { Check, Copy, Paperclip, Share2 } from 'lucide-react';
-import { toast } from 'sonner';
-import type { AttachmentMetadata, MessageDetail, ShareLinkDTO } from '../api';
-import { postJSON } from '../api';
+import { Check, Copy, Paperclip } from 'lucide-react';
+import type { AttachmentMetadata, MessageDetail } from '../api';
 import { copy } from '../lib/clipboard';
-import { extractCode } from '../lib/display';
+import { extractCode, VerificationCodeCopyButton } from '../lib/display';
+import { buildEmailSrcDoc } from '../lib/emailHtml';
 import { useCopyState } from '../hooks/useCopyState';
 import { useText } from '../locales';
 import { EmptyState, IconButton, LoadingState } from '../components/shared';
-import { OneTimeLinkCard } from './ShareLinksPage';
 
 function injectApiKeyIntoHtml(html: string, apiKey: string): string {
   if (!apiKey) return html;
@@ -24,28 +20,11 @@ function injectApiKeyIntoHtml(html: string, apiKey: string): string {
 
 export function MessageDrawer({ message, loading, apiKey, onBack }: { message?: MessageDetail; loading: boolean; apiKey: string; onBack?: () => void }) {
   const text = useText();
-  const queryClient = useQueryClient();
   const [codeCopied, markCodeCopied] = useCopyState();
-  const [shareLink, setShareLink] = useState<ShareLinkDTO | null>(null);
-  const createShare = useMutation({
-    mutationFn: () => postJSON<ShareLinkDTO>('/api/share-links', {
-      resource_type: 'message',
-      message_id: message?.id
-    }),
-    onSuccess: (link) => {
-      setShareLink(link);
-      queryClient.invalidateQueries({ queryKey: ['share-links'] });
-      toast.success(text.shareLinks.createdFromInbox);
-    },
-    onError: (error) => toast.error(error.message)
-  });
 
-  useEffect(() => {
-    setShareLink(null);
-  }, [message?.id]);
-
-  if (loading) return <aside className="panel mail-detail-panel min-h-96"><LoadingState label={text.common.loading} /></aside>;
-  if (!message) return <aside className="panel mail-detail-panel min-h-96 text-sm text-[var(--muted)]">{text.inbox.selectMessage}</aside>;
+  if (loading) return <aside className="panel mail-detail-panel"><LoadingState label={text.common.loading} /></aside>;
+  if (!message) return <aside className="panel mail-detail-panel mail-detail-empty text-sm text-[var(--muted)]">{text.inbox.selectMessage}</aside>;
+  const code = extractCode(message);
   const hasHtml = Boolean(message.html_content?.trim());
   return (
     <aside className="panel mail-detail-panel min-h-96">
@@ -60,10 +39,7 @@ export function MessageDrawer({ message, loading, apiKey, onBack }: { message?: 
           <p className="truncate">{message.from_address}</p>
         </div>
         <div className="inline-flex gap-2">
-          <IconButton title={text.shareLinks.shareMessage} onClick={() => createShare.mutate()} disabled={createShare.isPending}>
-            <Share2 size={16} />
-          </IconButton>
-          <IconButton title={codeCopied ? text.common.copied : text.inbox.copyCode} onClick={() => { copy(extractCode(message) || message.subject || ''); markCodeCopied(); }}>
+          <IconButton title={codeCopied ? text.common.copied : text.inbox.copyCode} onClick={() => { copy(code || message.subject || ''); markCodeCopied(); }}>
             {codeCopied ? <Check size={16} /> : <Copy size={16} />}
           </IconButton>
         </div>
@@ -72,14 +48,14 @@ export function MessageDrawer({ message, loading, apiKey, onBack }: { message?: 
         <div>To: {message.recipient}</div>
         <div>{new Date(message.created_at).toLocaleString()}</div>
       </div>
-      {shareLink && <OneTimeLinkCard link={shareLink} onClose={() => setShareLink(null)} />}
+      {code && <div className="message-code-row"><VerificationCodeCopyButton code={code} /></div>}
       {message.attachments && message.attachments.length > 0 && <MessageAttachmentList attachments={message.attachments} />}
       {hasHtml ? (
         <iframe
           className="message-frame"
           title={message.subject || text.common.noSubject}
           sandbox="allow-downloads"
-          srcDoc={injectApiKeyIntoHtml(message.html_content || '', apiKey)}
+          srcDoc={buildEmailSrcDoc(injectApiKeyIntoHtml(message.html_content || '', apiKey))}
         />
       ) : message.text_content ? (
         <div className="message-rendered-text">{message.text_content}</div>

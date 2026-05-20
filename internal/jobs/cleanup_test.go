@@ -18,12 +18,20 @@ func TestRunCleanupRemovesExpiredMessages(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := db.AutoMigrate(&models.User{}, &models.Domain{}, &models.Message{}, &models.MessageAttachment{}, &models.ShareLink{}, &models.ShareLinkAccessLog{}, &models.AuditLog{}); err != nil {
+	if err := db.AutoMigrate(&models.User{}, &models.Domain{}, &models.Mailbox{}, &models.Message{}, &models.MessageAttachment{}, &models.ShareLink{}, &models.ShareLinkAccessLog{}, &models.AuditLog{}); err != nil {
 		t.Fatal(err)
 	}
 	now := time.Now()
 	owner := models.User{Email: "owner@example.test", PasswordHash: "hash", Role: models.UserRoleUser, Enabled: true}
 	if err := db.Create(&owner).Error; err != nil {
+		t.Fatal(err)
+	}
+	domain := models.Domain{Domain: "example.test", Mode: models.DomainModePrivate, OwnerID: &owner.ID, Active: true, MXVerified: true}
+	if err := db.Create(&domain).Error; err != nil {
+		t.Fatal(err)
+	}
+	mailbox := models.Mailbox{OwnerID: owner.ID, Email: "demo@example.test", LocalPart: "demo", Host: "example.test", DomainID: domain.ID}
+	if err := db.Create(&mailbox).Error; err != nil {
 		t.Fatal(err)
 	}
 	msg := models.Message{
@@ -49,16 +57,21 @@ func TestRunCleanupRemovesExpiredMessages(t *testing.T) {
 	if err := db.Create(&attachments).Error; err != nil {
 		t.Fatal(err)
 	}
+	expiredMessageID := msg.ID
+	freshMessageID := fresh.ID
+	mailboxID := mailbox.ID
 	shareLinks := []models.ShareLink{
-		{OwnerID: owner.ID, TokenHash: "hash-expired", TokenPrefix: "expired", ResourceType: models.ShareResourceTypeMessage, MessageID: msg.ID},
-		{OwnerID: owner.ID, TokenHash: "hash-fresh", TokenPrefix: "fresh", ResourceType: models.ShareResourceTypeMessage, MessageID: fresh.ID},
+		{OwnerID: owner.ID, TokenHash: "hash-expired", TokenPrefix: "expired", ResourceType: models.ShareResourceTypeMessage, MessageID: &expiredMessageID},
+		{OwnerID: owner.ID, TokenHash: "hash-fresh", TokenPrefix: "fresh", ResourceType: models.ShareResourceTypeMessage, MessageID: &freshMessageID},
+		{OwnerID: owner.ID, TokenHash: "hash-mailbox", TokenPrefix: "mailbox", ResourceType: models.ShareResourceTypeMailbox, MailboxID: &mailboxID, AccessKeyHash: "key-hash"},
 	}
 	if err := db.Create(&shareLinks).Error; err != nil {
 		t.Fatal(err)
 	}
 	accessLogs := []models.ShareLinkAccessLog{
-		{ShareLinkID: shareLinks[0].ID, OwnerID: owner.ID, ResourceType: models.ShareResourceTypeMessage, MessageID: msg.ID, Success: true, IP: "127.0.0.1", UserAgent: "test"},
-		{ShareLinkID: shareLinks[1].ID, OwnerID: owner.ID, ResourceType: models.ShareResourceTypeMessage, MessageID: fresh.ID, Success: true, IP: "127.0.0.1", UserAgent: "test"},
+		{ShareLinkID: shareLinks[0].ID, OwnerID: owner.ID, ResourceType: models.ShareResourceTypeMessage, MessageID: &expiredMessageID, Success: true, IP: "127.0.0.1", UserAgent: "test"},
+		{ShareLinkID: shareLinks[1].ID, OwnerID: owner.ID, ResourceType: models.ShareResourceTypeMessage, MessageID: &freshMessageID, Success: true, IP: "127.0.0.1", UserAgent: "test"},
+		{ShareLinkID: shareLinks[2].ID, OwnerID: owner.ID, ResourceType: models.ShareResourceTypeMailbox, MailboxID: &mailboxID, Success: true, IP: "127.0.0.1", UserAgent: "test"},
 	}
 	if err := db.Create(&accessLogs).Error; err != nil {
 		t.Fatal(err)
@@ -81,19 +94,40 @@ func TestRunCleanupRemovesExpiredMessages(t *testing.T) {
 	if len(remainingAttachments) != 1 || remainingAttachments[0].MessageID != fresh.ID {
 		t.Fatalf("remaining attachments = %+v, want only fresh", remainingAttachments)
 	}
-	var remainingShareLinks []models.ShareLink
-	if err := db.Order("message_id asc").Find(&remainingShareLinks).Error; err != nil {
+	var expiredMessageShares int64
+	if err := db.Model(&models.ShareLink{}).Where("resource_type = ? AND message_id = ?", models.ShareResourceTypeMessage, msg.ID).Count(&expiredMessageShares).Error; err != nil {
 		t.Fatal(err)
 	}
-	if len(remainingShareLinks) != 1 || remainingShareLinks[0].MessageID != fresh.ID {
-		t.Fatalf("remaining share links = %+v, want only fresh", remainingShareLinks)
+	if expiredMessageShares != 0 {
+		t.Fatalf("expired historical message-scoped links = %d, want 0", expiredMessageShares)
 	}
-	var remainingAccessLogs []models.ShareLinkAccessLog
-	if err := db.Order("message_id asc").Find(&remainingAccessLogs).Error; err != nil {
+	var freshMessageShares int64
+	if err := db.Model(&models.ShareLink{}).Where("resource_type = ? AND message_id = ?", models.ShareResourceTypeMessage, fresh.ID).Count(&freshMessageShares).Error; err != nil {
 		t.Fatal(err)
 	}
-	if len(remainingAccessLogs) != 1 || remainingAccessLogs[0].MessageID != fresh.ID {
-		t.Fatalf("remaining access logs = %+v, want only fresh", remainingAccessLogs)
+	if freshMessageShares != 1 {
+		t.Fatalf("fresh historical message-scoped links = %d, want 1", freshMessageShares)
+	}
+	var mailboxShares int64
+	if err := db.Model(&models.ShareLink{}).Where("resource_type = ? AND mailbox_id = ?", models.ShareResourceTypeMailbox, mailbox.ID).Count(&mailboxShares).Error; err != nil {
+		t.Fatal(err)
+	}
+	if mailboxShares != 1 {
+		t.Fatalf("mailbox share links = %d, want 1", mailboxShares)
+	}
+	var expiredMessageLogs int64
+	if err := db.Model(&models.ShareLinkAccessLog{}).Where("resource_type = ? AND message_id = ?", models.ShareResourceTypeMessage, msg.ID).Count(&expiredMessageLogs).Error; err != nil {
+		t.Fatal(err)
+	}
+	if expiredMessageLogs != 0 {
+		t.Fatalf("expired message access logs = %d, want 0", expiredMessageLogs)
+	}
+	var remainingMailboxLogs int64
+	if err := db.Model(&models.ShareLinkAccessLog{}).Where("resource_type = ? AND mailbox_id = ?", models.ShareResourceTypeMailbox, mailbox.ID).Count(&remainingMailboxLogs).Error; err != nil {
+		t.Fatal(err)
+	}
+	if remainingMailboxLogs != 1 {
+		t.Fatalf("mailbox access logs = %d, want 1", remainingMailboxLogs)
 	}
 }
 

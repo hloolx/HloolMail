@@ -21,43 +21,46 @@ const shareTokenPrefixLength = 24
 type createShareLinkRequest struct {
 	ResourceType string `json:"resource_type"`
 	MessageID    string `json:"message_id"`
-	Password     string `json:"password"`
+	MailboxID    *uint  `json:"mailbox_id"`
 	ExpiresAt    string `json:"expires_at"`
 }
 
 type patchShareLinkRequest struct {
-	Password      *string `json:"password"`
-	ClearPassword bool    `json:"clear_password"`
-	ExpiresAt     *string `json:"expires_at"`
+	ExpiresAt *string `json:"expires_at"`
 }
 
-type sharedAccessRequest struct {
-	Password string `json:"password"`
+type publicSharedMailboxLockedDTO struct {
+	ResourceType string                          `json:"resource_type"`
+	TokenPrefix  string                          `json:"token_prefix"`
+	KeyRequired  bool                            `json:"key_required"`
+	Locked       bool                            `json:"locked"`
+	ExpiresAt    *time.Time                      `json:"expires_at,omitempty"`
+	Mailbox      *publicSharedMailboxMetadataDTO `json:"mailbox,omitempty"`
 }
 
-type publicSharedMessageMetadataDTO struct {
-	ID          string    `json:"id"`
-	Recipient   string    `json:"recipient"`
-	FromAddress string    `json:"from_address"`
-	FromName    string    `json:"from_name,omitempty"`
-	Subject     string    `json:"subject"`
-	CreatedAt   time.Time `json:"created_at"`
-	ExpiresAt   time.Time `json:"expires_at"`
+type publicSharedMailboxDTO struct {
+	ResourceType string                         `json:"resource_type"`
+	TokenPrefix  string                         `json:"token_prefix"`
+	ExpiresAt    *time.Time                     `json:"expires_at,omitempty"`
+	Mailbox      publicSharedMailboxMetadataDTO `json:"mailbox"`
 }
 
-type publicSharedLockedDTO struct {
-	ResourceType     string                         `json:"resource_type"`
-	TokenPrefix      string                         `json:"token_prefix"`
-	PasswordRequired bool                           `json:"password_required"`
-	ExpiresAt        *time.Time                     `json:"expires_at,omitempty"`
-	Message          publicSharedMessageMetadataDTO `json:"message"`
+type publicSharedMailboxMetadataDTO struct {
+	ID            uint       `json:"id"`
+	Email         string     `json:"email"`
+	LocalPart     string     `json:"local_part,omitempty"`
+	Host          string     `json:"host,omitempty"`
+	DomainID      uint       `json:"domain_id,omitempty"`
+	MessageCount  int64      `json:"message_count"`
+	LastMessageAt *time.Time `json:"last_message_at,omitempty"`
+	CreatedAt     time.Time  `json:"created_at"`
 }
 
 type shareLinkAccessLogDTO struct {
 	ID            uint      `json:"id"`
 	ShareLinkID   uint      `json:"share_link_id"`
 	ResourceType  string    `json:"resource_type"`
-	MessageID     string    `json:"message_id"`
+	MailboxID     *uint     `json:"mailbox_id,omitempty"`
 	Success       bool      `json:"success"`
 	FailureReason string    `json:"failure_reason,omitempty"`
 	IP            string    `json:"ip"`
@@ -77,33 +80,10 @@ func (h *Handler) createShareLink(c *gin.Context) {
 	}
 	resourceType := strings.TrimSpace(input.ResourceType)
 	if resourceType == "" {
-		resourceType = models.ShareResourceTypeMessage
+		resourceType = models.ShareResourceTypeMailbox
 	}
-	if resourceType != models.ShareResourceTypeMessage {
-		fail(c, http.StatusBadRequest, "only message share is supported")
-		return
-	}
-	messageID := strings.TrimSpace(input.MessageID)
-	if messageID == "" {
-		fail(c, http.StatusBadRequest, "message_id is required")
-		return
-	}
-	var msg models.Message
-	if err := h.DB.First(&msg, "id = ?", messageID).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			fail(c, http.StatusNotFound, "message not found")
-			return
-		}
-		fail(c, http.StatusInternalServerError, err.Error())
-		return
-	}
-	owner, exists, err := h.messageOwnerForMessage(msg)
-	if err != nil {
-		fail(c, http.StatusInternalServerError, err.Error())
-		return
-	}
-	if !exists || (user.Role != models.UserRoleAdmin && owner.OwnerID != user.ID) {
-		fail(c, http.StatusForbidden, "message access denied")
+	if strings.TrimSpace(input.MessageID) != "" {
+		fail(c, http.StatusBadRequest, "message_id is no longer supported for share creation")
 		return
 	}
 	expiresAt, err := parseShareExpiresAt(input.ExpiresAt, true)
@@ -111,30 +91,40 @@ func (h *Handler) createShareLink(c *gin.Context) {
 		fail(c, http.StatusBadRequest, err.Error())
 		return
 	}
-	token, prefix, tokenHash, err := newShareToken()
+	switch resourceType {
+	case models.ShareResourceTypeMessage:
+		fail(c, http.StatusBadRequest, "only mailbox sharing is supported")
+	case models.ShareResourceTypeMailbox:
+		h.createMailboxShareLink(c, user, input, expiresAt)
+	default:
+		fail(c, http.StatusBadRequest, "unsupported resource_type")
+	}
+}
+
+func (h *Handler) createMailboxShareLink(c *gin.Context, user *models.User, input createShareLinkRequest, expiresAt *time.Time) {
+	if input.MailboxID == nil || *input.MailboxID == 0 {
+		fail(c, http.StatusBadRequest, "mailbox_id is required")
+		return
+	}
+	var mailbox models.Mailbox
+	if err := h.DB.First(&mailbox, "id = ?", *input.MailboxID).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			fail(c, http.StatusNotFound, "mailbox not found")
+			return
+		}
+		fail(c, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if user.Role != models.UserRoleAdmin && mailbox.OwnerID != user.ID {
+		fail(c, http.StatusForbidden, "mailbox access denied")
+		return
+	}
+	link, token, accessKey, err := h.createMailboxShare(mailbox, expiresAt)
 	if err != nil {
 		fail(c, http.StatusInternalServerError, err.Error())
 		return
 	}
-	passwordHash, err := hashOptionalSharePassword(input.Password)
-	if err != nil {
-		fail(c, http.StatusInternalServerError, err.Error())
-		return
-	}
-	link := models.ShareLink{
-		OwnerID:      owner.OwnerID,
-		TokenHash:    tokenHash,
-		TokenPrefix:  prefix,
-		ResourceType: models.ShareResourceTypeMessage,
-		MessageID:    msg.ID,
-		PasswordHash: passwordHash,
-		ExpiresAt:    expiresAt,
-	}
-	if err := h.DB.Create(&link).Error; err != nil {
-		fail(c, http.StatusInternalServerError, err.Error())
-		return
-	}
-	created(c, shareLinkDTO(c, link, token))
+	created(c, h.shareLinkDTO(c, *link, token, accessKey))
 }
 
 func (h *Handler) listShareLinks(c *gin.Context) {
@@ -164,7 +154,7 @@ func (h *Handler) listShareLinks(c *gin.Context) {
 	}
 	items := make([]ShareLinkDTO, 0, len(links))
 	for _, link := range links {
-		items = append(items, shareLinkDTO(c, link, ""))
+		items = append(items, h.shareLinkDTO(c, link, "", ""))
 	}
 	ok(c, paginatedResponse[ShareLinkDTO]{
 		Items:      items,
@@ -184,7 +174,7 @@ func (h *Handler) getShareLink(c *gin.Context) {
 	if !ok {
 		return
 	}
-	webOK(c, shareLinkDTO(c, *link, ""))
+	webOK(c, h.shareLinkDTO(c, *link, "", ""))
 }
 
 func (h *Handler) patchShareLink(c *gin.Context) {
@@ -210,16 +200,6 @@ func (h *Handler) patchShareLink(c *gin.Context) {
 		}
 		updates["expires_at"] = expiresAt
 	}
-	if input.ClearPassword {
-		updates["password_hash"] = ""
-	} else if input.Password != nil {
-		passwordHash, err := hashOptionalSharePassword(*input.Password)
-		if err != nil {
-			fail(c, http.StatusInternalServerError, err.Error())
-			return
-		}
-		updates["password_hash"] = passwordHash
-	}
 	if len(updates) > 0 {
 		if err := h.DB.Model(link).Updates(updates).Error; err != nil {
 			fail(c, http.StatusInternalServerError, err.Error())
@@ -230,7 +210,7 @@ func (h *Handler) patchShareLink(c *gin.Context) {
 			return
 		}
 	}
-	webOK(c, shareLinkDTO(c, *link, ""))
+	webOK(c, h.shareLinkDTO(c, *link, "", ""))
 }
 
 func (h *Handler) revokeShareLink(c *gin.Context) {
@@ -248,7 +228,7 @@ func (h *Handler) revokeShareLink(c *gin.Context) {
 		return
 	}
 	link.RevokedAt = &now
-	webOK(c, shareLinkDTO(c, *link, ""))
+	webOK(c, h.shareLinkDTO(c, *link, "", ""))
 }
 
 func (h *Handler) rotateShareLinkToken(c *gin.Context) {
@@ -265,16 +245,56 @@ func (h *Handler) rotateShareLinkToken(c *gin.Context) {
 		fail(c, http.StatusInternalServerError, err.Error())
 		return
 	}
-	if err := h.DB.Model(link).Updates(map[string]any{
+	updates := map[string]any{
 		"token_hash":   tokenHash,
 		"token_prefix": prefix,
-	}).Error; err != nil {
+	}
+	accessKey := ""
+	if link.ResourceType == models.ShareResourceTypeMailbox {
+		var accessKeyHash string
+		accessKey, accessKeyHash, err = newShareAccessKey()
+		if err != nil {
+			fail(c, http.StatusInternalServerError, err.Error())
+			return
+		}
+		updates["access_key_hash"] = accessKeyHash
+	}
+	if err := h.DB.Model(link).Updates(updates).Error; err != nil {
 		fail(c, http.StatusInternalServerError, err.Error())
 		return
 	}
 	link.TokenHash = tokenHash
 	link.TokenPrefix = prefix
-	webOK(c, shareLinkDTO(c, *link, token))
+	if value, ok := updates["access_key_hash"].(string); ok {
+		link.AccessKeyHash = value
+	}
+	webOK(c, h.shareLinkDTO(c, *link, token, accessKey))
+}
+
+func (h *Handler) rotateShareLinkKey(c *gin.Context) {
+	user, loggedIn := h.requireLogin(c)
+	if !loggedIn {
+		return
+	}
+	link, ok := h.findShareLinkForUser(c, user)
+	if !ok {
+		return
+	}
+	if link.ResourceType != models.ShareResourceTypeMailbox {
+		fail(c, http.StatusBadRequest, "share key is only supported for mailbox shares")
+		return
+	}
+	accessKey, accessKeyHash, err := newShareAccessKey()
+	if err != nil {
+		fail(c, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if err := h.DB.Model(link).Update("access_key_hash", accessKeyHash).Error; err != nil {
+		fail(c, http.StatusInternalServerError, err.Error())
+		return
+	}
+	link.AccessKeyHash = accessKeyHash
+	webOK(c, h.shareLinkDTO(c, *link, "", accessKey))
 }
 
 func (h *Handler) listShareLinkAccessLogs(c *gin.Context) {
@@ -312,7 +332,7 @@ func (h *Handler) listShareLinkAccessLogs(c *gin.Context) {
 			ID:            log.ID,
 			ShareLinkID:   log.ShareLinkID,
 			ResourceType:  log.ResourceType,
-			MessageID:     log.MessageID,
+			MailboxID:     log.MailboxID,
 			Success:       log.Success,
 			FailureReason: log.FailureReason,
 			IP:            log.IP,
@@ -330,50 +350,110 @@ func (h *Handler) listShareLinkAccessLogs(c *gin.Context) {
 }
 
 func (h *Handler) getSharedLink(c *gin.Context) {
-	if _, exists := c.GetQuery("password"); exists {
-		fail(c, http.StatusBadRequest, "password must be sent in JSON body")
-		return
-	}
-	link, msg, ok := h.resolvePublicShare(c)
+	link, ok := h.resolvePublicShare(c)
 	if !ok {
 		return
 	}
-	if link.PasswordHash != "" {
-		publicOK(c, publicSharedLockedDTO{
-			ResourceType:     link.ResourceType,
-			TokenPrefix:      link.TokenPrefix,
-			PasswordRequired: true,
-			ExpiresAt:        link.ExpiresAt,
-			Message:          sharedMessageMetadataDTO(msg),
-		})
-		return
+	switch link.ResourceType {
+	case models.ShareResourceTypeMessage:
+		fail(c, http.StatusNotFound, "share link not found")
+	case models.ShareResourceTypeMailbox:
+		h.writeSharedMailboxMetadata(c, link, false)
+	default:
+		fail(c, http.StatusNotFound, "share link not found")
 	}
-	h.writeSharedMessage(c, link, msg)
 }
 
-func (h *Handler) accessSharedLink(c *gin.Context) {
-	if _, exists := c.GetQuery("password"); exists {
-		fail(c, http.StatusBadRequest, "password must be sent in JSON body")
-		return
-	}
-	link, msg, ok := h.resolvePublicShare(c)
+func (h *Handler) listSharedMailboxMessages(c *gin.Context) {
+	link, mailbox, ok := h.resolveMailboxShareWithKey(c)
 	if !ok {
 		return
 	}
-	var input sharedAccessRequest
-	if err := c.ShouldBindJSON(&input); err != nil && !errors.Is(err, io.EOF) {
-		fail(c, http.StatusBadRequest, "invalid json")
-		return
-	}
-	if link.PasswordHash != "" && !auth.VerifySecret(link.PasswordHash, input.Password) {
-		if err := h.recordShareAccess(c, link, false, "invalid_password"); err != nil {
+	paged := c.Query("page") != "" || c.Query("per_page") != ""
+	if paged {
+		page := parsePage(c.Query("page"))
+		perPage := parseLimit(c.Query("per_page"), 10, 100)
+		var total int64
+		if err := h.DB.Model(&models.Message{}).Where("recipient = ?", mailbox.Email).Count(&total).Error; err != nil {
 			fail(c, http.StatusInternalServerError, err.Error())
 			return
 		}
-		fail(c, http.StatusUnauthorized, "invalid password")
+		totalPages := pageCount(total, perPage)
+		if page > totalPages {
+			page = totalPages
+		}
+		var messages []models.Message
+		if err := h.DB.Where("recipient = ?", mailbox.Email).
+			Order("created_at desc").
+			Limit(perPage).
+			Offset((page - 1) * perPage).
+			Find(&messages).Error; err != nil {
+			fail(c, http.StatusInternalServerError, err.Error())
+			return
+		}
+		summaries, err := h.messageSummariesWithAttachmentCounts(messages)
+		if err != nil {
+			fail(c, http.StatusInternalServerError, err.Error())
+			return
+		}
+		if err := h.recordShareAccess(c, link, true, ""); err != nil {
+			fail(c, http.StatusInternalServerError, err.Error())
+			return
+		}
+		publicOK(c, paginatedResponse[messageSummary]{
+			Items:      summaries,
+			Page:       page,
+			PerPage:    perPage,
+			Total:      total,
+			TotalPages: totalPages,
+		})
 		return
 	}
-	h.writeSharedMessage(c, link, msg)
+	limit := parseLimit(c.Query("limit"), 50, 200)
+	var messages []models.Message
+	if err := h.DB.Where("recipient = ?", mailbox.Email).
+		Order("created_at desc").
+		Limit(limit).
+		Find(&messages).Error; err != nil {
+		fail(c, http.StatusInternalServerError, err.Error())
+		return
+	}
+	summaries, err := h.messageSummariesWithAttachmentCounts(messages)
+	if err != nil {
+		fail(c, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if err := h.recordShareAccess(c, link, true, ""); err != nil {
+		fail(c, http.StatusInternalServerError, err.Error())
+		return
+	}
+	publicOK(c, summaries)
+}
+
+func (h *Handler) getSharedMailboxMessage(c *gin.Context) {
+	link, mailbox, ok := h.resolveMailboxShareWithKey(c)
+	if !ok {
+		return
+	}
+	var msg models.Message
+	if err := h.DB.Where("id = ? AND recipient = ?", c.Param("message_id"), mailbox.Email).First(&msg).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			fail(c, http.StatusNotFound, "message not found")
+			return
+		}
+		fail(c, http.StatusInternalServerError, err.Error())
+		return
+	}
+	attachments, err := h.attachmentMetadataForMessage(msg.ID)
+	if err != nil {
+		fail(c, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if err := h.recordShareAccess(c, link, true, ""); err != nil {
+		fail(c, http.StatusInternalServerError, err.Error())
+		return
+	}
+	publicOK(c, publicSharedMailboxMessageDTO(msg, attachments))
 }
 
 func (h *Handler) shareLinksForUser(user *models.User) *gorm.DB {
@@ -401,35 +481,21 @@ func (h *Handler) findShareLinkForUser(c *gin.Context, user *models.User) (*mode
 	return nil, false
 }
 
-func (h *Handler) resolvePublicShare(c *gin.Context) (*models.ShareLink, models.Message, bool) {
+func (h *Handler) resolvePublicShare(c *gin.Context) (*models.ShareLink, bool) {
 	link, ok, err := h.findShareLinkByToken(c.Param("token"))
 	if err != nil {
 		fail(c, http.StatusInternalServerError, err.Error())
-		return nil, models.Message{}, false
+		return nil, false
 	}
 	if !ok {
 		fail(c, http.StatusNotFound, "share link not found")
-		return nil, models.Message{}, false
+		return nil, false
 	}
 	if link.RevokedAt != nil || (link.ExpiresAt != nil && !link.ExpiresAt.After(time.Now())) {
 		fail(c, http.StatusGone, "share link expired or revoked")
-		return nil, models.Message{}, false
+		return nil, false
 	}
-	if link.ResourceType != models.ShareResourceTypeMessage {
-		fail(c, http.StatusNotFound, "share link not found")
-		return nil, models.Message{}, false
-	}
-	var msg models.Message
-	err = h.DB.First(&msg, "id = ?", link.MessageID).Error
-	if err == nil {
-		return link, msg, true
-	}
-	if errors.Is(err, gorm.ErrRecordNotFound) {
-		fail(c, http.StatusNotFound, "message not found")
-		return nil, models.Message{}, false
-	}
-	fail(c, http.StatusInternalServerError, err.Error())
-	return nil, models.Message{}, false
+	return link, true
 }
 
 func (h *Handler) findShareLinkByToken(token string) (*models.ShareLink, bool, error) {
@@ -439,7 +505,7 @@ func (h *Handler) findShareLinkByToken(token string) (*models.ShareLink, bool, e
 	}
 	var candidates []models.ShareLink
 	if err := h.DB.
-		Where("token_prefix = ? AND resource_type = ?", shareTokenPrefix(token), models.ShareResourceTypeMessage).
+		Where("token_prefix = ?", shareTokenPrefix(token)).
 		Find(&candidates).Error; err != nil {
 		return nil, false, err
 	}
@@ -451,17 +517,111 @@ func (h *Handler) findShareLinkByToken(token string) (*models.ShareLink, bool, e
 	return nil, false, nil
 }
 
-func (h *Handler) writeSharedMessage(c *gin.Context, link *models.ShareLink, msg models.Message) {
-	attachments, err := h.attachmentMetadataForMessage(msg.ID)
-	if err != nil {
-		fail(c, http.StatusInternalServerError, err.Error())
+func (h *Handler) writeSharedMailboxMetadata(c *gin.Context, link *models.ShareLink, requireKey bool) {
+	mailbox, ok := h.sharedMailboxForLink(c, link)
+	if !ok {
+		return
+	}
+	key := strings.TrimSpace(c.Query("key"))
+	if key == "" {
+		if requireKey {
+			fail(c, http.StatusUnauthorized, "share key required")
+			return
+		}
+		publicOK(c, publicSharedMailboxLockedDTO{
+			ResourceType: link.ResourceType,
+			TokenPrefix:  link.TokenPrefix,
+			KeyRequired:  true,
+			Locked:       true,
+			ExpiresAt:    link.ExpiresAt,
+		})
+		return
+	}
+	if !auth.VerifySecret(link.AccessKeyHash, key) {
+		if err := h.recordShareAccess(c, link, false, "invalid_key"); err != nil {
+			fail(c, http.StatusInternalServerError, err.Error())
+			return
+		}
+		fail(c, http.StatusUnauthorized, "invalid share key")
 		return
 	}
 	if err := h.recordShareAccess(c, link, true, ""); err != nil {
 		fail(c, http.StatusInternalServerError, err.Error())
 		return
 	}
-	publicOK(c, publicSharedMessageDTO(msg, attachments))
+	publicOK(c, h.sharedMailboxDTO(link, mailbox))
+}
+
+func (h *Handler) resolveMailboxShareWithKey(c *gin.Context) (*models.ShareLink, models.Mailbox, bool) {
+	link, ok := h.resolvePublicShare(c)
+	if !ok {
+		return nil, models.Mailbox{}, false
+	}
+	if link.ResourceType != models.ShareResourceTypeMailbox {
+		fail(c, http.StatusNotFound, "share link not found")
+		return nil, models.Mailbox{}, false
+	}
+	mailbox, ok := h.sharedMailboxForLink(c, link)
+	if !ok {
+		return nil, models.Mailbox{}, false
+	}
+	key := strings.TrimSpace(c.Query("key"))
+	if key == "" {
+		fail(c, http.StatusUnauthorized, "share key required")
+		return nil, models.Mailbox{}, false
+	}
+	if !auth.VerifySecret(link.AccessKeyHash, key) {
+		if err := h.recordShareAccess(c, link, false, "invalid_key"); err != nil {
+			fail(c, http.StatusInternalServerError, err.Error())
+			return nil, models.Mailbox{}, false
+		}
+		fail(c, http.StatusUnauthorized, "invalid share key")
+		return nil, models.Mailbox{}, false
+	}
+	return link, mailbox, true
+}
+
+func (h *Handler) sharedMailboxForLink(c *gin.Context, link *models.ShareLink) (models.Mailbox, bool) {
+	if link.MailboxID == nil || *link.MailboxID == 0 {
+		fail(c, http.StatusNotFound, "mailbox not found")
+		return models.Mailbox{}, false
+	}
+	var mailbox models.Mailbox
+	if err := h.DB.First(&mailbox, "id = ?", *link.MailboxID).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			fail(c, http.StatusNotFound, "mailbox not found")
+			return models.Mailbox{}, false
+		}
+		fail(c, http.StatusInternalServerError, err.Error())
+		return models.Mailbox{}, false
+	}
+	return mailbox, true
+}
+
+func (h *Handler) sharedMailboxDTO(link *models.ShareLink, mailbox models.Mailbox) publicSharedMailboxDTO {
+	var count int64
+	h.DB.Model(&models.Message{}).Where("recipient = ?", mailbox.Email).Count(&count)
+	var lastMsg models.Message
+	var lastAt *time.Time
+	if err := h.DB.Where("recipient = ?", mailbox.Email).Order("created_at desc").First(&lastMsg).Error; err == nil {
+		t := lastMsg.CreatedAt
+		lastAt = &t
+	}
+	return publicSharedMailboxDTO{
+		ResourceType: link.ResourceType,
+		TokenPrefix:  link.TokenPrefix,
+		ExpiresAt:    link.ExpiresAt,
+		Mailbox: publicSharedMailboxMetadataDTO{
+			ID:            mailbox.ID,
+			Email:         mailbox.Email,
+			LocalPart:     mailbox.LocalPart,
+			Host:          mailbox.Host,
+			DomainID:      mailbox.DomainID,
+			MessageCount:  count,
+			LastMessageAt: lastAt,
+			CreatedAt:     mailbox.CreatedAt,
+		},
+	}
 }
 
 func (h *Handler) recordShareAccess(c *gin.Context, link *models.ShareLink, success bool, failureReason string) error {
@@ -486,6 +646,7 @@ func (h *Handler) recordShareAccess(c *gin.Context, link *models.ShareLink, succ
 			OwnerID:       link.OwnerID,
 			ResourceType:  link.ResourceType,
 			MessageID:     link.MessageID,
+			MailboxID:     link.MailboxID,
 			Success:       success,
 			FailureReason: failureReason,
 			IP:            c.ClientIP(),
@@ -495,13 +656,13 @@ func (h *Handler) recordShareAccess(c *gin.Context, link *models.ShareLink, succ
 	})
 }
 
-func shareLinkDTO(c *gin.Context, link models.ShareLink, token string) ShareLinkDTO {
+func (h *Handler) shareLinkDTO(c *gin.Context, link models.ShareLink, token, accessKey string) ShareLinkDTO {
 	dto := ShareLinkDTO{
 		ID:             link.ID,
 		ResourceType:   link.ResourceType,
-		MessageID:      link.MessageID,
+		MailboxID:      link.MailboxID,
 		TokenPrefix:    link.TokenPrefix,
-		PasswordSet:    link.PasswordHash != "",
+		KeySet:         link.AccessKeyHash != "",
 		ExpiresAt:      link.ExpiresAt,
 		RevokedAt:      link.RevokedAt,
 		AccessCount:    link.AccessCount,
@@ -511,21 +672,42 @@ func shareLinkDTO(c *gin.Context, link models.ShareLink, token string) ShareLink
 	}
 	if token != "" {
 		dto.Token = token
-		dto.ShareURL = shareWebURL(c, token)
+		dto.ShareURL = h.shareWebURL(c, token)
+	}
+	if accessKey != "" {
+		dto.AccessKey = accessKey
+		if dto.ShareURL == "" && token != "" {
+			dto.ShareURL = h.shareWebURL(c, token)
+		}
+		if dto.ShareURL != "" {
+			dto.AccessURL = shareAccessURL(dto.ShareURL, accessKey)
+		}
 	}
 	return dto
 }
 
-func sharedMessageMetadataDTO(msg models.Message) publicSharedMessageMetadataDTO {
-	return publicSharedMessageMetadataDTO{
-		ID:          msg.ID,
-		Recipient:   msg.Recipient,
-		FromAddress: msg.FromAddress,
-		FromName:    msg.FromName,
-		Subject:     msg.Subject,
-		CreatedAt:   msg.CreatedAt,
-		ExpiresAt:   msg.ExpiresAt,
+func (h *Handler) createMailboxShare(mailbox models.Mailbox, expiresAt *time.Time) (*models.ShareLink, string, string, error) {
+	token, prefix, tokenHash, err := newShareToken()
+	if err != nil {
+		return nil, "", "", err
 	}
+	accessKey, accessKeyHash, err := newShareAccessKey()
+	if err != nil {
+		return nil, "", "", err
+	}
+	link := models.ShareLink{
+		OwnerID:       mailbox.OwnerID,
+		TokenHash:     tokenHash,
+		TokenPrefix:   prefix,
+		ResourceType:  models.ShareResourceTypeMailbox,
+		MailboxID:     &mailbox.ID,
+		AccessKeyHash: accessKeyHash,
+		ExpiresAt:     expiresAt,
+	}
+	if err := h.DB.Create(&link).Error; err != nil {
+		return nil, "", "", err
+	}
+	return &link, token, accessKey, nil
 }
 
 func newShareToken() (plain, prefix, hash string, err error) {
@@ -542,19 +724,24 @@ func newShareToken() (plain, prefix, hash string, err error) {
 	return plain, prefix, hash, nil
 }
 
+func newShareAccessKey() (plain, hash string, err error) {
+	random, err := randomURLToken(32)
+	if err != nil {
+		return "", "", err
+	}
+	plain = "sharekey-hloolmail-" + random
+	hash, err = auth.HashSecret(plain)
+	if err != nil {
+		return "", "", err
+	}
+	return plain, hash, nil
+}
+
 func shareTokenPrefix(token string) string {
 	if len(token) <= shareTokenPrefixLength {
 		return token
 	}
 	return token[:shareTokenPrefixLength]
-}
-
-func hashOptionalSharePassword(password string) (string, error) {
-	password = strings.TrimSpace(password)
-	if password == "" {
-		return "", nil
-	}
-	return auth.HashSecret(password)
 }
 
 func parseShareExpiresAt(value string, requireFuture bool) (*time.Time, error) {
@@ -572,8 +759,11 @@ func parseShareExpiresAt(value string, requireFuture bool) (*time.Time, error) {
 	return &parsed, nil
 }
 
-func shareWebURL(c *gin.Context, token string) string {
+func (h *Handler) shareWebURL(c *gin.Context, token string) string {
 	path := "/share/" + url.PathEscape(token)
+	if base := strings.TrimRight(strings.TrimSpace(h.Config.PublicBaseURL), "/"); base != "" {
+		return base + path
+	}
 	host := c.Request.Host
 	if host == "" {
 		return path
@@ -585,4 +775,19 @@ func shareWebURL(c *gin.Context, token string) string {
 		scheme = "https"
 	}
 	return scheme + "://" + host + path
+}
+
+func shareAccessURL(shareURL, accessKey string) string {
+	parsed, err := url.Parse(shareURL)
+	if err != nil {
+		separator := "?"
+		if strings.Contains(shareURL, "?") {
+			separator = "&"
+		}
+		return shareURL + separator + "key=" + url.QueryEscape(accessKey)
+	}
+	query := parsed.Query()
+	query.Set("key", accessKey)
+	parsed.RawQuery = query.Encode()
+	return parsed.String()
 }

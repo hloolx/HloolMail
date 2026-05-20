@@ -72,13 +72,15 @@ function AppContent() {
 
   useEffect(() => {
     const unreadCount = awayMailCount + awayAnnouncementCount;
-    const pageTitle = !me.isError && me.data?.installed === false
-      ? text.install.title
-      : me.isError || !me.data?.user
-        ? text.login.title
-        : text.page[page];
+    const pageTitle = isSharedRoute
+      ? text.shared.title
+      : (!me.isError && me.data?.installed === false
+        ? text.install.title
+        : me.isError || !me.data?.user
+          ? text.login.title
+          : text.page[page]);
     document.title = `${unreadCount > 0 ? `(${unreadCount}) ` : ''}${pageTitle} | HLOOL Mail`;
-  }, [awayAnnouncementCount, awayMailCount, me.data?.installed, me.data?.user, me.isError, page, text]);
+  }, [awayAnnouncementCount, awayMailCount, isSharedRoute, me.data?.installed, me.data?.user, me.isError, page, text]);
 
   useEffect(() => {
     if (skipInstall && me.data?.user) {

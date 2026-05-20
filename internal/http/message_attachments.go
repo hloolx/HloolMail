@@ -57,9 +57,17 @@ func deleteAttachmentsForMessageQuery(tx *gorm.DB, query *gorm.DB) error {
 }
 
 func deleteShareLinksForMessageQuery(tx *gorm.DB, query *gorm.DB) error {
-	shareLinks := tx.Model(&models.ShareLink{}).Where("message_id IN (?)", query.Select("id"))
+	shareLinks := tx.Model(&models.ShareLink{}).Where("resource_type = ? AND message_id IN (?)", models.ShareResourceTypeMessage, query.Select("id"))
 	if err := tx.Where("share_link_id IN (?)", shareLinks.Select("id")).Delete(&models.ShareLinkAccessLog{}).Error; err != nil {
 		return err
 	}
-	return tx.Where("message_id IN (?)", query.Select("id")).Delete(&models.ShareLink{}).Error
+	return tx.Where("resource_type = ? AND message_id IN (?)", models.ShareResourceTypeMessage, query.Select("id")).Delete(&models.ShareLink{}).Error
+}
+
+func deleteShareLinksForMailboxQuery(tx *gorm.DB, mailboxID uint) error {
+	shareLinks := tx.Model(&models.ShareLink{}).Where("resource_type = ? AND mailbox_id = ?", models.ShareResourceTypeMailbox, mailboxID)
+	if err := tx.Where("share_link_id IN (?)", shareLinks.Select("id")).Delete(&models.ShareLinkAccessLog{}).Error; err != nil {
+		return err
+	}
+	return tx.Where("resource_type = ? AND mailbox_id = ?", models.ShareResourceTypeMailbox, mailboxID).Delete(&models.ShareLink{}).Error
 }

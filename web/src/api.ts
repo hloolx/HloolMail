@@ -124,14 +124,18 @@ export type AttachmentMetadata = {
   created_at: string;
 };
 
+export type ShareResourceType = 'mailbox' | (string & {});
+
 export type ShareLinkDTO = {
   id: number;
-  resource_type: 'message' | string;
-  message_id?: string;
+  resource_type: ShareResourceType;
+  mailbox_id?: number;
   token?: string;
+  access_key?: string;
   token_prefix: string;
   share_url?: string;
-  password_set: boolean;
+  access_url?: string;
+  key_set?: boolean;
   expires_at?: string;
   revoked_at?: string;
   access_count: number;
@@ -143,8 +147,8 @@ export type ShareLinkDTO = {
 export type ShareLinkAccessLogDTO = {
   id: number;
   share_link_id: number;
-  resource_type: string;
-  message_id: string;
+  resource_type: ShareResourceType;
+  mailbox_id?: number;
   success: boolean;
   failure_reason?: string;
   ip: string;
@@ -152,25 +156,34 @@ export type ShareLinkAccessLogDTO = {
   created_at: string;
 };
 
-export type PublicSharedMessageMetadata = {
-  id: string;
-  recipient: string;
-  from_address: string;
-  from_name?: string;
-  subject: string;
-  created_at: string;
-  expires_at: string;
+export type PublicSharedMailboxMetadata = {
+  id: number;
+  email: string;
+  local_part?: string;
+  host?: string;
+  domain_id?: number;
+  message_count?: number;
+  last_message_at?: string;
+  created_at?: string;
 };
 
 export type PublicSharedLocked = {
-  resource_type: 'message' | string;
+  resource_type: ShareResourceType;
   token_prefix: string;
-  password_required: true;
+  key_required?: boolean;
+  locked?: boolean;
   expires_at?: string;
-  message: PublicSharedMessageMetadata;
+  mailbox?: PublicSharedMailboxMetadata;
 };
 
-export type PublicSharedMessage = {
+export type PublicSharedMailbox = {
+  resource_type: 'mailbox';
+  token_prefix?: string;
+  expires_at?: string;
+  mailbox: PublicSharedMailboxMetadata;
+};
+
+export type PublicSharedMailboxMessage = {
   id: string;
   recipient: string;
   from_address: string;
@@ -181,9 +194,13 @@ export type PublicSharedMessage = {
   attachments: AttachmentMetadata[];
   created_at: string;
   expires_at: string;
+  seen?: boolean;
+  preview?: string;
+  headers_json?: string;
+  attachment_count?: number;
 };
 
-export type PublicSharedResponse = PublicSharedLocked | PublicSharedMessage;
+export type PublicSharedResponse = PublicSharedLocked | PublicSharedMailbox;
 
 export type WebhookEndpointDTO = {
   id: number;
