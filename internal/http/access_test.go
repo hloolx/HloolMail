@@ -130,15 +130,91 @@ func TestAPIDocsMarkdownEndpoint(t *testing.T) {
 	if strings.Contains(strings.ToLower(body), "<!doctype html") {
 		t.Fatalf("docs endpoint returned html fallback: %s", body[:min(len(body), 120)])
 	}
-	for _, want := range []string{"HLOOL Mail API Guide for AI Assistants", "X-API-Key", "/api/generate-email", "/api/emails/next?email=", "/api/email/:id/read"} {
+	for _, want := range []string{"HLOOL Mail API Guide for AI Assistants", "Public API Boundary", "X-API-Key", "/api/generate-email", "/api/mailboxes?page=1&per_page=20", "/api/emails/next?email=", "/api/email/:id/read", "items", "per_page", "total_pages", "messages_deleted"} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("docs body missing %q", want)
 		}
 	}
-	for _, forbidden := range []string{"llm-api-docs", "Cookie", "HTTP_ADDR", "SMTP_ADDR", "TCP 25", "/api/inbox-stream", "SSE"} {
+	for _, forbidden := range []string{"llm-api-docs", "Cookie", "HTTP_ADDR", "SMTP_ADDR", "TCP 25", "/api/inbox-stream", "/api/api-keys", "/api/domains/request", "/api/admin/", "SSE"} {
 		if strings.Contains(body, forbidden) {
 			t.Fatalf("docs body should not contain %q: %s", forbidden, body[:min(len(body), 240)])
 		}
+	}
+
+	invalidKeyResponse := perform(router, http.MethodGet, "/api/docs.md", nil, map[string]string{"X-API-Key": "invalid-key"})
+	if invalidKeyResponse.Code != http.StatusOK {
+		t.Fatalf("docs should stay public even with an invalid api key header, got %d: %s", invalidKeyResponse.Code, invalidKeyResponse.Body.String())
+	}
+
+	quotaDB := httpTestDB(t)
+	quotaRouter := testRouter(t, quotaDB)
+	service := auth.APIKeyService{DB: quotaDB}
+	_, plain, err := service.Create("docs-skip", 1, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	keyedDocs := perform(quotaRouter, http.MethodGet, "/api/docs.md", nil, map[string]string{"X-API-Key": plain})
+	if keyedDocs.Code != http.StatusOK {
+		t.Fatalf("docs with api key = %d: %s", keyedDocs.Code, keyedDocs.Body.String())
+	}
+	health := perform(quotaRouter, http.MethodGet, "/api/health", nil, map[string]string{"X-API-Key": plain})
+	if health.Code != http.StatusOK {
+		t.Fatalf("docs endpoint should not consume one-shot api key quota, health = %d: %s", health.Code, health.Body.String())
+	}
+}
+
+func TestOpenAPIEndpointsArePublicAndScoped(t *testing.T) {
+	db := httpTestDB(t)
+	router := testRouter(t, db)
+
+	jsonResponse := perform(router, http.MethodGet, "/api/openapi.json", nil, nil)
+	if jsonResponse.Code != http.StatusOK {
+		t.Fatalf("openapi json response = %d: %s", jsonResponse.Code, jsonResponse.Body.String())
+	}
+	if contentType := jsonResponse.Header().Get("Content-Type"); !strings.Contains(contentType, "application/json") {
+		t.Fatalf("expected json content type, got %q", contentType)
+	}
+	body := jsonResponse.Body.String()
+	for _, want := range []string{`"openapi"`, `"/api/openapi.json"`, `"/api/domains/available"`, `"operationId": "generateEmail"`, `"x-hlool-frontend"`} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("openapi json missing %q", want)
+		}
+	}
+	for _, forbidden := range []string{"/api/v1", "/api/admin", "/api/inbox-stream", "/api/api-keys", "SSE"} {
+		if strings.Contains(body, forbidden) {
+			t.Fatalf("openapi json should not contain %q", forbidden)
+		}
+	}
+
+	yamlResponse := perform(router, http.MethodGet, "/api/openapi.yaml", nil, nil)
+	if yamlResponse.Code != http.StatusOK {
+		t.Fatalf("openapi yaml response = %d: %s", yamlResponse.Code, yamlResponse.Body.String())
+	}
+	if !strings.Contains(yamlResponse.Body.String(), "/api/openapi.yaml") {
+		t.Fatalf("openapi yaml missing own path: %s", yamlResponse.Body.String()[:min(len(yamlResponse.Body.String()), 240)])
+	}
+
+	invalidKeyResponse := perform(router, http.MethodGet, "/api/openapi.json", nil, map[string]string{"X-API-Key": "invalid-key"})
+	if invalidKeyResponse.Code != http.StatusOK {
+		t.Fatalf("openapi should stay public even with an invalid api key header, got %d: %s", invalidKeyResponse.Code, invalidKeyResponse.Body.String())
+	}
+
+	quotaDB := httpTestDB(t)
+	quotaRouter := testRouter(t, quotaDB)
+	service := auth.APIKeyService{DB: quotaDB}
+	_, plain, err := service.Create("openapi-skip", 1, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{"/api/docs.md", "/api/skill.md", "/api/openapi.json", "/api/openapi.yaml"} {
+		response := perform(quotaRouter, http.MethodGet, path, nil, map[string]string{"X-API-Key": plain})
+		if response.Code != http.StatusOK {
+			t.Fatalf("%s with api key = %d: %s", path, response.Code, response.Body.String())
+		}
+	}
+	health := perform(quotaRouter, http.MethodGet, "/api/health", nil, map[string]string{"X-API-Key": plain})
+	if health.Code != http.StatusOK {
+		t.Fatalf("public docs/openapi endpoints should not consume one-shot api key quota, health = %d: %s", health.Code, health.Body.String())
 	}
 }
 
@@ -154,12 +230,12 @@ func TestAPISkillMarkdownEndpoint(t *testing.T) {
 		t.Fatalf("expected markdown content type, got %q", contentType)
 	}
 	body := response.Body.String()
-	for _, want := range []string{"name: hlool-mail-api", "HLOOL Mail API Skill", "/api/docs.md", "X-API-Key", "/api/emails/next?email="} {
+	for _, want := range []string{"name: hlool-mail-api", "HLOOL Mail API Skill", "/api/docs.md", "X-API-Key", "/api/emails/next?email=", "page=1&per_page=20", "items,page,per_page,total,total_pages"} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("skill body missing %q", want)
 		}
 	}
-	for _, forbidden := range []string{"llm-api-docs", "Cookie", "HTTP_ADDR", "SMTP_ADDR", "TCP 25", "/api/inbox-stream", "SSE"} {
+	for _, forbidden := range []string{"llm-api-docs", "Cookie", "HTTP_ADDR", "SMTP_ADDR", "TCP 25", "/api/inbox-stream", "/api/api-keys", "/api/domains/request", "/api/admin/", "SSE"} {
 		if strings.Contains(body, forbidden) {
 			t.Fatalf("skill body should not contain %q: %s", forbidden, body[:min(len(body), 240)])
 		}
@@ -412,6 +488,175 @@ func TestAPIKeyCanGenerateAndReadOwnedMailbox(t *testing.T) {
 	stats := perform(router, http.MethodGet, "/api/stats", nil, headers)
 	if stats.Code != http.StatusOK {
 		t.Fatalf("stats with api key = %d: %s", stats.Code, stats.Body.String())
+	}
+}
+
+func TestDeleteMailboxRemovesStoredMessagesBeforeAddressReuse(t *testing.T) {
+	db := httpTestDB(t)
+	hash, err := auth.HashSecret("password123")
+	if err != nil {
+		t.Fatal(err)
+	}
+	owner := models.User{
+		Email:        "owner@example.com",
+		PasswordHash: hash,
+		Role:         models.UserRoleUser,
+		Enabled:      true,
+		DailyLimit:   1000,
+	}
+	other := models.User{
+		Email:        "other@example.com",
+		PasswordHash: hash,
+		Role:         models.UserRoleUser,
+		Enabled:      true,
+		DailyLimit:   1000,
+	}
+	if err := db.Create(&owner).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&other).Error; err != nil {
+		t.Fatal(err)
+	}
+	publicDomain := models.Domain{
+		Domain:     "reuse.test",
+		Mode:       models.DomainModePublic,
+		Active:     true,
+		MXVerified: true,
+	}
+	if err := db.Create(&publicDomain).Error; err != nil {
+		t.Fatal(err)
+	}
+	mailbox := models.Mailbox{
+		OwnerID:   owner.ID,
+		Email:     "victim@reuse.test",
+		LocalPart: "victim",
+		Host:      "reuse.test",
+		DomainID:  publicDomain.ID,
+	}
+	if err := db.Create(&mailbox).Error; err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	messages := []models.Message{
+		{
+			ID:              "old-message-1",
+			Recipient:       mailbox.Email,
+			RecipientLocal:  mailbox.LocalPart,
+			RecipientDomain: mailbox.Host,
+			RootDomain:      publicDomain.Domain,
+			DomainID:        &publicDomain.ID,
+			FromAddress:     "sender@example.com",
+			Subject:         "old unread",
+			TextContent:     "old body",
+			CreatedAt:       now,
+			ExpiresAt:       now.Add(time.Hour),
+		},
+		{
+			ID:              "old-message-2",
+			Recipient:       mailbox.Email,
+			RecipientLocal:  mailbox.LocalPart,
+			RecipientDomain: mailbox.Host,
+			RootDomain:      publicDomain.Domain,
+			DomainID:        &publicDomain.ID,
+			FromAddress:     "sender@example.com",
+			Subject:         "old read",
+			TextContent:     "old body",
+			Seen:            true,
+			CreatedAt:       now.Add(time.Minute),
+			ExpiresAt:       now.Add(time.Hour),
+		},
+	}
+	if err := db.Create(&messages).Error; err != nil {
+		t.Fatal(err)
+	}
+	attachments := []models.MessageAttachment{
+		{ID: "00000000-0000-0000-0000-000000000201", MessageID: "old-message-1", Sequence: 1, Filename: "old-1.txt", SizeBytes: 5, SHA256: strings.Repeat("b", 64)},
+		{ID: "00000000-0000-0000-0000-000000000202", MessageID: "old-message-2", Sequence: 1, Filename: "old-2.txt", SizeBytes: 5, SHA256: strings.Repeat("c", 64)},
+	}
+	if err := db.Create(&attachments).Error; err != nil {
+		t.Fatal(err)
+	}
+	service := auth.APIKeyService{DB: db}
+	_, ownerPlain, err := service.CreateFor(&owner.ID, "owner-key", 20, 0, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, otherPlain, err := service.CreateFor(&other.ID, "other-key", 20, 0, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	router := testRouter(t, db)
+
+	deleted := perform(router, http.MethodDelete, "/api/mailboxes/"+strconv.Itoa(int(mailbox.ID)), nil, map[string]string{"X-API-Key": ownerPlain})
+	if deleted.Code != http.StatusOK {
+		t.Fatalf("delete mailbox = %d: %s", deleted.Code, deleted.Body.String())
+	}
+	var deletedBody struct {
+		Data struct {
+			Deleted         bool  `json:"deleted"`
+			MessagesDeleted int64 `json:"messages_deleted"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(deleted.Body.Bytes(), &deletedBody); err != nil {
+		t.Fatal(err)
+	}
+	if !deletedBody.Data.Deleted || deletedBody.Data.MessagesDeleted != 2 {
+		t.Fatalf("unexpected delete response: %s", deleted.Body.String())
+	}
+	var remaining int64
+	if err := db.Unscoped().Model(&models.Message{}).Where("recipient = ?", mailbox.Email).Count(&remaining).Error; err != nil {
+		t.Fatal(err)
+	}
+	if remaining != 0 {
+		t.Fatalf("expected mailbox delete to remove stored messages, remaining=%d", remaining)
+	}
+	var remainingAttachments int64
+	if err := db.Model(&models.MessageAttachment{}).Where("message_id IN ?", []string{"old-message-1", "old-message-2"}).Count(&remainingAttachments).Error; err != nil {
+		t.Fatal(err)
+	}
+	if remainingAttachments != 0 {
+		t.Fatalf("expected mailbox delete to remove attachment metadata, remaining=%d", remainingAttachments)
+	}
+
+	recreated := perform(router, http.MethodPost, "/api/generate-email", map[string]any{
+		"prefix": "victim",
+		"domain": "reuse.test",
+	}, map[string]string{"X-API-Key": otherPlain})
+	if recreated.Code != http.StatusCreated {
+		t.Fatalf("other user recreate mailbox = %d: %s", recreated.Code, recreated.Body.String())
+	}
+	inbox := perform(router, http.MethodGet, "/api/emails?email=victim@reuse.test&limit=10", nil, map[string]string{"X-API-Key": otherPlain})
+	if inbox.Code != http.StatusOK {
+		t.Fatalf("recreated inbox = %d: %s", inbox.Code, inbox.Body.String())
+	}
+	var inboxBody struct {
+		Data []messageSummary `json:"data"`
+	}
+	if err := json.Unmarshal(inbox.Body.Bytes(), &inboxBody); err != nil {
+		t.Fatal(err)
+	}
+	if len(inboxBody.Data) != 0 {
+		t.Fatalf("recreated mailbox should not see old messages: %s", inbox.Body.String())
+	}
+	next := perform(router, http.MethodGet, "/api/emails/next?email=victim@reuse.test", nil, map[string]string{"X-API-Key": otherPlain})
+	if next.Code != http.StatusOK {
+		t.Fatalf("recreated next email = %d: %s", next.Code, next.Body.String())
+	}
+	var nextBody struct {
+		Data struct {
+			HasEmail bool `json:"has_email"`
+			Message  any  `json:"message"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(next.Body.Bytes(), &nextBody); err != nil {
+		t.Fatal(err)
+	}
+	if nextBody.Data.HasEmail || nextBody.Data.Message != nil {
+		t.Fatalf("recreated mailbox should not receive old unread mail: %s", next.Body.String())
+	}
+	oldDetail := perform(router, http.MethodGet, "/api/email/old-message-1", nil, map[string]string{"X-API-Key": otherPlain})
+	if oldDetail.Code != http.StatusNotFound {
+		t.Fatalf("old message detail should be gone, got %d: %s", oldDetail.Code, oldDetail.Body.String())
 	}
 }
 
@@ -1212,6 +1457,18 @@ func TestMarkEmailReadSetsSeen(t *testing.T) {
 	if err := db.Create(&message).Error; err != nil {
 		t.Fatal(err)
 	}
+	if err := db.Create(&models.MessageAttachment{
+		ID:          "00000000-0000-0000-0000-000000000101",
+		MessageID:   message.ID,
+		Sequence:    1,
+		Filename:    "code.txt",
+		ContentType: "text/plain",
+		Disposition: "attachment",
+		SizeBytes:   6,
+		SHA256:      strings.Repeat("a", 64),
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
 	_, plain, err := (auth.APIKeyService{DB: db}).CreateFor(&owner.ID, "reader", 20, 0, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -1225,8 +1482,9 @@ func TestMarkEmailReadSetsSeen(t *testing.T) {
 	}
 	var inboxBody struct {
 		Data []struct {
-			ID   string `json:"id"`
-			Seen bool   `json:"seen"`
+			ID              string `json:"id"`
+			Seen            bool   `json:"seen"`
+			AttachmentCount int64  `json:"attachment_count"`
 		} `json:"data"`
 	}
 	if err := json.Unmarshal(inbox.Body.Bytes(), &inboxBody); err != nil {
@@ -1234,6 +1492,9 @@ func TestMarkEmailReadSetsSeen(t *testing.T) {
 	}
 	if len(inboxBody.Data) != 1 || inboxBody.Data[0].Seen {
 		t.Fatalf("expected unread message in inbox, got %s", inbox.Body.String())
+	}
+	if inboxBody.Data[0].AttachmentCount != 1 {
+		t.Fatalf("inbox attachment_count = %d, want 1", inboxBody.Data[0].AttachmentCount)
 	}
 
 	marked := perform(router, http.MethodPatch, "/api/email/message-read/read", nil, headers)
@@ -1259,7 +1520,9 @@ func TestMarkEmailReadSetsSeen(t *testing.T) {
 	}
 	var detailBody struct {
 		Data struct {
-			Seen bool `json:"seen"`
+			Seen            bool                 `json:"seen"`
+			AttachmentCount int64                `json:"attachment_count"`
+			Attachments     []AttachmentMetadata `json:"attachments"`
 		} `json:"data"`
 	}
 	if err := json.Unmarshal(detail.Body.Bytes(), &detailBody); err != nil {
@@ -1267,6 +1530,9 @@ func TestMarkEmailReadSetsSeen(t *testing.T) {
 	}
 	if !detailBody.Data.Seen {
 		t.Fatalf("detail did not return seen=true: %s", detail.Body.String())
+	}
+	if detailBody.Data.AttachmentCount != 1 || len(detailBody.Data.Attachments) != 1 || detailBody.Data.Attachments[0].Filename != "code.txt" {
+		t.Fatalf("detail attachment metadata mismatch: %s", detail.Body.String())
 	}
 	if strings.Contains(detail.Body.String(), "html_content") {
 		t.Fatalf("api key detail response should not include html_content: %s", detail.Body.String())
@@ -1339,14 +1605,35 @@ func TestInboxStreamRequiresSessionCookie(t *testing.T) {
 		t.Fatal(err)
 	}
 	router := testRouter(t, db)
-	_, plain, err := (auth.APIKeyService{DB: db}).CreateFor(&owner.ID, "stream-key", 20, 0, nil)
+	key, plain, err := (auth.APIKeyService{DB: db}).CreateFor(&owner.ID, "stream-key", 20, 0, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	apiKeyOnly := perform(router, http.MethodGet, "/api/inbox-stream?email=demo@stream.test", nil, map[string]string{"X-API-Key": plain})
-	if apiKeyOnly.Code != http.StatusUnauthorized {
-		t.Fatalf("expected API key-only stream request to be 401, got %d: %s", apiKeyOnly.Code, apiKeyOnly.Body.String())
+	streamPaths := []string{
+		"/api/inbox-stream?email=demo@stream.test",
+		"/api/notification-stream",
+		"/api/announcement-stream",
+	}
+	for _, path := range streamPaths {
+		apiKeyOnly := perform(router, http.MethodGet, path, nil, map[string]string{"X-API-Key": plain})
+		if apiKeyOnly.Code != http.StatusUnauthorized {
+			t.Fatalf("expected API key-only stream request to %s to be 401, got %d: %s", path, apiKeyOnly.Code, apiKeyOnly.Body.String())
+		}
+	}
+	var refreshedKey models.APIKey
+	if err := db.First(&refreshedKey, key.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if refreshedKey.UsedToday != 0 || refreshedKey.TotalUsed != 0 || refreshedKey.LastUsedAt != nil {
+		t.Fatalf("API key-only stream requests consumed quota: used_today=%d total_used=%d last_used_at=%v", refreshedKey.UsedToday, refreshedKey.TotalUsed, refreshedKey.LastUsedAt)
+	}
+	var usageLogs int64
+	if err := db.Model(&models.APIUsageLog{}).Where("api_key_id = ?", key.ID).Count(&usageLogs).Error; err != nil {
+		t.Fatal(err)
+	}
+	if usageLogs != 0 {
+		t.Fatalf("API key-only stream requests wrote %d APIUsageLog rows", usageLogs)
 	}
 
 	login := perform(router, http.MethodPost, "/api/auth/login", map[string]any{
@@ -2321,7 +2608,7 @@ func httpTestDB(t *testing.T) *gorm.DB {
 		t.Fatal(err)
 	}
 	sqlDB.SetMaxOpenConns(1)
-	if err := db.AutoMigrate(&models.User{}, &models.OAuthIdentity{}, &models.OAuthProviderSetting{}, &models.Domain{}, &models.Mailbox{}, &models.Message{}, &models.APIKey{}, &models.SessionToken{}, &models.APIUsageLog{}, &models.Notification{}, &models.AuditLog{}, &models.SystemQuotaSettings{}); err != nil {
+	if err := db.AutoMigrate(&models.User{}, &models.OAuthIdentity{}, &models.OAuthProviderSetting{}, &models.Domain{}, &models.Mailbox{}, &models.Message{}, &models.MessageAttachment{}, &models.ShareLink{}, &models.ShareLinkAccessLog{}, &models.WebhookEndpoint{}, &models.WebhookDelivery{}, &models.APIKey{}, &models.SessionToken{}, &models.APIUsageLog{}, &models.Notification{}, &models.AuditLog{}, &models.SystemQuotaSettings{}); err != nil {
 		t.Fatal(err)
 	}
 	return db

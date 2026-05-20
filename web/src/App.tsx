@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { lazy, Suspense, useEffect, useState } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from './api';
@@ -12,6 +12,8 @@ import { InstallPage } from './pages/InstallPage';
 import { LandingPage } from './pages/LandingPage';
 import { notifySuccess } from './lib/feedback';
 
+const SharedMessagePage = lazy(() => import('./pages/SharedMessagePage').then(m => ({ default: m.SharedMessagePage })));
+
 export default function App() {
   return (
     <ErrorBoundary>
@@ -22,17 +24,22 @@ export default function App() {
 
 function AppContent() {
   const queryClient = useQueryClient();
+  const [routeKey, setRouteKey] = useState(() => currentRouteKey());
+  const sharedToken = sharedTokenFromLocation(routeKey);
+  const isSharedRoute = Boolean(sharedToken);
   const { theme, language, page, awayMailCount, awayAnnouncementCount } = useAppStore();
   const text = useText();
   const me = useQuery({
     queryKey: ['me'],
     queryFn: () => api<MeResponse>('/api/auth/me'),
-    retry: false
+    retry: false,
+    enabled: !isSharedRoute
   });
   const installStatus = useQuery({
     queryKey: ['install-status'],
     queryFn: () => api<InstallStatus>('/api/install/status'),
-    retry: false
+    retry: false,
+    enabled: !isSharedRoute
   });
   const skipInstall = typeof window !== 'undefined' && sessionStorage.getItem('hlool_skip_install') === '1';
 
@@ -52,6 +59,16 @@ function AppContent() {
   useEffect(() => {
     document.documentElement.lang = language === 'zh-CN' ? 'zh-CN' : 'en';
   }, [language]);
+
+  useEffect(() => {
+    const syncRoute = () => setRouteKey(currentRouteKey());
+    window.addEventListener('hashchange', syncRoute);
+    window.addEventListener('popstate', syncRoute);
+    return () => {
+      window.removeEventListener('hashchange', syncRoute);
+      window.removeEventListener('popstate', syncRoute);
+    };
+  }, []);
 
   useEffect(() => {
     const unreadCount = awayMailCount + awayAnnouncementCount;
@@ -88,7 +105,11 @@ function AppContent() {
 
   return (
     <AnimatePresence mode="wait" initial={false}>
-      {bootLoading ? (
+      {sharedToken ? (
+        <Suspense fallback={<CenteredState key="shared-loader">{text.common.loading}</CenteredState>}>
+          <SharedMessagePage token={sharedToken} />
+        </Suspense>
+      ) : bootLoading ? (
         <CenteredState key="loader">{text.loading.starting}</CenteredState>
       ) : (
         <motion.div
@@ -114,6 +135,26 @@ function AppContent() {
       )}
     </AnimatePresence>
   );
+}
+
+function currentRouteKey() {
+  if (typeof window === 'undefined') return '';
+  return `${window.location.pathname}${window.location.search}${window.location.hash}`;
+}
+
+function sharedTokenFromLocation(routeKey: string) {
+  if (typeof window === 'undefined') return '';
+  const [pathAndSearch, hash = ''] = routeKey.split('#');
+  const pathOnly = pathAndSearch.split('?')[0];
+  const hashMatch = (`#${hash}`).match(/^#\/share\/([^?]+)/);
+  const pathMatch = pathOnly.match(/^\/share\/([^/?]+)/);
+  const raw = hashMatch?.[1] || pathMatch?.[1] || '';
+  if (!raw) return '';
+  try {
+    return decodeURIComponent(raw);
+  } catch {
+    return raw;
+  }
 }
 
 type OAuthFeedback = {

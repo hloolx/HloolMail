@@ -1,6 +1,8 @@
 package mailparser
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"strings"
 	"testing"
@@ -40,6 +42,53 @@ func TestParseMultipartMessage(t *testing.T) {
 	}
 	if strings.Contains(parsed.Text, "hello") || strings.Contains(parsed.HTML, "hello") {
 		t.Fatalf("attachment body leaked into parsed content: text=%q html=%q", parsed.Text, parsed.HTML)
+	}
+	if len(parsed.Attachments) != 1 {
+		t.Fatalf("attachments = %d, want 1", len(parsed.Attachments))
+	}
+	attachment := parsed.Attachments[0]
+	if attachment.Sequence != 1 || attachment.Filename != "note.txt" || attachment.ContentType != "text/plain" || attachment.Disposition != "attachment" || attachment.TransferEncoding != "base64" {
+		t.Fatalf("unexpected attachment metadata: %+v", attachment)
+	}
+	if attachment.SizeBytes != 5 {
+		t.Fatalf("attachment size = %d, want 5", attachment.SizeBytes)
+	}
+	wantHash := sha256.Sum256([]byte("hello"))
+	if attachment.SHA256 != hex.EncodeToString(wantHash[:]) {
+		t.Fatalf("attachment sha256 = %q", attachment.SHA256)
+	}
+}
+
+func TestParseCapturesInlineAttachmentMetadata(t *testing.T) {
+	raw := []byte("From: Sender <sender@test.local>\r\n" +
+		"To: demo@example.test\r\n" +
+		"Subject: Inline image\r\n" +
+		"MIME-Version: 1.0\r\n" +
+		"Content-Type: multipart/related; boundary=outer\r\n\r\n" +
+		"--outer\r\n" +
+		"Content-Type: text/html; charset=utf-8\r\n\r\n" +
+		"<img src=\"cid:logo-1\">\r\n" +
+		"--outer\r\n" +
+		"Content-Type: image/png; name=logo.png\r\n" +
+		"Content-Disposition: inline; filename=logo.png\r\n" +
+		"Content-ID: <logo-1>\r\n" +
+		"Content-Transfer-Encoding: base64\r\n\r\n" +
+		"aW1n\r\n" +
+		"--outer--\r\n")
+
+	parsed, err := Parse(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(parsed.Attachments) != 1 {
+		t.Fatalf("attachments = %d, want 1", len(parsed.Attachments))
+	}
+	attachment := parsed.Attachments[0]
+	if !attachment.Inline || attachment.ContentID != "logo-1" || attachment.Filename != "logo.png" {
+		t.Fatalf("unexpected inline attachment metadata: %+v", attachment)
+	}
+	if attachment.SizeBytes != 3 {
+		t.Fatalf("attachment size = %d, want 3", attachment.SizeBytes)
 	}
 }
 

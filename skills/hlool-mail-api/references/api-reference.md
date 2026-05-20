@@ -1,6 +1,6 @@
 # HLOOL Mail API Reference
 
-Use `X-API-Key` for protected calls.
+Use `X-API-Key` for protected calls. This reference covers API-key automation only; login, API-key creation, domain management, MX checks, admin work, user management, and live streams are web-console tasks.
 
 ## Generate Mailbox
 
@@ -41,6 +41,8 @@ Success:
 }
 ```
 
+New mailbox creation returns HTTP `201`. Reusing an existing mailbox owned by the same API-key owner returns HTTP `200` with `data.reuse=true`. `prefix` is optional and is normalized to lowercase letters, digits, `.`, `-`, and `_`; if it normalizes to empty, the API generates a random local part.
+
 ## List Available Domains
 
 ```bash
@@ -56,7 +58,13 @@ Response:
 {
   "success": true,
   "data": {
-    "domains": ["public.example.com", "mailbox.example.net"]
+    "domains": ["public.example.com", "mailbox.example.net"],
+    "public_domains": [
+      { "id": 1, "domain": "public.example.com", "mode": "public", "message_count": 0 }
+    ],
+    "private_domains": [
+      { "id": 12, "domain": "example.com", "mode": "private", "message_count": 0 }
+    ]
   },
   "error": null
 }
@@ -65,35 +73,71 @@ Response:
 ## List Mailboxes
 
 ```bash
-curl "$BASE_URL/api/mailboxes" \
+curl "$BASE_URL/api/mailboxes?page=1&per_page=20" \
   -H "X-API-Key: $API_KEY"
+```
+
+Passing `page`, `per_page`, or `q` returns a paginated object. `q` searches `email`, `local_part`, and `host`. Calling `/api/mailboxes` without those parameters returns a legacy array in `data`.
+
+```json
+{
+  "success": true,
+  "data": {
+    "items": [
+      {
+        "id": 45,
+        "email": "verify@example.com",
+        "local_part": "verify",
+        "host": "example.com",
+        "domain_id": 12,
+        "created_at": "2026-05-18T08:00:00Z",
+        "updated_at": "2026-05-18T08:00:00Z",
+        "message_count": 1,
+        "last_message_at": "2026-05-18T08:05:00Z"
+      }
+    ],
+    "page": 1,
+    "per_page": 20,
+    "total": 1,
+    "total_pages": 1
+  },
+  "error": null
+}
 ```
 
 ## List Messages
 
 ```bash
-curl "$BASE_URL/api/emails?email=verify@example.com&limit=10" \
+curl "$BASE_URL/api/emails?email=verify@example.com&page=1&per_page=20" \
   -H "X-API-Key: $API_KEY"
 ```
+
+Passing `page` or `per_page` returns a paginated object. The older `limit` form returns an array in `data`.
 
 Response:
 
 ```json
 {
   "success": true,
-  "data": [
-    {
-      "id": "msg-uuid",
-      "recipient": "verify@example.com",
-      "from_address": "sender@example.com",
-      "from_name": "Sender",
-      "subject": "Your code is 123456",
-      "seen": false,
-      "preview": "Your verification code is 123456",
-      "created_at": "2026-05-18T08:00:00Z",
-      "expires_at": "2026-05-19T08:00:00Z"
-    }
-  ],
+  "data": {
+    "items": [
+      {
+        "id": "msg-uuid",
+        "recipient": "verify@example.com",
+        "from_address": "sender@example.com",
+        "from_name": "Sender",
+        "subject": "Your code is 123456",
+        "seen": false,
+        "preview": "Your verification code is 123456",
+        "created_at": "2026-05-18T08:00:00Z",
+        "expires_at": "2026-05-19T08:00:00Z"
+      }
+    ],
+    "page": 1,
+    "per_page": 20,
+    "total": 1,
+    "total_pages": 1
+  },
   "error": null
 }
 ```
@@ -187,6 +231,24 @@ Clear one mailbox:
 ```bash
 curl -X DELETE "$BASE_URL/api/emails/clear?email=verify@example.com" \
   -H "X-API-Key: $API_KEY"
+```
+
+Delete one mailbox record and the messages stored for that exact address:
+
+```bash
+curl -X DELETE "$BASE_URL/api/mailboxes/45" \
+  -H "X-API-Key: $API_KEY"
+```
+
+```json
+{
+  "success": true,
+  "data": {
+    "deleted": true,
+    "messages_deleted": 1
+  },
+  "error": null
+}
 ```
 
 ## Error Handling

@@ -34,6 +34,7 @@ type Config struct {
 	AllowAPIKeyQueryParam              bool
 	AuditLogRetentionDays              int
 	AuditActivityRetentionDays         int
+	WebhooksEnabled                    bool
 	DisablePendingDomainDataProtection bool
 	GitHubOAuth                        OAuthProviderConfig
 	LinuxDoOAuth                       OAuthProviderConfig
@@ -78,6 +79,7 @@ func Load() Config {
 		AllowAPIKeyQueryParam:              getBool("ALLOW_API_KEY_QUERY_PARAM", false),
 		AuditLogRetentionDays:              getInt("AUDIT_LOG_RETENTION_DAYS", 180),
 		AuditActivityRetentionDays:         getInt("AUDIT_ACTIVITY_RETENTION_DAYS", 30),
+		WebhooksEnabled:                    getBool("WEBHOOKS_ENABLED", true),
 		DisablePendingDomainDataProtection: getBool("DISABLE_PENDING_DOMAIN_DATA_PROTECTION", false),
 		GitHubOAuth:                        gitHubOAuth,
 		LinuxDoOAuth:                       linuxDoOAuth,

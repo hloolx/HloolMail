@@ -36,7 +36,20 @@ func RunCleanupWithConfig(db *gorm.DB, now time.Time, cfg config.Config) error {
 }
 
 func RunExpiredMessageCleanup(db *gorm.DB, now time.Time) error {
-	return db.Unscoped().Where("expires_at < ?", now).Delete(&models.Message{}).Error
+	return db.Transaction(func(tx *gorm.DB) error {
+		expiredMessages := tx.Model(&models.Message{}).Where("expires_at < ?", now)
+		expiredShareLinks := tx.Model(&models.ShareLink{}).Where("message_id IN (?)", expiredMessages.Select("id"))
+		if err := tx.Where("share_link_id IN (?)", expiredShareLinks.Select("id")).Delete(&models.ShareLinkAccessLog{}).Error; err != nil {
+			return err
+		}
+		if err := tx.Where("message_id IN (?)", expiredMessages.Select("id")).Delete(&models.ShareLink{}).Error; err != nil {
+			return err
+		}
+		if err := tx.Where("message_id IN (?)", expiredMessages.Select("id")).Delete(&models.MessageAttachment{}).Error; err != nil {
+			return err
+		}
+		return tx.Unscoped().Where("expires_at < ?", now).Delete(&models.Message{}).Error
+	})
 }
 
 func RunPendingDomainCleanup(db *gorm.DB, now time.Time) error {

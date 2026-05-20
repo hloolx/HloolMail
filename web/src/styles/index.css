@@ -8,6 +8,7 @@
 @import "./domains.css";
 @import "./inbox.css";
 @import "./api-docs.css";
+@import "./automation.css";
 @import "./animations.css";
 
 :root {

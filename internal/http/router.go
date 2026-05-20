@@ -81,6 +81,10 @@ func NewRouter(h *Handler) *gin.Engine {
 	api.GET("/oauth/:provider/callback", h.perIPRateLimit(1, 10), h.oauthCallback)
 	api.GET("/docs.md", h.perIPRateLimit(0.5, 2), h.apiDocsMarkdown)
 	api.GET("/skill.md", h.perIPRateLimit(0.5, 2), h.apiSkillMarkdown)
+	api.GET("/openapi.json", h.perIPRateLimit(0.5, 2), h.openAPIJSON)
+	api.GET("/openapi.yaml", h.perIPRateLimit(0.5, 2), h.openAPIYAML)
+	api.GET("/shared/:token", h.perIPRateLimit(2, 10), h.getSharedLink)
+	api.POST("/shared/:token/access", h.perIPRateLimit(2, 10), h.accessSharedLink)
 
 	authAPI := api.Group("", h.perAPIRateLimit(2, 10))
 	authAPI.POST("/auth/logout", h.logout)
@@ -125,6 +129,24 @@ func NewRouter(h *Handler) *gin.Engine {
 	apiKeyGroup.PATCH("/api-keys/:id", h.patchAPIKey)
 	apiKeyGroup.DELETE("/api-keys/:id", h.deleteAPIKey)
 	apiKeyGroup.POST("/api-keys/:id/reveal", h.revealAPIKey)
+
+	shareLinkGroup := api.Group("", h.perAPIRateLimit(0.5, 5))
+	shareLinkGroup.POST("/share-links", h.createShareLink)
+	shareLinkGroup.GET("/share-links", h.listShareLinks)
+	shareLinkGroup.GET("/share-links/:id", h.getShareLink)
+	shareLinkGroup.PATCH("/share-links/:id", h.patchShareLink)
+	shareLinkGroup.POST("/share-links/:id/revoke", h.revokeShareLink)
+	shareLinkGroup.POST("/share-links/:id/rotate-token", h.rotateShareLinkToken)
+	shareLinkGroup.GET("/share-links/:id/access-logs", h.listShareLinkAccessLogs)
+
+	webhookGroup := api.Group("", h.perAPIRateLimit(0.5, 5))
+	webhookGroup.GET("/webhooks", h.listWebhooks)
+	webhookGroup.POST("/webhooks", h.createWebhook)
+	webhookGroup.PATCH("/webhooks/:id", h.patchWebhook)
+	webhookGroup.DELETE("/webhooks/:id", h.deleteWebhook)
+	webhookGroup.POST("/webhooks/:id/rotate-secret", h.rotateWebhookSecret)
+	webhookGroup.POST("/webhooks/:id/test", h.testWebhook)
+	webhookGroup.GET("/webhooks/:id/deliveries", h.listWebhookDeliveries)
 
 	userGroup := api.Group("", h.perAPIRateLimit(0.5, 5))
 	userGroup.GET("/users", h.listUsers)
@@ -178,7 +200,7 @@ func mountFrontend(router *gin.Engine, dist string, embedded fs.FS, hasEmbedded 
 		return
 	}
 	router.NoRoute(func(c *gin.Context) {
-		c.JSON(404, gin.H{"success": false, "error": "not found"})
+		c.JSON(http.StatusNotFound, envelope{Success: false, Data: nil, Error: "not found", Usage: usage(c)})
 	})
 }
 
@@ -193,7 +215,7 @@ func mountFrontendDir(router *gin.Engine, dist string) bool {
 	}
 	router.NoRoute(func(c *gin.Context) {
 		if strings.HasPrefix(c.Request.URL.Path, "/api/") {
-			c.JSON(404, gin.H{"success": false, "error": "api route not found"})
+			apiRouteNotFound(c)
 			return
 		}
 		requestPath := strings.TrimPrefix(c.Request.URL.Path, "/")
@@ -224,7 +246,7 @@ func mountFrontendFS(router *gin.Engine, embedded fs.FS) bool {
 	frontendFiles := noDirFS{http.FS(embedded)}
 	router.NoRoute(func(c *gin.Context) {
 		if strings.HasPrefix(c.Request.URL.Path, "/api/") {
-			c.JSON(404, gin.H{"success": false, "error": "api route not found"})
+			apiRouteNotFound(c)
 			return
 		}
 		requestPath := strings.TrimPrefix(c.Request.URL.Path, "/")
@@ -240,6 +262,10 @@ func mountFrontendFS(router *gin.Engine, embedded fs.FS) bool {
 		serveFrontendFSFile(c, frontendFiles, "index.html")
 	})
 	return true
+}
+
+func apiRouteNotFound(c *gin.Context) {
+	c.JSON(http.StatusNotFound, envelope{Success: false, Data: nil, Error: "api route not found", Usage: usage(c)})
 }
 
 func serveFrontendFSFile(c *gin.Context, fileSystem http.FileSystem, name string) {

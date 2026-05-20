@@ -14,7 +14,7 @@ import { HeaderSettings } from './HeaderSettings';
 import { NotificationBell } from './NotificationBell';
 
 export function Topbar({ user }: { user: User }) {
-  const { sidebarCollapsed, toggleSidebar, email, addMailNotification, awayMailCount, awayAnnouncementCount, resetAwayCounts } = useAppStore();
+  const { page, sidebarCollapsed, toggleSidebar, email, addMailNotification, awayMailCount, awayAnnouncementCount, resetAwayCounts } = useAppStore();
   const queryClient = useQueryClient();
   const text = useText();
   const sidebarTitle = sidebarCollapsed ? text.nav.expandSidebar : text.nav.collapseSidebar;
@@ -44,9 +44,9 @@ export function Topbar({ user }: { user: User }) {
     queryClient.invalidateQueries({ queryKey: ['announcements'] });
   });
 
-  // SSE for inbox stream (when an email is selected) - triggers browser notification
+  // Keep one inbox stream active: InboxPage owns it on the inbox route, Topbar only covers other console pages.
   useEffect(() => {
-    if (!email) return;
+    if (!email || page === 'inbox') return undefined;
     const controller = new AbortController();
     const url = new URL('/api/inbox-stream', window.location.origin);
     url.searchParams.set('email', email);
@@ -62,7 +62,6 @@ export function Topbar({ user }: { user: User }) {
             mailbox_email: event.recipient,
             created_at: event.created_at
           });
-          // Browser notification when user is away
           notify(
             `${text.notifications.newMail}: ${parsed.from_name || parsed.from_address}`,
             {
@@ -76,11 +75,11 @@ export function Topbar({ user }: { user: User }) {
           );
         }
       } catch {
-        // Opportunistic stream; InboxPage also handles its own SSE
+        // Opportunistic stream; InboxPage owns the active mailbox stream when it is mounted.
       }
     })();
     return () => controller.abort();
-  }, [email, addMailNotification, notify, text]);
+  }, [email, page, addMailNotification, notify, text]);
 
   return (
     <header className="topbar">

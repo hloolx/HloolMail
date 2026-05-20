@@ -82,8 +82,8 @@ func (h *Handler) markAllNotificationsRead(c *gin.Context) {
 }
 
 func (h *Handler) notificationStream(c *gin.Context) {
-	user, allowed := h.notificationUser(c)
-	if !allowed {
+	user, loggedIn := h.requireLogin(c)
+	if !loggedIn {
 		return
 	}
 	if h.Hub == nil {

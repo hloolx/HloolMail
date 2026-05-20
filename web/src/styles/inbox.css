@@ -221,6 +221,29 @@
   text-decoration: none;
 }
 
+.attachment-list {
+  display: grid;
+  gap: 0.45rem;
+}
+
+.attachment-name {
+  display: inline-flex;
+  min-width: 0;
+  align-items: center;
+  gap: 0.45rem;
+}
+
+.attachment-name span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.inbox-mobile-stepbar,
+.inbox-mobile-back {
+  display: none;
+}
+
 @media (max-width: 1279px) {
   .mail-detail-panel {
     position: static;
@@ -229,6 +252,34 @@
 }
 
 @media (max-width: 640px) {
+  .inbox-layout {
+    display: block;
+  }
+
+  .inbox-mobile-hidden {
+    display: none !important;
+  }
+
+  .inbox-mobile-stepbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.65rem;
+    margin-bottom: 0.75rem;
+    color: var(--muted);
+    font-size: 0.78rem;
+    font-weight: 700;
+  }
+
+  .inbox-mobile-back {
+    display: inline-flex;
+    margin-bottom: 0.75rem;
+  }
+
+  .mail-detail-panel {
+    min-height: calc(100vh - var(--app-header-height) - 2rem);
+  }
+
   .mail-row {
     grid-template-columns: minmax(0, 1fr);
     gap: 0.5rem;

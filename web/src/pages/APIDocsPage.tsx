@@ -12,14 +12,16 @@ import { useText } from '../locales';
 import { useAppStore } from '../store';
 import { copy } from '../lib/clipboard';
 import {
-  API_DOC_ENDPOINTS,
+  API_DOC_ENDPOINTS_FALLBACK,
   API_DOCS_MD_PATH,
   API_SKILL_MD_PATH,
   apiDocMarkdown,
   apiSkillPrompt,
+  docEndpointsFromOpenAPI,
   endpointDesc,
   endpointTitle,
   explorerDefaults,
+  fetchOpenAPIDocument,
   type DocEndpoint
 } from '../lib/apiDocs';
 import { useRequestHistory } from '../hooks/useRequestHistory';
@@ -85,6 +87,12 @@ export function APIDocsPage() {
   const configuredBaseURL = (config?.public_base_url || browserBaseURL).replace(/\/$/, '');
   const markdownURL = new URL(API_DOCS_MD_PATH, configuredBaseURL).href;
   const skillURL = new URL(API_SKILL_MD_PATH, configuredBaseURL).href;
+  const openapi = useQuery({
+    queryKey: ['api-openapi-json'],
+    queryFn: fetchOpenAPIDocument,
+    retry: false
+  });
+  const endpoints = useMemo(() => docEndpointsFromOpenAPI(openapi.data), [openapi.data]);
   const docs = useQuery({
     queryKey: ['api-docs-md', configuredBaseURL],
     queryFn: async () => {
@@ -100,9 +108,9 @@ export function APIDocsPage() {
     },
     retry: false
   });
-  const markdown = docs.data || apiDocMarkdown(configuredBaseURL, config);
+  const markdown = docs.data || apiDocMarkdown(configuredBaseURL, config, endpoints);
 
-  const defaultEndpoint = API_DOC_ENDPOINTS[0];
+  const defaultEndpoint = endpoints[0] || API_DOC_ENDPOINTS_FALLBACK[0];
   const defaultRequest = explorerDefaults(defaultEndpoint);
   const [selectedKey, setSelectedKey] = useState(endpointKey(defaultEndpoint));
   const [apiBase, setApiBase] = useState(browserBaseURL);
@@ -154,8 +162,8 @@ export function APIDocsPage() {
   }, [endpointMenuOpen]);
 
   const selectedEndpoint = useMemo(
-    () => API_DOC_ENDPOINTS.find((endpoint) => endpointKey(endpoint) === selectedKey) || defaultEndpoint,
-    [defaultEndpoint, selectedKey]
+    () => endpoints.find((endpoint) => endpointKey(endpoint) === selectedKey) || defaultEndpoint,
+    [defaultEndpoint, endpoints, selectedKey]
   );
 
   const previewURL = useMemo(
@@ -209,7 +217,7 @@ export function APIDocsPage() {
   function restoreHistoryEntry(id: string) {
     const entry = restoreEntry(id);
     if (!entry) return;
-    const endpoint = API_DOC_ENDPOINTS.find((item) => endpointKey(item) === entry.endpointKey);
+    const endpoint = endpoints.find((item) => endpointKey(item) === entry.endpointKey);
     if (endpoint) {
       setSelectedKey(entry.endpointKey);
     }
@@ -348,7 +356,7 @@ export function APIDocsPage() {
             <div className="api-docs-field api-docs-field-wide">
               <div className="api-docs-field-head">
                 <span>{text.apiDocs.endpointsTitle}</span>
-                <small>{language === 'zh-CN' ? `${API_DOC_ENDPOINTS.length} 个接口` : `${API_DOC_ENDPOINTS.length} endpoints`}</small>
+                <small>{language === 'zh-CN' ? `${endpoints.length} 个接口` : `${endpoints.length} endpoints`}</small>
               </div>
               <div className="api-docs-endpoint-select" ref={endpointSelectRef}>
                 <button
@@ -373,7 +381,7 @@ export function APIDocsPage() {
                       exit={{ opacity: 0, y: -4 }}
                       transition={{ duration: 0.15 }}
                     >
-                      {API_DOC_ENDPOINTS.map((endpoint) => {
+                      {endpoints.map((endpoint) => {
                         const active = selectedKey === endpointKey(endpoint);
                         return (
                           <button

@@ -14,6 +14,21 @@ const (
 	UserRoleAdmin = "admin"
 
 	PendingDomainTTL = 2 * time.Hour
+
+	ShareResourceTypeMessage = "message"
+
+	WebhookEventMessageReceived = "message.received"
+	WebhookEventEndpointTest    = "endpoint.test"
+
+	WebhookScopeAll     = "all"
+	WebhookScopeDomain  = "domain"
+	WebhookScopeMailbox = "mailbox"
+
+	WebhookDeliveryStatusPending    = "pending"
+	WebhookDeliveryStatusDelivering = "delivering"
+	WebhookDeliveryStatusRetry      = "retry"
+	WebhookDeliveryStatusSucceeded  = "succeeded"
+	WebhookDeliveryStatusFailed     = "failed"
 )
 
 type User struct {
@@ -193,6 +208,105 @@ type Message struct {
 	CreatedAt       time.Time      `gorm:"index:idx_messages_recipient_created,priority:2" json:"created_at"`
 	ExpiresAt       time.Time      `gorm:"index;not null" json:"expires_at"`
 	DeletedAt       gorm.DeletedAt `gorm:"index" json:"-"`
+}
+
+type MessageAttachment struct {
+	ID               string    `gorm:"primaryKey;size:36;not null" json:"id"`
+	MessageID        string    `gorm:"size:36;not null;index;uniqueIndex:idx_message_attachment_sequence,priority:1" json:"message_id"`
+	Message          Message   `gorm:"foreignKey:MessageID;references:ID;constraint:OnUpdate:CASCADE,OnDelete:CASCADE;" json:"-"`
+	Sequence         int       `gorm:"not null;uniqueIndex:idx_message_attachment_sequence,priority:2" json:"sequence"`
+	Filename         string    `gorm:"size:500" json:"filename,omitempty"`
+	ContentType      string    `gorm:"size:255" json:"content_type,omitempty"`
+	Disposition      string    `gorm:"size:40" json:"disposition,omitempty"`
+	ContentID        string    `gorm:"size:255" json:"content_id,omitempty"`
+	TransferEncoding string    `gorm:"size:40" json:"transfer_encoding,omitempty"`
+	SizeBytes        int64     `gorm:"not null" json:"size_bytes"`
+	SHA256           string    `gorm:"size:64;not null" json:"sha256,omitempty"`
+	Inline           bool      `gorm:"not null;default:false" json:"inline"`
+	CreatedAt        time.Time `json:"created_at"`
+}
+
+type ShareLink struct {
+	ID             uint           `gorm:"primaryKey" json:"id"`
+	OwnerID        uint           `gorm:"index;not null" json:"owner_id"`
+	Owner          User           `gorm:"foreignKey:OwnerID;constraint:OnUpdate:CASCADE,OnDelete:CASCADE;" json:"-"`
+	TokenHash      string         `gorm:"type:text;not null" json:"-"`
+	TokenPrefix    string         `gorm:"index;size:32;not null" json:"token_prefix"`
+	ResourceType   string         `gorm:"size:40;index;not null;default:message" json:"resource_type"`
+	MessageID      string         `gorm:"size:36;index;not null" json:"message_id"`
+	Message        Message        `gorm:"foreignKey:MessageID;references:ID;constraint:OnUpdate:CASCADE,OnDelete:CASCADE;" json:"-"`
+	PasswordHash   string         `gorm:"type:text" json:"-"`
+	ExpiresAt      *time.Time     `gorm:"index" json:"expires_at,omitempty"`
+	RevokedAt      *time.Time     `gorm:"index" json:"revoked_at,omitempty"`
+	AccessCount    int64          `gorm:"not null;default:0" json:"access_count"`
+	LastAccessedAt *time.Time     `json:"last_accessed_at,omitempty"`
+	CreatedAt      time.Time      `json:"created_at"`
+	UpdatedAt      time.Time      `json:"updated_at"`
+	DeletedAt      gorm.DeletedAt `gorm:"index" json:"-"`
+}
+
+type ShareLinkAccessLog struct {
+	ID            uint      `gorm:"primaryKey" json:"id"`
+	ShareLinkID   uint      `gorm:"index;not null" json:"share_link_id"`
+	ShareLink     ShareLink `gorm:"foreignKey:ShareLinkID;constraint:OnUpdate:CASCADE,OnDelete:CASCADE;" json:"-"`
+	OwnerID       uint      `gorm:"index;not null" json:"owner_id"`
+	Owner         User      `gorm:"foreignKey:OwnerID;constraint:OnUpdate:CASCADE,OnDelete:CASCADE;" json:"-"`
+	ResourceType  string    `gorm:"size:40;index;not null" json:"resource_type"`
+	MessageID     string    `gorm:"size:36;index;not null" json:"message_id"`
+	Success       bool      `gorm:"index;not null" json:"success"`
+	FailureReason string    `gorm:"size:120" json:"failure_reason,omitempty"`
+	IP            string    `gorm:"size:120;not null" json:"ip"`
+	UserAgent     string    `gorm:"size:500;not null" json:"user_agent"`
+	CreatedAt     time.Time `json:"created_at"`
+}
+
+type WebhookEndpoint struct {
+	ID            uint           `gorm:"primaryKey" json:"id"`
+	OwnerID       uint           `gorm:"index;not null" json:"owner_id"`
+	Owner         User           `gorm:"foreignKey:OwnerID;constraint:OnUpdate:CASCADE,OnDelete:CASCADE;" json:"-"`
+	Name          string         `gorm:"size:120;not null" json:"name"`
+	URL           string         `gorm:"type:text;not null" json:"url"`
+	Secret        string         `gorm:"type:text;not null" json:"-"`
+	SecretPreview string         `gorm:"size:80;not null" json:"secret_preview"`
+	Enabled       bool           `gorm:"index;not null;default:true" json:"enabled"`
+	EventsJSON    string         `gorm:"type:text;not null" json:"-"`
+	Scope         string         `gorm:"size:40;index;not null;default:all" json:"scope"`
+	DomainID      *uint          `gorm:"index" json:"domain_id,omitempty"`
+	Domain        *Domain        `gorm:"foreignKey:DomainID;constraint:OnUpdate:CASCADE,OnDelete:SET NULL;" json:"-"`
+	MailboxID     *uint          `gorm:"index" json:"mailbox_id,omitempty"`
+	Mailbox       *Mailbox       `gorm:"foreignKey:MailboxID;constraint:OnUpdate:CASCADE,OnDelete:SET NULL;" json:"-"`
+	LastSuccessAt *time.Time     `json:"last_success_at,omitempty"`
+	LastFailureAt *time.Time     `json:"last_failure_at,omitempty"`
+	FailureCount  int            `gorm:"not null;default:0" json:"failure_count"`
+	DisabledAt    *time.Time     `gorm:"index" json:"disabled_at,omitempty"`
+	CreatedAt     time.Time      `json:"created_at"`
+	UpdatedAt     time.Time      `json:"updated_at"`
+	DeletedAt     gorm.DeletedAt `gorm:"index" json:"-"`
+}
+
+type WebhookDelivery struct {
+	ID             string          `gorm:"primaryKey;size:36;not null" json:"id"`
+	EndpointID     uint            `gorm:"index;not null" json:"endpoint_id"`
+	Endpoint       WebhookEndpoint `gorm:"foreignKey:EndpointID;constraint:OnUpdate:CASCADE,OnDelete:CASCADE;" json:"-"`
+	OwnerID        uint            `gorm:"index;not null" json:"owner_id"`
+	Owner          User            `gorm:"foreignKey:OwnerID;constraint:OnUpdate:CASCADE,OnDelete:CASCADE;" json:"-"`
+	EventType      string          `gorm:"size:80;index;not null" json:"event_type"`
+	MessageID      string          `gorm:"size:36;index" json:"message_id,omitempty"`
+	PayloadJSON    string          `gorm:"type:text;not null" json:"payload_json"`
+	DedupKey       string          `gorm:"uniqueIndex;size:180;not null" json:"dedup_key"`
+	Status         string          `gorm:"size:40;index;not null" json:"status"`
+	AttemptCount   int             `gorm:"not null;default:0" json:"attempt_count"`
+	MaxAttempts    int             `gorm:"not null;default:8" json:"max_attempts"`
+	NextAttemptAt  *time.Time      `gorm:"index" json:"next_attempt_at,omitempty"`
+	LockedAt       *time.Time      `gorm:"index" json:"locked_at,omitempty"`
+	LockedBy       string          `gorm:"size:120" json:"locked_by,omitempty"`
+	LastAttemptAt  *time.Time      `json:"last_attempt_at,omitempty"`
+	SucceededAt    *time.Time      `json:"succeeded_at,omitempty"`
+	ResponseStatus *int            `json:"response_status,omitempty"`
+	ResponseBody   string          `gorm:"type:text" json:"response_body,omitempty"`
+	Error          string          `gorm:"type:text" json:"error,omitempty"`
+	CreatedAt      time.Time       `json:"created_at"`
+	UpdatedAt      time.Time       `json:"updated_at"`
 }
 
 type Mailbox struct {

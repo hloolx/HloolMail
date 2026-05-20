@@ -13,9 +13,11 @@ import (
 	"gptmail/internal/events"
 	mailparser "gptmail/internal/mail"
 	"gptmail/internal/models"
+	"gptmail/internal/webhook"
 
 	gosmtp "github.com/emersion/go-smtp"
 	"github.com/google/uuid"
+	"gorm.io/gorm"
 )
 
 type Backend struct {
@@ -103,7 +105,15 @@ func (s *Session) Data(r io.Reader) error {
 		if msg.FromAddress == "" {
 			msg.FromAddress = s.from
 		}
-		if err := s.service.DB.Create(&msg).Error; err != nil {
+		if err := s.service.DB.Transaction(func(tx *gorm.DB) error {
+			if err := tx.Create(&msg).Error; err != nil {
+				return err
+			}
+			if err := createMessageAttachments(tx, msg.ID, parsed.Attachments); err != nil {
+				return err
+			}
+			return webhook.EnqueueMessage(tx, s.service.Config, msg)
+		}); err != nil {
 			slog.Warn("smtp failed to store message", "recipient", msg.Recipient, "message_id", msg.ID, "error", err)
 			return &gosmtp.SMTPError{Code: 451, Message: "failed to store message"}
 		}
@@ -118,6 +128,33 @@ func (s *Session) Data(r io.Reader) error {
 		}
 	}
 	return nil
+}
+
+func createMessageAttachments(tx *gorm.DB, messageID string, parsed []mailparser.ParsedAttachment) error {
+	if len(parsed) == 0 {
+		return nil
+	}
+	attachments := make([]models.MessageAttachment, 0, len(parsed))
+	for _, attachment := range parsed {
+		sequence := attachment.Sequence
+		if sequence <= 0 {
+			sequence = len(attachments) + 1
+		}
+		attachments = append(attachments, models.MessageAttachment{
+			ID:               uuid.NewString(),
+			MessageID:        messageID,
+			Sequence:         sequence,
+			Filename:         attachment.Filename,
+			ContentType:      attachment.ContentType,
+			Disposition:      attachment.Disposition,
+			ContentID:        attachment.ContentID,
+			TransferEncoding: attachment.TransferEncoding,
+			SizeBytes:        attachment.SizeBytes,
+			SHA256:           attachment.SHA256,
+			Inline:           attachment.Inline,
+		})
+	}
+	return tx.Create(&attachments).Error
 }
 
 func maxAttachmentBytes(configured, maxMessageBytes int64) int64 {

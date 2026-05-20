@@ -5,8 +5,10 @@ import type { Page } from '../../store';
 import { useAppStore } from '../../store';
 const Dashboard = lazy(() => import('../../pages/Dashboard').then(m => ({ default: m.Dashboard })));
 const InboxPage = lazy(() => import('../../pages/InboxPage').then(m => ({ default: m.InboxPage })));
+const ShareLinksPage = lazy(() => import('../../pages/ShareLinksPage').then(m => ({ default: m.ShareLinksPage })));
 const DomainManagementPage = lazy(() => import('../../pages/DomainManagementPage').then(m => ({ default: m.DomainManagementPage })));
 const APIKeysPage = lazy(() => import('../../pages/APIKeysPage').then(m => ({ default: m.APIKeysPage })));
+const WebhooksPage = lazy(() => import('../../pages/WebhooksPage').then(m => ({ default: m.WebhooksPage })));
 const APIDocsPage = lazy(() => import('../../pages/APIDocsPage').then(m => ({ default: m.APIDocsPage })));
 const UsersPage = lazy(() => import('../../pages/UsersPage').then(m => ({ default: m.UsersPage })));
 const AdminPage = lazy(() => import('../../pages/AdminPage').then(m => ({ default: m.AdminPage })));
@@ -46,8 +48,10 @@ export function Console({ user }: { user: User }) {
                 >
                 {visiblePage === 'dashboard' && <Dashboard user={user} />}
                 {visiblePage === 'inbox' && <InboxPage />}
+                {visiblePage === 'share-links' && <ShareLinksPage />}
                 {visiblePage === 'domain-management' && <DomainManagementPage user={user} />}
                 {visiblePage === 'api-keys' && <APIKeysPage user={user} />}
+                {visiblePage === 'webhooks' && <WebhooksPage />}
                 {visiblePage === 'api-docs' && <APIDocsPage />}
                 {visiblePage === 'users' && <UsersPage currentUser={user} />}
                 {visiblePage === 'admin-oauth' && <LoginSettingsPage />}

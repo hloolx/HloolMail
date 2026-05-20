@@ -17,6 +17,8 @@ X-API-Key: YOUR_KEY
 
 Ask the user for the API base URL and API key if they are not already available. Do not print the full API key back to the user.
 
+This skill is for API-key automation only. Login, API-key creation, domain management, MX checks, admin work, user management, and live streams are web-console tasks.
+
 ## Workflow
 
 1. Determine whether the user wants a private-domain mailbox or a public-domain mailbox.
@@ -55,7 +57,7 @@ Public domains are fast but less reliable with third-party websites. If the targ
 
 For verification-code automation, prefer `GET /api/emails/next?email=MAILBOX`. It returns either `{ "has_email": false, "message": null }` or `{ "has_email": true, "message": {...} }`. Poll every 3 seconds, stop after about 120 seconds, and stop immediately after `has_email=true`. The endpoint marks the returned message as read, so the next poll only returns another unread message. If no mail arrives, explain likely causes: target site blocked the domain, target site delayed sending, wrong mailbox address, private-domain MX not verified, or API key lacks access to that mailbox.
 
-Use `GET /api/emails?email=...&limit=10`, `GET /api/email/:id`, and `PATCH /api/email/:id/read` only when the user needs manual inspection or a custom flow.
+Use `GET /api/emails?email=...&page=1&per_page=20`, `GET /api/email/:id`, and `PATCH /api/email/:id/read` only when the user needs manual inspection or a custom flow. The `page/per_page` list form returns `{items,page,per_page,total,total_pages}` in `data`; the older `limit` form returns an array in `data`.
 
 ## Output Style
 

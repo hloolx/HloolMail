@@ -4,8 +4,10 @@ import type { Language } from '../store';
 
 export const API_DOCS_MD_PATH = '/api/docs.md';
 export const API_SKILL_MD_PATH = '/api/skill.md';
+export const API_OPENAPI_JSON_PATH = '/api/openapi.json';
+export const API_OPENAPI_YAML_PATH = '/api/openapi.yaml';
 
-export type DocAuth = 'public' | 'apiKey';
+export type DocAuth = 'public' | 'apiKey' | 'session';
 export type DocMethod = 'GET' | 'POST' | 'PATCH' | 'DELETE';
 export type DocEndpoint = {
   method: DocMethod;
@@ -15,146 +17,180 @@ export type DocEndpoint = {
   queryTemplate?: string;
   bodyTemplate?: string;
   dangerous?: boolean;
-  zhTitle: string;
-  zhDesc: string;
+  zhTitle?: string;
+  zhDesc?: string;
   enTitle: string;
   enDesc: string;
 };
 
-export const API_DOC_ENDPOINTS: DocEndpoint[] = [
-  {
-    method: 'GET',
-    path: '/api/domains/available',
-    auth: 'apiKey',
-    requestPath: '/api/domains/available',
-    zhTitle: '可用域名',
-    zhDesc: '使用 API Key 时返回可用公有域名、可访问私有域名，并保留 data.domains 兼容字段。',
-    enTitle: 'Available domains',
-    enDesc: 'List available public domains and API-key-accessible private domains.'
-  },
-  {
-    method: 'POST',
-    path: '/api/generate-email',
-    auth: 'apiKey',
-    requestPath: '/api/generate-email',
-    bodyTemplate: '{\n  "prefix": "verify",\n  "domain": ""\n}',
-    zhTitle: '生成邮箱',
-    zhDesc: '创建邮箱；传入 domain 可指定已验证域名，不传则随机公有域名。',
-    enTitle: 'Generate mailbox',
-    enDesc: 'Create a mailbox. Pass domain for a verified domain, or omit it for a random public domain.'
-  },
-  {
-    method: 'GET',
-    path: '/api/mailboxes',
-    auth: 'apiKey',
-    requestPath: '/api/mailboxes',
-    zhTitle: '邮箱列表',
-    zhDesc: '列出当前 API key 所属用户创建的 mailbox。',
-    enTitle: 'List mailboxes',
-    enDesc: 'List mailboxes created by the API key owner.'
-  },
-  {
-    method: 'DELETE',
-    path: '/api/mailboxes/:id',
-    auth: 'apiKey',
-    requestPath: '/api/mailboxes/1',
-    dangerous: true,
-    zhTitle: '删除邮箱',
-    zhDesc: '删除一个 mailbox 记录，已收到的邮件会保留。',
-    enTitle: 'Delete mailbox',
-    enDesc: 'Delete one mailbox record while preserving stored messages.'
-  },
-  {
-    method: 'GET',
-    path: '/api/emails?email=&limit=',
-    auth: 'apiKey',
-    requestPath: '/api/emails',
-    queryTemplate: 'email=verify@example.com&limit=50',
-    zhTitle: '读取收件箱',
-    zhDesc: '按邮箱查询邮件摘要，返回主题、预览、时间和 seen 已读状态。',
-    enTitle: 'Read inbox',
-    enDesc: 'List message summaries by mailbox, including subject, preview, time, and seen state.'
-  },
-  {
-    method: 'GET',
-    path: '/api/emails/next?email=',
-    auth: 'apiKey',
-    requestPath: '/api/emails/next',
-    queryTemplate: 'email=verify@example.com',
-    zhTitle: '读取新邮件',
-    zhDesc: '返回最新未读邮件正文并自动标记已读；没有新邮件时返回 has_email=false。',
-    enTitle: 'Next unread email',
-    enDesc: 'Return the newest unread message with content, mark it read automatically, or return has_email=false.'
-  },
-  {
-    method: 'GET',
-    path: '/api/email/:id',
-    auth: 'apiKey',
-    requestPath: '/api/email/msg-uuid',
-    zhTitle: '查看邮件详情',
-    zhDesc: '按邮件 ID 读取纯文本正文、headers 和 seen 已读状态。',
-    enTitle: 'Read message',
-    enDesc: 'Read text body, headers, and seen state for one message by ID.'
-  },
-  {
-    method: 'PATCH',
-    path: '/api/email/:id/read',
-    auth: 'apiKey',
-    requestPath: '/api/email/msg-uuid/read',
-    zhTitle: '标记邮件已读',
-    zhDesc: '把单封邮件标记为已读，返回 id 和 seen=true。',
-    enTitle: 'Mark as read',
-    enDesc: 'Mark one message as read and return id plus seen=true.'
-  },
-  {
-    method: 'DELETE',
-    path: '/api/email/:id',
-    auth: 'apiKey',
-    requestPath: '/api/email/msg-uuid',
-    dangerous: true,
-    zhTitle: '删除邮件',
-    zhDesc: '删除当前 API key 有权限访问的一封邮件。',
-    enTitle: 'Delete message',
-    enDesc: 'Delete one message the API key is allowed to access.'
-  },
-  {
-    method: 'DELETE',
-    path: '/api/emails/clear?email=',
-    auth: 'apiKey',
-    requestPath: '/api/emails/clear',
-    queryTemplate: 'email=verify@example.com',
-    dangerous: true,
-    zhTitle: '清空邮箱',
-    zhDesc: '清空某个邮箱下的全部邮件。',
-    enTitle: 'Clear inbox',
-    enDesc: 'Delete all messages for one mailbox.'
-  },
-  {
-    method: 'GET',
-    path: '/api/stats',
-    auth: 'apiKey',
-    requestPath: '/api/stats',
-    zhTitle: '统计',
-    zhDesc: '获取 API key 所属用户可见的统计数据。',
-    enTitle: 'Stats',
-    enDesc: 'Fetch stats visible to the API key owner.'
-  },
-  {
-    method: 'GET',
-    path: '/api/docs.md',
-    auth: 'public',
-    requestPath: '/api/docs.md',
-    zhTitle: 'Markdown 文档',
-    zhDesc: '唯一的 AI Markdown 接口说明入口。',
-    enTitle: 'Markdown docs',
-    enDesc: 'The single AI-readable Markdown API reference link.'
-  }
+type OpenAPIFrontendOperation = {
+  method?: string;
+  path?: string;
+  auth?: string;
+  requestPath?: string;
+  queryTemplate?: string;
+  bodyTemplate?: string;
+  dangerous?: boolean;
+  title?: string;
+  description?: string;
+};
+
+type OpenAPIOperation = {
+  summary?: string;
+  description?: string;
+  parameters?: Array<{
+    name?: string;
+    in?: string;
+    required?: boolean;
+    example?: unknown;
+  }>;
+  'x-hlool-auth'?: string;
+};
+
+export type OpenAPIDocument = {
+  paths?: Record<string, Partial<Record<Lowercase<DocMethod>, OpenAPIOperation>>>;
+  'x-hlool-frontend'?: OpenAPIFrontendOperation[];
+};
+
+// Generated fallback snapshot from internal/apispec.FrontendProjection.
+// The live /api/openapi.json projection is used when available.
+const GENERATED_FRONTEND_PROJECTION: OpenAPIFrontendOperation[] = [
+  { method: 'GET', path: '/api/docs.md', auth: 'public', requestPath: '/api/docs.md', title: 'Markdown docs', description: 'Read the AI-readable Markdown API reference.' },
+  { method: 'GET', path: '/api/domains/available', auth: 'apiKey', requestPath: '/api/domains/available', title: 'Available domains', description: 'List public domains and API-key-accessible private domains.' },
+  { method: 'DELETE', path: '/api/email/:id', auth: 'apiKey', requestPath: '/api/email/msg-uuid', dangerous: true, title: 'Delete message', description: 'Delete one message the API-key actor can access.' },
+  { method: 'GET', path: '/api/email/:id', auth: 'apiKey', requestPath: '/api/email/msg-uuid', title: 'Read message', description: 'Read text body, headers, read state, and attachment metadata for one message.' },
+  { method: 'PATCH', path: '/api/email/:id/read', auth: 'apiKey', requestPath: '/api/email/msg-uuid/read', title: 'Mark as read', description: 'Mark one message as read.' },
+  { method: 'GET', path: '/api/emails', auth: 'apiKey', requestPath: '/api/emails', queryTemplate: 'email=verify@example.com&page=1&per_page=20', title: 'List messages', description: 'List messages for a mailbox without auto-marking them read.' },
+  { method: 'DELETE', path: '/api/emails/clear', auth: 'apiKey', requestPath: '/api/emails/clear', queryTemplate: 'email=verify@example.com', dangerous: true, title: 'Clear inbox', description: 'Delete all messages for one mailbox.' },
+  { method: 'GET', path: '/api/emails/next', auth: 'apiKey', requestPath: '/api/emails/next', queryTemplate: 'email=verify@example.com', title: 'Next unread email', description: 'Poll for the newest unread message and mark it read automatically.' },
+  { method: 'POST', path: '/api/generate-email', auth: 'apiKey', requestPath: '/api/generate-email', bodyTemplate: '{\n  "prefix": "verify",\n  "domain": ""\n}', title: 'Generate mailbox', description: 'Create a mailbox on a chosen domain or a random public domain.' },
+  { method: 'GET', path: '/api/health', auth: 'public', requestPath: '/api/health', title: 'Health', description: 'Check whether the API service is reachable.' },
+  { method: 'DELETE', path: '/api/mailboxes/:id', auth: 'apiKey', requestPath: '/api/mailboxes/45', dangerous: true, title: 'Delete mailbox', description: 'Delete one mailbox record and its stored messages.' },
+  { method: 'GET', path: '/api/mailboxes', auth: 'apiKey', requestPath: '/api/mailboxes', queryTemplate: 'page=1&per_page=20', title: 'List mailboxes', description: 'List mailboxes created by the API-key owner.' },
+  { method: 'GET', path: '/api/openapi.json', auth: 'public', requestPath: '/api/openapi.json', title: 'OpenAPI JSON', description: 'Read the machine-readable OpenAPI document.' },
+  { method: 'GET', path: '/api/openapi.yaml', auth: 'public', requestPath: '/api/openapi.yaml', title: 'OpenAPI YAML', description: 'Read the machine-readable OpenAPI document as YAML.' },
+  { method: 'GET', path: '/api/skill.md', auth: 'public', requestPath: '/api/skill.md', title: 'Skill guide', description: 'Read the AI assistant skill instructions.' },
+  { method: 'GET', path: '/api/stats', auth: 'apiKey', requestPath: '/api/stats', title: 'Stats', description: 'Fetch stats visible to the API-key owner.' },
+  { method: 'GET', path: '/api/version', auth: 'public', requestPath: '/api/version', title: 'Version', description: 'Read service version metadata.' }
 ];
+
+export const API_DOC_ENDPOINTS_FALLBACK = endpointsFromProjection(GENERATED_FRONTEND_PROJECTION);
+
+export async function fetchOpenAPIDocument(): Promise<OpenAPIDocument> {
+  const response = await fetch(API_OPENAPI_JSON_PATH, {
+    credentials: 'same-origin',
+    headers: { Accept: 'application/json' }
+  });
+  if (!response.ok) throw new Error(response.statusText);
+  const contentType = (response.headers.get('content-type') || '').toLowerCase();
+  if (!contentType.includes('application/json')) {
+    throw new Error('openapi endpoint did not return json');
+  }
+  return response.json();
+}
+
+export function docEndpointsFromOpenAPI(spec?: OpenAPIDocument | null): DocEndpoint[] {
+  const projection = endpointsFromProjection(spec?.['x-hlool-frontend'] || []);
+  if (projection.length > 0) return projection;
+  const derived = deriveEndpointsFromPaths(spec);
+  if (derived.length > 0) return derived;
+  return API_DOC_ENDPOINTS_FALLBACK;
+}
+
+function endpointsFromProjection(items: OpenAPIFrontendOperation[]): DocEndpoint[] {
+  const endpoints: DocEndpoint[] = [];
+  for (const item of items) {
+    const method = normalizeMethod(item.method);
+    const path = normalizePathTemplate(item.path || item.requestPath || '');
+    const auth = normalizeAuth(item.auth);
+    if (!method || !path || auth === 'session') continue;
+    const title = item.title || fallbackTitle(method, path);
+    const description = item.description || title;
+    endpoints.push({
+      method,
+      path,
+      auth,
+      requestPath: item.requestPath || requestPathFromTemplate(path),
+      queryTemplate: item.queryTemplate || undefined,
+      bodyTemplate: item.bodyTemplate || undefined,
+      dangerous: Boolean(item.dangerous),
+      enTitle: title,
+      enDesc: description,
+      zhTitle: title,
+      zhDesc: description
+    });
+  }
+  return endpoints;
+}
+
+function deriveEndpointsFromPaths(spec?: OpenAPIDocument | null): DocEndpoint[] {
+  if (!spec?.paths) return [];
+  const endpoints: DocEndpoint[] = [];
+  for (const [rawPath, item] of Object.entries(spec.paths)) {
+    for (const method of ['get', 'post', 'patch', 'delete'] as const) {
+      const operation = item?.[method];
+      if (!operation) continue;
+      const auth = normalizeAuth(operation['x-hlool-auth']);
+      if (auth === 'session') continue;
+      const typedMethod = method.toUpperCase() as DocMethod;
+      const path = normalizePathTemplate(rawPath);
+      endpoints.push({
+        method: typedMethod,
+        path,
+        auth,
+        requestPath: requestPathFromTemplate(path, operation),
+        queryTemplate: queryTemplateFromParameters(operation.parameters),
+        enTitle: operation.summary || fallbackTitle(typedMethod, path),
+        enDesc: operation.description || operation.summary || fallbackTitle(typedMethod, path),
+        zhTitle: operation.summary || fallbackTitle(typedMethod, path),
+        zhDesc: operation.description || operation.summary || fallbackTitle(typedMethod, path)
+      });
+    }
+  }
+  return endpoints.sort((a, b) => `${a.path} ${a.method}`.localeCompare(`${b.path} ${b.method}`));
+}
+
+function normalizeMethod(value?: string): DocMethod | null {
+  const method = (value || '').toUpperCase();
+  return method === 'GET' || method === 'POST' || method === 'PATCH' || method === 'DELETE' ? method : null;
+}
+
+function normalizeAuth(value?: string): DocAuth {
+  if (value === 'apiKey' || value === 'X-API-Key') return 'apiKey';
+  if (value === 'session' || value === 'cookie/session') return 'session';
+  return 'public';
+}
+
+function normalizePathTemplate(path: string) {
+  const normalized = path.startsWith('/') ? path : `/${path}`;
+  return normalized.replace(/\{([^}]+)\}/g, ':$1');
+}
+
+function requestPathFromTemplate(path: string, operation?: OpenAPIOperation) {
+  return path.replace(/:([A-Za-z0-9_]+)/g, (_match, name) => {
+    const param = operation?.parameters?.find((item) => item.in === 'path' && item.name === name);
+    if (typeof param?.example === 'string' || typeof param?.example === 'number') return String(param.example);
+    return name === 'id' && path.includes('/email/') ? 'msg-uuid' : '1';
+  });
+}
+
+function queryTemplateFromParameters(parameters?: OpenAPIOperation['parameters']) {
+  const query = (parameters || [])
+    .filter((item) => item.in === 'query' && (item.required || item.example !== undefined))
+    .map((item) => `${encodeURIComponent(item.name || '')}=${encodeURIComponent(String(item.example ?? ''))}`)
+    .filter((item) => !item.startsWith('='));
+  return query.join('&') || undefined;
+}
+
+function fallbackTitle(method: DocMethod, path: string) {
+  return `${method} ${path}`;
+}
 
 function markdownAuthLabel(auth: DocAuth) {
   return {
     public: 'None',
-    apiKey: 'API key'
+    apiKey: 'API key',
+    session: 'cookie/session'
   }[auth];
 }
 
@@ -163,17 +199,18 @@ function endpointMarkdownRow(endpoint: DocEndpoint) {
 }
 
 export function endpointTitle(endpoint: DocEndpoint, language: Language) {
-  return language === 'zh-CN' ? endpoint.zhTitle : endpoint.enTitle;
+  return language === 'zh-CN' ? endpoint.zhTitle || endpoint.enTitle : endpoint.enTitle;
 }
 
 export function endpointDesc(endpoint: DocEndpoint, language: Language) {
-  return language === 'zh-CN' ? endpoint.zhDesc : endpoint.enDesc;
+  return language === 'zh-CN' ? endpoint.zhDesc || endpoint.enDesc : endpoint.enDesc;
 }
 
 export function authLabel(auth: DocAuth, text = currentText()) {
   return {
     public: text.apiDocs.publicAuth,
-    apiKey: text.apiDocs.apiKeyAuth
+    apiKey: text.apiDocs.apiKeyAuth,
+    session: 'cookie/session'
   }[auth];
 }
 
@@ -197,109 +234,46 @@ export function apiSkillPrompt(skillURL: string, docsURL: string) {
   ].join('\n');
 }
 
-export function apiDocMarkdown(baseURL: string, config?: InstallStatus['config']) {
+export function apiDocMarkdown(baseURL: string, config?: InstallStatus['config'], endpoints: DocEndpoint[] = API_DOC_ENDPOINTS_FALLBACK) {
   const base = (config?.public_base_url || baseURL).replace(/\/$/, '');
   const expectedMX = (config?.expected_mx || config?.mail_hostname || 'mail.example.com').replace(/\.$/, '');
   return [
     '# HLOOL Mail API Guide for AI Assistants',
     '',
-    'This document is meant for a user\'s AI assistant. Do not reverse engineer the service, guess hidden endpoints, or invent parameters. Use only the public API behavior described here.',
+    'This document is generated from the OpenAPI projection fallback. The server copy at `/api/docs.md` is authoritative when available.',
     '',
     `API base URL: \`${base}\``,
-    `AI-readable docs: \`${base}${API_DOCS_MD_PATH}\``,
-    'All HTTP endpoints use the `/api/` prefix. There is no `/api/v1` or `/api/v2` version prefix.',
+    `Markdown docs: \`${base}${API_DOCS_MD_PATH}\``,
+    `OpenAPI JSON: \`${base}${API_OPENAPI_JSON_PATH}\``,
     '',
     '## Authentication',
     '',
-    'Use the API key header for all protected API calls:',
+    'Use the API key header for API-key automation calls:',
     '',
     '```http',
     'X-API-Key: YOUR_KEY',
     '```',
     '',
-    'For API automation, use `X-API-Key` only. Domain management, MX checks, and API key creation are web-console tasks the user must complete in the product UI.',
+    'Domain creation, MX verification, login, and API key creation are web-console tasks.',
     '',
     '## Private Domain Flow',
     '',
-    'If the user wants to use a private domain such as `example.com`, guide them through this flow:',
-    '',
-    '1. Ask the user to add `example.com` as a private domain in the web console.',
-    '2. Ask the user to add an MX record in their DNS provider pointing to the platform MX target.',
-    '3. After DNS is ready, ask the user to complete MX verification in the web console.',
-    '4. You can discover API-key-accessible private domains from `GET /api/domains/available` in `data.private_domains`.',
-    '5. Use `POST /api/generate-email` with the private domain. If the response returns that domain, API access is working.',
-    '',
-    'DNS records the user should add:',
+    'Ask the user to add and verify their domain in the web console, then call `POST /api/generate-email` with the requested domain.',
     '',
     '```dns',
     `example.com.    MX  10 ${expectedMX}.`,
     `*.example.com.  MX  10 ${expectedMX}.`,
     '```',
     '',
-    'The wildcard record is only needed for subdomain mailboxes such as `user@abc.example.com`.',
-    '',
-    'Verify private-domain API access:',
-    '',
-    '```bash',
-    `curl -X POST "${base}/api/generate-email" \\`,
-    '  -H "Content-Type: application/json" \\',
-    '  -H "X-API-Key: YOUR_KEY" \\',
-    '  -d \'{"prefix":"verify","domain":"example.com"}\'',
-    '```',
-    '',
-    'If `data.email` is `verify@example.com` and `data.domain.domain` is `example.com`, the private domain is ready for API use.',
-    '',
-    '## Public Domain Flow',
-    '',
-    'Public domains are convenient for quick testing, but some websites may block temporary-mail domains. If a website rejects the address or no verification email arrives, suggest generating a new mailbox on another public domain, using a different prefix, waiting briefly, or binding a private domain.',
-    '',
-    '```bash',
-    `curl "${base}/api/domains/available" \\`,
-    '  -H "X-API-Key: YOUR_KEY"',
-    '```',
-    '',
-    'The API-key response keeps legacy public names in `data.domains` and also returns `data.public_domains` plus `data.private_domains` metadata. New clients should prefer the metadata arrays.',
-    '',
-    '```bash',
-    `curl -X POST "${base}/api/generate-email" \\`,
-    '  -H "Content-Type: application/json" \\',
-    '  -H "X-API-Key: YOUR_KEY" \\',
-    "  -d '{}'",
-    '```',
-    '',
     '## Reading Mail',
     '',
-    'After a mailbox is generated, the target website sends email to that address. For verification-code automation, use simple polling: call `GET /api/emails/next?email=MAILBOX` every 3 seconds for up to 120 seconds. If no mail has arrived it returns `has_email=false`; if a new unread message exists it returns the message content and marks that message read automatically. Stop polling as soon as `has_email=true`.',
-    '',
-    '```bash',
-    `curl "${base}/api/emails/next?email=verify@example.com" \\`,
-    '  -H "X-API-Key: YOUR_KEY"',
-    '```',
-    '',
-    'For a plain message list without auto-marking, use:',
-    '',
-    '```bash',
-    `curl "${base}/api/emails?email=verify@example.com&limit=10" \\`,
-    '  -H "X-API-Key: YOUR_KEY"',
-    '```',
-    '',
-    '```bash',
-    `curl "${base}/api/email/msg-uuid" \\`,
-    '  -H "X-API-Key: YOUR_KEY"',
-    '```',
-    '',
-    '```bash',
-    `curl -X PATCH "${base}/api/email/msg-uuid/read" \\`,
-    '  -H "X-API-Key: YOUR_KEY"',
-    '```',
-    '',
-    'Extract verification codes from `subject`, `preview`, or `text_content`. Prefer the newest unread message from the expected sender when possible.',
+    'For verification-code automation, call `GET /api/emails/next?email=MAILBOX` every 3 seconds for up to 120 seconds. Stop after `has_email=true`; the endpoint marks that message read automatically.',
     '',
     '## API Endpoints',
     '',
     '| Method | Path | Auth | Purpose |',
     '| --- | --- | --- | --- |',
-    ...API_DOC_ENDPOINTS.map(endpointMarkdownRow),
+    ...endpoints.map(endpointMarkdownRow),
     '',
     '## Response Envelope',
     '',
@@ -307,21 +281,9 @@ export function apiDocMarkdown(baseURL: string, config?: InstallStatus['config']
     '{',
     '  "success": true,',
     '  "data": {},',
-    '  "error": null,',
-    '  "usage": {',
-    '    "used_today": "12",',
-    '    "daily_limit": "200000",',
-    '    "remaining_today": "199988",',
-    '    "daily_unlimited": "false",',
-    '    "total_usage": "238",',
-    '    "total_limit": "0",',
-    '    "remaining_total": "unlimited",',
-    '    "total_unlimited": "true"',
-    '  }',
+    '  "error": null',
     '}',
     '```',
-    '',
-    '`usage` appears only for API-key requests. Numeric usage values are strings so JavaScript clients can safely handle large integers. Unlimited quota is reported as `"unlimited"` in remaining fields with matching `*_unlimited` flags.',
     ''
   ].join('\n');
 }

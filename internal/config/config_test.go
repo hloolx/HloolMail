@@ -100,6 +100,50 @@ func TestLoadCanEnableAPIKeyQueryParam(t *testing.T) {
 	}
 }
 
+func TestLoadCanDisableWebhooks(t *testing.T) {
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	temp := t.TempDir()
+	if err := os.Chdir(temp); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := os.Chdir(wd); err != nil {
+			t.Fatalf("restore working directory: %v", err)
+		}
+	})
+	t.Setenv("WEBHOOKS_ENABLED", "false")
+
+	cfg := Load()
+	if cfg.WebhooksEnabled {
+		t.Fatal("expected WEBHOOKS_ENABLED=false to disable webhook delivery")
+	}
+}
+
+func TestLoadEnablesWebhooksByDefault(t *testing.T) {
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	temp := t.TempDir()
+	if err := os.Chdir(temp); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := os.Chdir(wd); err != nil {
+			t.Fatalf("restore working directory: %v", err)
+		}
+	})
+	t.Setenv("WEBHOOKS_ENABLED", "")
+
+	cfg := Load()
+	if !cfg.WebhooksEnabled {
+		t.Fatal("expected webhook delivery to be enabled by default")
+	}
+}
+
 func TestLoadReadsOAuthProviderEnv(t *testing.T) {
 	wd, err := os.Getwd()
 	if err != nil {

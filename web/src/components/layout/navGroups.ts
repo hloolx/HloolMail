@@ -1,4 +1,4 @@
-import { BookOpen, Globe2, Inbox, KeyRound, LayoutDashboard, LogIn, Megaphone, Shield, UserCog } from 'lucide-react';
+import { BookOpen, Globe2, Inbox, KeyRound, LayoutDashboard, LogIn, Megaphone, Share2, Shield, UserCog, Webhook } from 'lucide-react';
 import type { User } from '../../api';
 import { currentText } from '../../locales';
 import type { Page } from '../../store';
@@ -11,7 +11,8 @@ export function navGroups(user: User, text = currentText()): { title: string; it
       title: text.nav.mail,
       items: [
         { page: 'dashboard' as Page, label: text.page.dashboard, icon: LayoutDashboard },
-        { page: 'inbox' as Page, label: text.page.inbox, icon: Inbox }
+        { page: 'inbox' as Page, label: text.page.inbox, icon: Inbox },
+        { page: 'share-links' as Page, label: text.page['share-links'], icon: Share2 }
       ]
     },
     {
@@ -24,6 +25,7 @@ export function navGroups(user: User, text = currentText()): { title: string; it
       title: text.nav.automation,
       items: [
         { page: 'api-keys' as Page, label: text.page['api-keys'], icon: KeyRound },
+        { page: 'webhooks' as Page, label: text.page.webhooks, icon: Webhook },
         { page: 'api-docs' as Page, label: text.page['api-docs'], icon: BookOpen }
       ]
     }

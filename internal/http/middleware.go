@@ -45,6 +45,10 @@ func (h *Handler) loadSession() gin.HandlerFunc {
 
 func (h *Handler) optionalAPIKey() gin.HandlerFunc {
 	return func(c *gin.Context) {
+		if isPublicDocsPath(c.Request.URL.Path) || isPublicSharedPath(c.Request.URL.Path) || isSessionOnlyStreamPath(c.Request.URL.Path) || isSessionOnlyManagementPath(c.Request.URL.Path) {
+			c.Next()
+			return
+		}
 		plain := strings.TrimSpace(c.GetHeader("X-API-Key"))
 		if plain == "" && h.Config.AllowAPIKeyQueryParam {
 			plain = strings.TrimSpace(c.Query("api_key"))
@@ -101,6 +105,32 @@ func (h *Handler) optionalAPIKey() gin.HandlerFunc {
 		c.Set(apiKeyContext, key)
 		c.Next()
 	}
+}
+
+func isPublicDocsPath(path string) bool {
+	switch path {
+	case "/api/docs.md", "/api/skill.md", "/api/openapi.json", "/api/openapi.yaml":
+		return true
+	default:
+		return false
+	}
+}
+
+func isPublicSharedPath(path string) bool {
+	return strings.HasPrefix(path, "/api/shared/")
+}
+
+func isSessionOnlyStreamPath(path string) bool {
+	switch path {
+	case "/api/inbox-stream", "/api/notification-stream", "/api/announcement-stream":
+		return true
+	default:
+		return false
+	}
+}
+
+func isSessionOnlyManagementPath(path string) bool {
+	return strings.HasPrefix(path, "/api/webhooks") || strings.HasPrefix(path, "/api/share-links")
 }
 
 func (h *Handler) securityHeaders() gin.HandlerFunc {

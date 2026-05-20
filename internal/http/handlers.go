@@ -250,20 +250,7 @@ func (h *Handler) scopeMessages(actor *requestActor) *gorm.DB {
 	if !ok {
 		return query.Where("1 = 0")
 	}
-	var domains []string
-	h.DB.Model(&models.Domain{}).Where("owner_id = ?", ownerID).Pluck("domain", &domains)
-	var mailboxes []string
-	h.DB.Model(&models.Mailbox{}).Where("owner_id = ?", ownerID).Pluck("email", &mailboxes)
-	if len(domains) == 0 && len(mailboxes) == 0 {
-		return query.Where("1 = 0")
-	}
-	if len(domains) == 0 {
-		return query.Where("recipient IN ?", mailboxes)
-	}
-	if len(mailboxes) == 0 {
-		return query.Where("root_domain IN ?", domains)
-	}
-	return query.Where("root_domain IN ? OR recipient IN ?", domains, mailboxes)
+	return h.scopeOwnedMessages(query, ownerID)
 }
 
 func (h *Handler) scopeDomains(actor *requestActor) *gorm.DB {
@@ -458,8 +445,13 @@ func (h *Handler) listEmails(c *gin.Context) {
 			fail(c, http.StatusInternalServerError, err.Error())
 			return
 		}
+		summaries, err := h.messageSummariesWithAttachmentCounts(messages)
+		if err != nil {
+			fail(c, http.StatusInternalServerError, err.Error())
+			return
+		}
 		ok(c, paginatedResponse[messageSummary]{
-			Items:      messageSummaries(messages),
+			Items:      summaries,
 			Page:       page,
 			PerPage:    perPage,
 			Total:      total,
@@ -476,7 +468,12 @@ func (h *Handler) listEmails(c *gin.Context) {
 		fail(c, http.StatusInternalServerError, err.Error())
 		return
 	}
-	ok(c, messageSummaries(messages))
+	summaries, err := h.messageSummariesWithAttachmentCounts(messages)
+	if err != nil {
+		fail(c, http.StatusInternalServerError, err.Error())
+		return
+	}
+	ok(c, summaries)
 }
 
 func (h *Handler) nextEmail(c *gin.Context) {
@@ -512,7 +509,16 @@ func (h *Handler) nextEmail(c *gin.Context) {
 		}
 		msg.Seen = true
 		msg.HTMLContent = htmlPolicy.Sanitize(msg.HTMLContent)
-		ok(c, gin.H{"has_email": true, "message": msg})
+		attachments, err := h.attachmentMetadataForMessage(msg.ID)
+		if err != nil {
+			fail(c, http.StatusInternalServerError, err.Error())
+			return
+		}
+		ok(c, gin.H{"has_email": true, "message": nextEmailMessageDTO{
+			Message:         msg,
+			AttachmentCount: int64(len(attachments)),
+			Attachments:     attachments,
+		}})
 		return
 	}
 	ok(c, gin.H{"has_email": false, "message": nil})
@@ -528,11 +534,16 @@ func (h *Handler) getEmail(c *gin.Context) {
 		return
 	}
 	msg.HTMLContent = htmlPolicy.Sanitize(msg.HTMLContent)
-	if currentAPIKey(c) != nil {
-		publicOK(c, publicMessageDetail(msg))
+	attachments, err := h.attachmentMetadataForMessage(msg.ID)
+	if err != nil {
+		fail(c, http.StatusInternalServerError, err.Error())
 		return
 	}
-	webOK(c, webMessageDetail(msg))
+	if currentAPIKey(c) != nil {
+		publicOK(c, publicMessageDetail(msg, attachments))
+		return
+	}
+	webOK(c, webMessageDetail(msg, attachments))
 }
 
 func (h *Handler) markEmailRead(c *gin.Context) {
@@ -560,7 +571,16 @@ func (h *Handler) deleteEmail(c *gin.Context) {
 	if _, _, allowed := h.authorizeInbox(c, msg.Recipient); !allowed {
 		return
 	}
-	if err := h.DB.Unscoped().Delete(&msg).Error; err != nil {
+	if err := h.DB.Transaction(func(tx *gorm.DB) error {
+		messageQuery := tx.Model(&models.Message{}).Where("id = ?", msg.ID)
+		if err := deleteShareLinksForMessageQuery(tx, messageQuery); err != nil {
+			return err
+		}
+		if err := tx.Where("message_id = ?", msg.ID).Delete(&models.MessageAttachment{}).Error; err != nil {
+			return err
+		}
+		return tx.Unscoped().Delete(&msg).Error
+	}); err != nil {
 		fail(c, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -572,7 +592,16 @@ func (h *Handler) clearEmails(c *gin.Context) {
 	if !allowed {
 		return
 	}
-	if err := h.DB.Unscoped().Where("recipient = ?", parts.Recipient).Delete(&models.Message{}).Error; err != nil {
+	if err := h.DB.Transaction(func(tx *gorm.DB) error {
+		messageQuery := tx.Model(&models.Message{}).Where("recipient = ?", parts.Recipient)
+		if err := deleteShareLinksForMessageQuery(tx, messageQuery); err != nil {
+			return err
+		}
+		if err := deleteAttachmentsForMessageQuery(tx, messageQuery); err != nil {
+			return err
+		}
+		return tx.Unscoped().Where("recipient = ?", parts.Recipient).Delete(&models.Message{}).Error
+	}); err != nil {
 		fail(c, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -1222,15 +1251,13 @@ func (h *Handler) authorizeInbox(c *gin.Context, email string) (domaindb.Recipie
 		fail(c, http.StatusNotFound, "domain not found or not verified")
 		return parts, nil, false
 	}
-	ownerID, hasOwner := actor.ownerID()
-	if hasOwner && d.OwnerID != nil && *d.OwnerID == ownerID {
-		return parts, d, true
+	allowedOwner, err := h.actorOwnsMessageRecipient(actor, parts.Recipient, d)
+	if err != nil {
+		fail(c, http.StatusInternalServerError, err.Error())
+		return parts, d, false
 	}
-	if hasOwner {
-		var mailbox models.Mailbox
-		if err := h.DB.Where("email = ? AND owner_id = ?", parts.Recipient, ownerID).First(&mailbox).Error; err == nil {
-			return parts, d, true
-		}
+	if allowedOwner {
+		return parts, d, true
 	}
 	fail(c, http.StatusForbidden, "邮箱访问被拒：需要是邮箱所有者、域名所有者或使用有权限的 API key")
 	return parts, d, false
@@ -1254,11 +1281,12 @@ func (h *Handler) authorizeInboxForUser(c *gin.Context, email string, user *mode
 		fail(c, http.StatusNotFound, "domain not found or not verified")
 		return parts, nil, false
 	}
-	if d.OwnerID != nil && *d.OwnerID == user.ID {
-		return parts, d, true
+	allowedOwner, err := h.userOwnsMessageRecipient(user, parts.Recipient, d)
+	if err != nil {
+		fail(c, http.StatusInternalServerError, err.Error())
+		return parts, d, false
 	}
-	var mailbox models.Mailbox
-	if err := h.DB.Where("email = ? AND owner_id = ?", parts.Recipient, user.ID).First(&mailbox).Error; err == nil {
+	if allowedOwner {
 		return parts, d, true
 	}
 	fail(c, http.StatusForbidden, "邮箱访问被拒：需要是邮箱所有者或域名所有者")
@@ -1579,89 +1607,12 @@ func domainWithCount(db *gorm.DB, d models.Domain) domainDTO {
 	return dto
 }
 
-type messageSummary struct {
-	ID          string    `json:"id"`
-	Recipient   string    `json:"recipient"`
-	FromAddress string    `json:"from_address"`
-	FromName    string    `json:"from_name,omitempty"`
-	Subject     string    `json:"subject"`
-	Seen        bool      `json:"seen"`
-	Preview     string    `json:"preview"`
-	CreatedAt   time.Time `json:"created_at"`
-	ExpiresAt   time.Time `json:"expires_at"`
-}
-
-type publicMessageDetailDTO struct {
-	ID          string    `json:"id"`
-	Recipient   string    `json:"recipient"`
-	FromAddress string    `json:"from_address"`
-	FromName    string    `json:"from_name,omitempty"`
-	Subject     string    `json:"subject"`
-	Seen        bool      `json:"seen"`
-	TextContent string    `json:"text_content,omitempty"`
-	HeadersJSON string    `json:"headers_json,omitempty"`
-	CreatedAt   time.Time `json:"created_at"`
-	ExpiresAt   time.Time `json:"expires_at"`
-}
-
-type webMessageDetailDTO struct {
-	publicMessageDetailDTO
-	HTMLContent string `json:"html_content,omitempty"`
-}
-
 type paginatedResponse[T any] struct {
 	Items      []T   `json:"items"`
 	Page       int   `json:"page"`
 	PerPage    int   `json:"per_page"`
 	Total      int64 `json:"total"`
 	TotalPages int   `json:"total_pages"`
-}
-
-func messageSummaries(messages []models.Message) []messageSummary {
-	out := make([]messageSummary, 0, len(messages))
-	for _, msg := range messages {
-		preview := strings.TrimSpace(msg.TextContent)
-		if preview == "" {
-			preview = strings.TrimSpace(stripTags(msg.HTMLContent))
-		}
-		if len(preview) > 180 {
-			preview = preview[:180]
-		}
-		out = append(out, messageSummary{
-			ID:          msg.ID,
-			Recipient:   msg.Recipient,
-			FromAddress: msg.FromAddress,
-			FromName:    msg.FromName,
-			Subject:     msg.Subject,
-			Seen:        msg.Seen,
-			Preview:     preview,
-			CreatedAt:   msg.CreatedAt,
-			ExpiresAt:   msg.ExpiresAt,
-		})
-	}
-	return out
-}
-
-func publicMessageDetail(msg models.Message) publicMessageDetailDTO {
-	return publicMessageDetailDTO{
-		ID:          msg.ID,
-		Recipient:   msg.Recipient,
-		FromAddress: msg.FromAddress,
-		FromName:    msg.FromName,
-		Subject:     msg.Subject,
-		Seen:        msg.Seen,
-		TextContent: msg.TextContent,
-		HeadersJSON: msg.HeadersJSON,
-		CreatedAt:   msg.CreatedAt,
-		ExpiresAt:   msg.ExpiresAt,
-	}
-}
-
-func webMessageDetail(msg models.Message) webMessageDetailDTO {
-	return webMessageDetailDTO{
-		publicMessageDetailDTO: publicMessageDetail(msg),
-		HTMLContent:            msg.HTMLContent,
-	}
 }
 
 func sanitizeLocal(value string) string {
@@ -1850,12 +1801,27 @@ func (h *Handler) deleteMailbox(c *gin.Context) {
 		fail(c, http.StatusForbidden, "mailbox access denied")
 		return
 	}
-	if err := h.DB.Delete(&mailbox).Error; err != nil {
+	var messagesDeleted int64
+	if err := h.DB.Transaction(func(tx *gorm.DB) error {
+		messageQuery := tx.Model(&models.Message{}).Where("recipient = ?", mailbox.Email)
+		if err := deleteShareLinksForMessageQuery(tx, messageQuery); err != nil {
+			return err
+		}
+		if err := deleteAttachmentsForMessageQuery(tx, messageQuery); err != nil {
+			return err
+		}
+		result := tx.Unscoped().Where("recipient = ?", mailbox.Email).Delete(&models.Message{})
+		if result.Error != nil {
+			return result.Error
+		}
+		messagesDeleted = result.RowsAffected
+		return tx.Delete(&mailbox).Error
+	}); err != nil {
 		fail(c, http.StatusInternalServerError, err.Error())
 		return
 	}
 	h.audit("mailbox.delete", actor.name(), mailbox.Email, "")
-	ok(c, gin.H{"deleted": true})
+	ok(c, gin.H{"deleted": true, "messages_deleted": messagesDeleted})
 }
 
 type httpStatusError struct {

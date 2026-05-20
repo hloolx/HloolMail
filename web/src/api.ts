@@ -70,6 +70,7 @@ export type MessageSummary = {
   subject: string;
   seen: boolean;
   preview: string;
+  attachment_count?: number;
   created_at: string;
   expires_at: string;
 };
@@ -102,8 +103,123 @@ export type MessageDetail = {
   text_content?: string;
   html_content?: string;
   headers_json?: string;
+  attachment_count?: number;
+  attachments?: AttachmentMetadata[];
   created_at: string;
   expires_at: string;
+};
+
+export type AttachmentMetadata = {
+  id: string;
+  message_id?: string;
+  sequence: number;
+  filename?: string;
+  content_type?: string;
+  disposition?: string;
+  content_id?: string;
+  transfer_encoding?: string;
+  size_bytes: number;
+  sha256?: string;
+  inline: boolean;
+  created_at: string;
+};
+
+export type ShareLinkDTO = {
+  id: number;
+  resource_type: 'message' | string;
+  message_id?: string;
+  token?: string;
+  token_prefix: string;
+  share_url?: string;
+  password_set: boolean;
+  expires_at?: string;
+  revoked_at?: string;
+  access_count: number;
+  last_accessed_at?: string;
+  created_at: string;
+  updated_at: string;
+};
+
+export type ShareLinkAccessLogDTO = {
+  id: number;
+  share_link_id: number;
+  resource_type: string;
+  message_id: string;
+  success: boolean;
+  failure_reason?: string;
+  ip: string;
+  user_agent: string;
+  created_at: string;
+};
+
+export type PublicSharedMessageMetadata = {
+  id: string;
+  recipient: string;
+  from_address: string;
+  from_name?: string;
+  subject: string;
+  created_at: string;
+  expires_at: string;
+};
+
+export type PublicSharedLocked = {
+  resource_type: 'message' | string;
+  token_prefix: string;
+  password_required: true;
+  expires_at?: string;
+  message: PublicSharedMessageMetadata;
+};
+
+export type PublicSharedMessage = {
+  id: string;
+  recipient: string;
+  from_address: string;
+  from_name?: string;
+  subject: string;
+  text_content?: string;
+  html_content?: string;
+  attachments: AttachmentMetadata[];
+  created_at: string;
+  expires_at: string;
+};
+
+export type PublicSharedResponse = PublicSharedLocked | PublicSharedMessage;
+
+export type WebhookEndpointDTO = {
+  id: number;
+  name: string;
+  url: string;
+  secret?: string;
+  secret_preview?: string;
+  enabled: boolean;
+  events: string[];
+  scope: 'all' | 'domain' | 'mailbox' | string;
+  domain_id?: number;
+  mailbox_id?: number;
+  last_success_at?: string;
+  last_failure_at?: string;
+  failure_count: number;
+  disabled_at?: string;
+  created_at: string;
+  updated_at: string;
+};
+
+export type WebhookDeliveryDTO = {
+  id: string;
+  endpoint_id: number;
+  event_type: string;
+  message_id?: string;
+  status: 'pending' | 'delivering' | 'retry' | 'succeeded' | 'failed' | string;
+  attempt_count: number;
+  max_attempts: number;
+  next_attempt_at?: string;
+  last_attempt_at?: string;
+  succeeded_at?: string;
+  response_status?: number;
+  response_body?: string;
+  error?: string;
+  created_at: string;
+  updated_at: string;
 };
 
 export type APIKey = {

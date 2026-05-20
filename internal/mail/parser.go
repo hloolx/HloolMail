@@ -2,7 +2,9 @@ package mailparser
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -32,6 +34,19 @@ type ParsedMessage struct {
 	Text        string
 	HTML        string
 	HeadersJSON string
+	Attachments []ParsedAttachment
+}
+
+type ParsedAttachment struct {
+	Sequence         int
+	Filename         string
+	ContentType      string
+	Disposition      string
+	ContentID        string
+	TransferEncoding string
+	SizeBytes        int64
+	SHA256           string
+	Inline           bool
 }
 
 func Parse(raw []byte) (ParsedMessage, error) {
@@ -104,7 +119,22 @@ func parseEntity(header mail.Header, body io.Reader, parsed *ParsedMessage, opti
 	isAttachment := strings.EqualFold(disposition, "attachment") || filename != ""
 	isTextPart := lowerMediaType == "text/plain" || lowerMediaType == "text/html"
 	if isAttachment || !isTextPart {
-		return discardAttachment(header, body, options.MaxAttachmentBytes)
+		stats, err := discardAttachment(header, body, options.MaxAttachmentBytes)
+		if err != nil {
+			return err
+		}
+		parsed.Attachments = append(parsed.Attachments, ParsedAttachment{
+			Sequence:         len(parsed.Attachments) + 1,
+			Filename:         filename,
+			ContentType:      lowerMediaType,
+			Disposition:      strings.ToLower(strings.TrimSpace(disposition)),
+			ContentID:        contentID(header),
+			TransferEncoding: transferEncoding(header),
+			SizeBytes:        stats.SizeBytes,
+			SHA256:           stats.SHA256,
+			Inline:           strings.EqualFold(disposition, "inline"),
+		})
+		return nil
 	}
 
 	data, err := readDecoded(header, body)
@@ -124,20 +154,31 @@ func parseEntity(header mail.Header, body io.Reader, parsed *ParsedMessage, opti
 	return nil
 }
 
-func discardAttachment(header mail.Header, body io.Reader, max int64) error {
+type attachmentStats struct {
+	SizeBytes int64
+	SHA256    string
+}
+
+func discardAttachment(header mail.Header, body io.Reader, max int64) (attachmentStats, error) {
 	reader := transferDecoder(header, body)
+	hasher := sha256.New()
+	var n int64
+	var err error
 	if max <= 0 {
-		_, err := io.Copy(io.Discard, reader)
-		return err
+		n, err = io.Copy(hasher, reader)
+		if err != nil {
+			return attachmentStats{}, err
+		}
+		return attachmentStats{SizeBytes: n, SHA256: hex.EncodeToString(hasher.Sum(nil))}, nil
 	}
-	n, err := io.Copy(io.Discard, io.LimitReader(reader, max+1))
+	n, err = io.Copy(hasher, io.LimitReader(reader, max+1))
 	if err != nil {
-		return err
+		return attachmentStats{}, err
 	}
 	if n > max {
-		return fmt.Errorf("%w: maximum %d bytes", ErrAttachmentTooLarge, max)
+		return attachmentStats{}, fmt.Errorf("%w: maximum %d bytes", ErrAttachmentTooLarge, max)
 	}
-	return nil
+	return attachmentStats{SizeBytes: n, SHA256: hex.EncodeToString(hasher.Sum(nil))}, nil
 }
 
 func readDecoded(header mail.Header, body io.Reader) ([]byte, error) {
@@ -145,7 +186,7 @@ func readDecoded(header mail.Header, body io.Reader) ([]byte, error) {
 }
 
 func transferDecoder(header mail.Header, body io.Reader) io.Reader {
-	switch strings.ToLower(strings.TrimSpace(header.Get("Content-Transfer-Encoding"))) {
+	switch transferEncoding(header) {
 	case "base64":
 		return base64.NewDecoder(base64.StdEncoding, body)
 	case "quoted-printable":
@@ -153,6 +194,14 @@ func transferDecoder(header mail.Header, body io.Reader) io.Reader {
 	default:
 		return body
 	}
+}
+
+func transferEncoding(header mail.Header) string {
+	return strings.ToLower(strings.TrimSpace(header.Get("Content-Transfer-Encoding")))
+}
+
+func contentID(header mail.Header) string {
+	return strings.Trim(strings.TrimSpace(header.Get("Content-ID")), "<>")
 }
 
 func decodeText(data []byte, charset string) (string, error) {

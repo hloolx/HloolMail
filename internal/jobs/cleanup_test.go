@@ -18,10 +18,14 @@ func TestRunCleanupRemovesExpiredMessages(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := db.AutoMigrate(&models.Domain{}, &models.Message{}, &models.AuditLog{}); err != nil {
+	if err := db.AutoMigrate(&models.User{}, &models.Domain{}, &models.Message{}, &models.MessageAttachment{}, &models.ShareLink{}, &models.ShareLinkAccessLog{}, &models.AuditLog{}); err != nil {
 		t.Fatal(err)
 	}
 	now := time.Now()
+	owner := models.User{Email: "owner@example.test", PasswordHash: "hash", Role: models.UserRoleUser, Enabled: true}
+	if err := db.Create(&owner).Error; err != nil {
+		t.Fatal(err)
+	}
 	msg := models.Message{
 		ID:        "expired",
 		Recipient: "demo@example.test",
@@ -38,6 +42,27 @@ func TestRunCleanupRemovesExpiredMessages(t *testing.T) {
 	if err := db.Create(&fresh).Error; err != nil {
 		t.Fatal(err)
 	}
+	attachments := []models.MessageAttachment{
+		{ID: "00000000-0000-0000-0000-000000000301", MessageID: msg.ID, Sequence: 1, SizeBytes: 5, SHA256: strings.Repeat("d", 64)},
+		{ID: "00000000-0000-0000-0000-000000000302", MessageID: fresh.ID, Sequence: 1, SizeBytes: 5, SHA256: strings.Repeat("e", 64)},
+	}
+	if err := db.Create(&attachments).Error; err != nil {
+		t.Fatal(err)
+	}
+	shareLinks := []models.ShareLink{
+		{OwnerID: owner.ID, TokenHash: "hash-expired", TokenPrefix: "expired", ResourceType: models.ShareResourceTypeMessage, MessageID: msg.ID},
+		{OwnerID: owner.ID, TokenHash: "hash-fresh", TokenPrefix: "fresh", ResourceType: models.ShareResourceTypeMessage, MessageID: fresh.ID},
+	}
+	if err := db.Create(&shareLinks).Error; err != nil {
+		t.Fatal(err)
+	}
+	accessLogs := []models.ShareLinkAccessLog{
+		{ShareLinkID: shareLinks[0].ID, OwnerID: owner.ID, ResourceType: models.ShareResourceTypeMessage, MessageID: msg.ID, Success: true, IP: "127.0.0.1", UserAgent: "test"},
+		{ShareLinkID: shareLinks[1].ID, OwnerID: owner.ID, ResourceType: models.ShareResourceTypeMessage, MessageID: fresh.ID, Success: true, IP: "127.0.0.1", UserAgent: "test"},
+	}
+	if err := db.Create(&accessLogs).Error; err != nil {
+		t.Fatal(err)
+	}
 	if err := RunCleanup(db, now); err != nil {
 		t.Fatal(err)
 	}
@@ -49,6 +74,27 @@ func TestRunCleanupRemovesExpiredMessages(t *testing.T) {
 	if err := db.First(&models.Message{}, "id = ?", fresh.ID).Error; err != nil {
 		t.Fatalf("fresh message missing: %v", err)
 	}
+	var remainingAttachments []models.MessageAttachment
+	if err := db.Order("message_id asc").Find(&remainingAttachments).Error; err != nil {
+		t.Fatal(err)
+	}
+	if len(remainingAttachments) != 1 || remainingAttachments[0].MessageID != fresh.ID {
+		t.Fatalf("remaining attachments = %+v, want only fresh", remainingAttachments)
+	}
+	var remainingShareLinks []models.ShareLink
+	if err := db.Order("message_id asc").Find(&remainingShareLinks).Error; err != nil {
+		t.Fatal(err)
+	}
+	if len(remainingShareLinks) != 1 || remainingShareLinks[0].MessageID != fresh.ID {
+		t.Fatalf("remaining share links = %+v, want only fresh", remainingShareLinks)
+	}
+	var remainingAccessLogs []models.ShareLinkAccessLog
+	if err := db.Order("message_id asc").Find(&remainingAccessLogs).Error; err != nil {
+		t.Fatal(err)
+	}
+	if len(remainingAccessLogs) != 1 || remainingAccessLogs[0].MessageID != fresh.ID {
+		t.Fatalf("remaining access logs = %+v, want only fresh", remainingAccessLogs)
+	}
 }
 
 func TestRunExpiredMessageCleanupUsesSetBasedDelete(t *testing.T) {
@@ -57,7 +103,7 @@ func TestRunExpiredMessageCleanupUsesSetBasedDelete(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := db.AutoMigrate(&models.Message{}); err != nil {
+	if err := db.AutoMigrate(&models.User{}, &models.Message{}, &models.MessageAttachment{}, &models.ShareLink{}, &models.ShareLinkAccessLog{}); err != nil {
 		t.Fatal(err)
 	}
 	now := time.Now()
@@ -78,7 +124,7 @@ func TestRunExpiredMessageCleanupUsesSetBasedDelete(t *testing.T) {
 	var deleteMessages, selectMessages int
 	for _, stmt := range queryLog.Statements() {
 		normalized := strings.ToUpper(stmt)
-		if strings.Contains(normalized, "MESSAGES") && strings.HasPrefix(strings.TrimSpace(normalized), "DELETE") {
+		if strings.HasPrefix(strings.TrimSpace(normalized), "DELETE FROM `MESSAGES`") || strings.HasPrefix(strings.TrimSpace(normalized), "DELETE FROM \"MESSAGES\"") {
 			deleteMessages++
 		}
 		if strings.Contains(normalized, "MESSAGES") && strings.HasPrefix(strings.TrimSpace(normalized), "SELECT") {
@@ -98,7 +144,7 @@ func TestRunPendingDomainCleanupUsesExplicitDeleteDeadline(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := db.AutoMigrate(&models.Domain{}, &models.Message{}, &models.AuditLog{}); err != nil {
+	if err := db.AutoMigrate(&models.User{}, &models.Domain{}, &models.Message{}, &models.MessageAttachment{}, &models.ShareLink{}, &models.ShareLinkAccessLog{}, &models.AuditLog{}); err != nil {
 		t.Fatal(err)
 	}
 	now := time.Now()

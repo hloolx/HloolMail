@@ -1,0 +1,88 @@
+package apispec
+
+import "strings"
+
+func SkillMarkdown(cfg Config) string {
+	baseURL := normalizedBaseURL(cfg.BaseURL)
+	expectedMX := strings.TrimRight(firstNonEmpty(cfg.ExpectedMX, "mail.example.com"), ".")
+	docsURL := baseURL + "/api/docs.md"
+	lines := []string{
+		"---",
+		"name: hlool-mail-api",
+		"description: Use HLOOL Mail to create temporary mailboxes, verify private domains, receive email through API calls, read verification messages, and mark messages as read. Use when a user asks an AI assistant to automate temporary email, custom-domain email receiving, verification-code collection, or HLOOL Mail API workflows.",
+		"---",
+		"",
+		"# HLOOL Mail API Skill",
+		"",
+		"Use this skill to operate HLOOL Mail through its documented public API. The API reference is available at `" + docsURL + "` and the OpenAPI document is available at `" + baseURL + "/api/openapi.json`.",
+		"",
+		"## Ground Rules",
+		"",
+		"- Use `X-API-Key` for protected API-key automation calls.",
+		"- Do not reverse engineer the website, guess hidden endpoints, scrape the console, or invent parameters.",
+		"- Treat this as an API-key automation guide. Login, API-key creation, domain management, MX checks, admin work, and user management are web-console tasks.",
+		"- Share-link and webhook management operations are web-console `cookie/session` endpoints, not API-key automation.",
+		"- Ask the user for an API key before calling protected endpoints.",
+		"- Ask the user whether they want a private domain or a platform public domain.",
+		"- Domain creation, MX verification, and API key creation are completed by the user in the web console.",
+		"- If exact response fields or examples are needed, read `" + docsURL + "` first.",
+		"",
+		"## Private Domain Workflow",
+		"",
+		"1. Ask the user to add their domain in the web console.",
+		"2. Ask the user to point the domain MX record to `" + expectedMX + "`.",
+		"3. For root-domain mailboxes such as `user@example.com`, the root MX record is enough.",
+		"4. For subdomain mailboxes such as `user@abc.example.com`, ask the user to add a wildcard MX record too.",
+		"5. After the user verifies MX in the web console, call `POST /api/generate-email` with the requested domain.",
+		"6. Treat the private-domain setup as successful only when the response returns an address on that same domain.",
+		"",
+		"## Public Domain Workflow",
+		"",
+		"1. Call `GET /api/domains/available` with `X-API-Key` to list usable public domains from `data.domains` and richer metadata from `data.public_domains`.",
+		"2. Read `data.private_domains` when the user wants to use a private domain already available to that API key.",
+		"3. Call `POST /api/generate-email` without a domain for a random public-domain mailbox, or pass a listed domain explicitly.",
+		"4. If a target website rejects the address or no email arrives, suggest another public domain, another local-part prefix, waiting briefly, or using the user's private domain.",
+		"",
+		"## Reading Verification Email",
+		"",
+		"1. Call `GET /api/emails/next?email=MAILBOX` every 3 seconds for up to 120 seconds.",
+		"2. If `has_email=false`, no unread message has arrived yet; wait and poll again.",
+		"3. If `has_email=true`, extract the code from `message.subject`, `message.text_content`, or sanitized `message.html_content`.",
+		"4. Stop polling after a match. The endpoint marks the returned message read automatically.",
+		"5. For manual inspection only, use `GET /api/emails?email=MAILBOX&page=1&per_page=20`, `GET /api/email/:id`, and `PATCH /api/email/:id/read`.",
+		"6. The older `limit` form returns an array in `data`; the `page/per_page` form returns `{items,page,per_page,total,total_pages}`.",
+		"",
+		"## Core Endpoints",
+		"",
+	}
+	for _, op := range AutomationOperations() {
+		lines = append(lines, "- `"+op.Method+" "+op.DisplayPath()+"` - "+op.Summary+".")
+	}
+	lines = append(lines,
+		"",
+		"## Minimal Request Pattern",
+		"",
+		"```bash",
+		"curl -X POST \""+baseURL+"/api/generate-email\" \\",
+		"  -H \"Content-Type: application/json\" \\",
+		"  -H \"X-API-Key: YOUR_KEY\" \\",
+		"  -d '{\"prefix\":\"verify\",\"domain\":\"example.com\"}'",
+		"```",
+		"",
+		"```bash",
+		"curl \""+baseURL+"/api/emails?email=verify@example.com&page=1&per_page=20\" \\",
+		"  -H \"X-API-Key: YOUR_KEY\"",
+		"```",
+		"",
+		"```bash",
+		"curl \""+baseURL+"/api/emails/next?email=verify@example.com\" \\",
+		"  -H \"X-API-Key: YOUR_KEY\"",
+		"```",
+		"",
+		"## Response Handling",
+		"",
+		"Expect a JSON envelope with `success`, `data`, and `error`. API-key calls may also include `usage`. If `success` is false, treat `error` as human-readable text that may be localized; report it to the user and suggest the most likely next action. For automation control flow, rely on HTTP status plus `success`, not exact `error` strings.",
+		"",
+	)
+	return strings.Join(lines, "\n")
+}
