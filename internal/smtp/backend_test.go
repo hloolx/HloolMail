@@ -103,6 +103,9 @@ func TestDataStoresAttachmentMetadataOnly(t *testing.T) {
 	if err := db.First(&msg, "recipient = ?", "demo@example.test").Error; err != nil {
 		t.Fatal(err)
 	}
+	if msg.OwnerID == nil || msg.MailboxID == nil {
+		t.Fatalf("message owner snapshot not stored: owner_id=%v mailbox_id=%v", msg.OwnerID, msg.MailboxID)
+	}
 	if strings.Contains(msg.TextContent, "secret") || strings.Contains(msg.HTMLContent, "secret") {
 		t.Fatalf("attachment body leaked into stored message: %+v", msg)
 	}
@@ -132,26 +135,18 @@ func TestDataEnqueuesWebhookWithoutCallingTarget(t *testing.T) {
 		MessageRetention: time.Hour,
 		WebhooksEnabled:  true,
 	})
-	owner := models.User{Email: "owner@example.test", PasswordHash: "hash", Role: models.UserRoleUser, Enabled: true}
-	if err := db.Create(&owner).Error; err != nil {
+	var mailbox models.Mailbox
+	if err := db.First(&mailbox, "email = ?", "demo@example.test").Error; err != nil {
 		t.Fatal(err)
 	}
+	ownerID := mailbox.OwnerID
 	var domain models.Domain
 	if err := db.First(&domain, "domain = ?", "example.test").Error; err != nil {
 		t.Fatal(err)
 	}
 	if err := db.Model(&domain).Updates(map[string]any{
 		"mode":     models.DomainModePrivate,
-		"owner_id": owner.ID,
-	}).Error; err != nil {
-		t.Fatal(err)
-	}
-	if err := db.Create(&models.Mailbox{
-		OwnerID:   owner.ID,
-		Email:     "demo@example.test",
-		LocalPart: "demo",
-		Host:      "example.test",
-		DomainID:  domain.ID,
+		"owner_id": ownerID,
 	}).Error; err != nil {
 		t.Fatal(err)
 	}
@@ -160,7 +155,7 @@ func TestDataEnqueuesWebhookWithoutCallingTarget(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := db.Create(&models.WebhookEndpoint{
-		OwnerID:       owner.ID,
+		OwnerID:       ownerID,
 		Name:          "slow-or-blocked-target",
 		URL:           "https://10.0.0.1/hook",
 		Secret:        "secret",
@@ -195,6 +190,70 @@ func TestDataEnqueuesWebhookWithoutCallingTarget(t *testing.T) {
 	}
 }
 
+func TestRcptRejectsMissingMailboxOnPublicDomain(t *testing.T) {
+	session, _ := newSMTPTestSession(t, config.Config{
+		MaxMessageBytes:  4096,
+		MessageRetention: time.Hour,
+	})
+	session.Reset()
+	if err := session.Mail("sender@example.test", nil); err != nil {
+		t.Fatal(err)
+	}
+	err := session.Rcpt("missing@example.test", nil)
+	smtpErr, ok := err.(*gosmtp.SMTPError)
+	if !ok {
+		t.Fatalf("error = %T %v, want SMTPError", err, err)
+	}
+	if smtpErr.Code != 550 || smtpErr.Message != "mailbox not found" {
+		t.Fatalf("smtp error = %d %q", smtpErr.Code, smtpErr.Message)
+	}
+}
+
+func TestDataStoresPrivateCatchAllOwnerSnapshot(t *testing.T) {
+	session, db := newSMTPTestSession(t, config.Config{
+		MaxMessageBytes:  4096,
+		MessageRetention: time.Hour,
+	})
+	owner := models.User{Email: "private-owner@example.test", PasswordHash: "hash", Role: models.UserRoleUser, Enabled: true}
+	if err := db.Create(&owner).Error; err != nil {
+		t.Fatal(err)
+	}
+	domain := models.Domain{
+		Domain:          "private.test",
+		Mode:            models.DomainModePrivate,
+		OwnerID:         &owner.ID,
+		Active:          true,
+		MXVerified:      true,
+		WildcardEnabled: true,
+	}
+	if err := db.Create(&domain).Error; err != nil {
+		t.Fatal(err)
+	}
+	session.Reset()
+	if err := session.Mail("sender@example.test", nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := session.Rcpt("anything@private.test", nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := session.Data(strings.NewReader("From: Sender <sender@example.test>\r\n" +
+		"To: anything@private.test\r\n" +
+		"Subject: Catch all\r\n\r\n" +
+		"hello\r\n")); err != nil {
+		t.Fatal(err)
+	}
+	var msg models.Message
+	if err := db.First(&msg, "recipient = ?", "anything@private.test").Error; err != nil {
+		t.Fatal(err)
+	}
+	if msg.OwnerID == nil || *msg.OwnerID != owner.ID {
+		t.Fatalf("owner snapshot = %v, want %d", msg.OwnerID, owner.ID)
+	}
+	if msg.MailboxID != nil {
+		t.Fatalf("mailbox snapshot = %v, want nil for private catch-all", *msg.MailboxID)
+	}
+}
+
 func newSMTPTestSession(t *testing.T, cfg config.Config) (*Session, *gorm.DB) {
 	t.Helper()
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
@@ -206,11 +265,25 @@ func newSMTPTestSession(t *testing.T, cfg config.Config) (*Session, *gorm.DB) {
 	}
 	d := models.Domain{
 		Domain:     "example.test",
+		Mode:       models.DomainModePublic,
 		Active:     true,
 		MXVerified: true,
 		CreatedAt:  time.Now(),
 	}
 	if err := db.Create(&d).Error; err != nil {
+		t.Fatal(err)
+	}
+	owner := models.User{Email: "owner@example.test", PasswordHash: "hash", Role: models.UserRoleUser, Enabled: true}
+	if err := db.Create(&owner).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&models.Mailbox{
+		OwnerID:   owner.ID,
+		Email:     "demo@example.test",
+		LocalPart: "demo",
+		Host:      "example.test",
+		DomainID:  d.ID,
+	}).Error; err != nil {
 		t.Fatal(err)
 	}
 	session := &Session{service: Service{

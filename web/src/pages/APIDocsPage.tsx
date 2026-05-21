@@ -76,6 +76,10 @@ function requestPreview(endpoint: DocEndpoint, url: URL, apiKey: string, body: s
   return lines.join('\n');
 }
 
+function isSameOriginURL(url: URL) {
+  return typeof window === 'undefined' || url.origin === window.location.origin;
+}
+
 const CODE_GEN_LANGUAGES: CodeGenLang[] = ['curl', 'fetch', 'python'];
 
 export function APIDocsPage() {
@@ -225,7 +229,7 @@ export function APIDocsPage() {
     setRequestPath(entry.requestPath);
     setQueryString(entry.queryString);
     setRequestBody(entry.requestBody);
-    if (entry.apiKey) setApiKey(entry.apiKey);
+    setApiKey('');
     setDangerConfirmed(false);
     clearResult();
     setShowHistory(false);
@@ -251,10 +255,22 @@ export function APIDocsPage() {
       setCallError(text.apiDocs.invalidURL);
       return;
     }
+    const sendsAPIKey = selectedEndpoint.auth === 'apiKey';
+    if (sendsAPIKey && !isSameOriginURL(url)) {
+      const confirmed = window.confirm(
+        language === 'zh-CN'
+          ? `你正在把 API Key 发送到外部地址：${url.origin}\n\n请确认这是可信服务。`
+          : `You are about to send an API key to an external origin: ${url.origin}\n\nOnly continue if this service is trusted.`
+      );
+      if (!confirmed) {
+        setCallError(language === 'zh-CN' ? '已取消：API Key 没有发送到外部地址。' : 'Canceled: the API key was not sent to an external origin.');
+        return;
+      }
+    }
 
     const headers = new Headers({ Accept: 'application/json, text/markdown;q=0.9, text/plain;q=0.8' });
     let body: string | undefined;
-    if (selectedEndpoint.auth === 'apiKey') {
+    if (sendsAPIKey) {
       headers.set('X-API-Key', apiKey.trim());
     }
     if (requestBody.trim() && selectedEndpoint.method !== 'GET') {
@@ -306,7 +322,6 @@ export function APIDocsPage() {
         requestPath,
         queryString,
         requestBody,
-        apiKey: apiKey.trim(),
         status: response.status,
         statusText: response.statusText,
         responsePreview: raw.slice(0, 500),

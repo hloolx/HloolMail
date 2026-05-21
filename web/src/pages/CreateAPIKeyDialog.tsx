@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
 import type { FormEvent } from 'react';
-import { createPortal } from 'react-dom';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { Copy, KeyRound, X } from 'lucide-react';
 import { toast } from 'sonner';
@@ -8,7 +7,7 @@ import type { APIKey } from '../api';
 import { postJSON } from '../api';
 import { useText } from '../locales';
 import { copy } from '../lib/clipboard';
-import { IconButton, InfoTip, LoadingIndicator } from '../components/shared';
+import { DialogShell, IconButton, InfoTip, LoadingIndicator } from '../components/shared';
 
 export function CreateAPIKeyDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
   const text = useText();
@@ -24,6 +23,7 @@ export function CreateAPIKeyDialog({ open, onClose }: { open: boolean; onClose: 
   const [expiresAt, setExpiresAt] = useState('');
   const [plainKey, setPlainKey] = useState('');
   const [createdCopied, setCreatedCopied] = useState(false);
+  const nameInputRef = useRef<HTMLInputElement | null>(null);
   const createButtonRef = useRef<HTMLButtonElement | null>(null);
 
   const hasDailyLimit = dailyUnlimited || dailyLimit.trim() !== '';
@@ -47,20 +47,10 @@ export function CreateAPIKeyDialog({ open, onClose }: { open: boolean; onClose: 
     }
   }, [open]);
 
-  // Escape key to close
-  useEffect(() => {
-    if (!open) return;
-    const handler = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') handleClose();
-    };
-    window.addEventListener('keydown', handler);
-    return () => window.removeEventListener('keydown', handler);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open]);
-
   const handleClose = () => {
+    if (closing) return;
     setClosing(true);
-    setTimeout(() => {
+    window.setTimeout(() => {
       onClose();
     }, 190);
   };
@@ -118,15 +108,20 @@ export function CreateAPIKeyDialog({ open, onClose }: { open: boolean; onClose: 
 
   if (!open && !closing) return null;
 
-  return createPortal(
-    <div className={`modal-backdrop${closing ? ' modal-backdrop-closing' : ''}`} role="presentation" onMouseDown={(event) => {
-      if (event.target === event.currentTarget) handleClose();
-    }}>
-      <section className={`modal-panel${closing ? ' modal-panel-closing' : ''}`} role="dialog" aria-modal="true" aria-labelledby="create-api-key-title">
+  return (
+    <DialogShell
+      open={open || closing}
+      backdropClassName={`modal-backdrop${closing ? ' modal-backdrop-closing' : ''}`}
+      className={`modal-panel${closing ? ' modal-panel-closing' : ''}`}
+      titleId="create-api-key-title"
+      descriptionId="create-api-key-desc"
+      onClose={handleClose}
+      initialFocusRef={nameInputRef}
+    >
         <div className="modal-header">
           <div>
             <h2 id="create-api-key-title">{text.apiKeys.createTitle}</h2>
-            <p>{text.apiKeys.createDesc}</p>
+            <p id="create-api-key-desc">{text.apiKeys.createDesc}</p>
           </div>
           <IconButton title={text.common.close} onClick={handleClose}>
             <X size={16} />
@@ -135,7 +130,7 @@ export function CreateAPIKeyDialog({ open, onClose }: { open: boolean; onClose: 
         <form className="api-key-form" onSubmit={submitCreate}>
           <label className="api-key-field">
             <span>{text.apiKeys.name}</span>
-            <input className="input" value={name} placeholder={text.apiKeys.namePlaceholder} onChange={(event) => setName(event.target.value)} required />
+            <input ref={nameInputRef} className="input" value={name} placeholder={text.apiKeys.namePlaceholder} onChange={(event) => setName(event.target.value)} required />
           </label>
           <div className="api-key-limit-grid">
             <label className="api-key-field">
@@ -215,8 +210,6 @@ export function CreateAPIKeyDialog({ open, onClose }: { open: boolean; onClose: 
             />
           </div>
         )}
-      </section>
-    </div>,
-    document.body
+    </DialogShell>
   );
 }

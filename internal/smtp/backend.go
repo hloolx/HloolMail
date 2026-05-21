@@ -31,8 +31,10 @@ type Session struct {
 }
 
 type acceptedRecipient struct {
-	Parts  domain.RecipientParts
-	Domain *models.Domain
+	Parts     domain.RecipientParts
+	Domain    *models.Domain
+	OwnerID   uint
+	MailboxID *uint
 }
 
 func (b *Backend) NewSession(_ *gosmtp.Conn) (gosmtp.Session, error) {
@@ -58,8 +60,37 @@ func (s *Session) Rcpt(to string, _ *gosmtp.RcptOptions) error {
 	if err != nil {
 		return &gosmtp.SMTPError{Code: 550, Message: "unknown recipient domain"}
 	}
-	s.recipients = append(s.recipients, acceptedRecipient{Parts: parts, Domain: resolved})
+	ownerID, mailboxID, err := s.resolveRecipientOwner(parts, resolved)
+	if err != nil {
+		return err
+	}
+	s.recipients = append(s.recipients, acceptedRecipient{
+		Parts:     parts,
+		Domain:    resolved,
+		OwnerID:   ownerID,
+		MailboxID: mailboxID,
+	})
 	return nil
+}
+
+func (s *Session) resolveRecipientOwner(parts domain.RecipientParts, resolved *models.Domain) (uint, *uint, error) {
+	var mailbox models.Mailbox
+	err := s.service.DB.Where("email = ?", parts.Recipient).First(&mailbox).Error
+	if err == nil {
+		mailboxID := mailbox.ID
+		return mailbox.OwnerID, &mailboxID, nil
+	}
+	if !errors.Is(err, gorm.ErrRecordNotFound) {
+		slog.Warn("smtp failed to resolve recipient mailbox", "recipient", parts.Recipient, "error", err)
+		return 0, nil, &gosmtp.SMTPError{Code: 451, Message: "failed to resolve recipient"}
+	}
+	if resolved.Mode == models.DomainModePublic {
+		return 0, nil, &gosmtp.SMTPError{Code: 550, Message: "mailbox not found"}
+	}
+	if resolved.OwnerID == nil {
+		return 0, nil, &gosmtp.SMTPError{Code: 550, Message: "recipient owner not found"}
+	}
+	return *resolved.OwnerID, nil, nil
 }
 
 func (s *Session) Data(r io.Reader) error {
@@ -94,6 +125,8 @@ func (s *Session) Data(r io.Reader) error {
 			RecipientDomain: recipient.Parts.Host,
 			RootDomain:      recipient.Domain.Domain,
 			DomainID:        &recipient.Domain.ID,
+			OwnerID:         &recipient.OwnerID,
+			MailboxID:       recipient.MailboxID,
 			FromAddress:     parsed.FromAddress,
 			FromName:        parsed.FromName,
 			Subject:         parsed.Subject,

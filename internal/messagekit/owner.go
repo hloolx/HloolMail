@@ -23,26 +23,20 @@ type OwnerInfo struct {
 }
 
 func OwnerForMessage(db *gorm.DB, msg models.Message) (OwnerInfo, bool, error) {
-	var d *models.Domain
-	if msg.DomainID != nil {
-		var domain models.Domain
-		err := db.First(&domain, "id = ?", *msg.DomainID).Error
-		if err == nil {
-			d = &domain
-		} else if !errors.Is(err, gorm.ErrRecordNotFound) {
-			return OwnerInfo{}, false, err
+	if msg.OwnerID != nil {
+		info := OwnerInfo{
+			OwnerID:   *msg.OwnerID,
+			MailboxID: msg.MailboxID,
+			DomainID:  msg.DomainID,
 		}
-	}
-	if d == nil && msg.RootDomain != "" {
-		var domain models.Domain
-		err := db.Where("domain = ?", msg.RootDomain).First(&domain).Error
-		if err == nil {
-			d = &domain
-		} else if !errors.Is(err, gorm.ErrRecordNotFound) {
-			return OwnerInfo{}, false, err
+		if msg.MailboxID != nil {
+			info.Source = OwnerSourceMailbox
+		} else {
+			info.Source = OwnerSourcePrivateDomain
 		}
+		return info, true, nil
 	}
-	return OwnerForRecipient(db, msg.Recipient, d)
+	return OwnerInfo{}, false, nil
 }
 
 func OwnerForRecipient(db *gorm.DB, recipient string, d *models.Domain) (OwnerInfo, bool, error) {
@@ -73,16 +67,5 @@ func OwnerForRecipient(db *gorm.DB, recipient string, d *models.Domain) (OwnerIn
 }
 
 func ScopeOwnedMessages(db *gorm.DB, query *gorm.DB, ownerID uint) *gorm.DB {
-	ownedMailboxes := db.Model(&models.Mailbox{}).
-		Select("email").
-		Where("owner_id = ?", ownerID)
-	ownedPrivateDomains := db.Model(&models.Domain{}).
-		Select("domain").
-		Where("owner_id = ? AND mode = ?", ownerID, models.DomainModePrivate)
-
-	return query.Where(
-		"recipient IN (?) OR (root_domain IN (?) AND NOT EXISTS (SELECT 1 FROM mailboxes WHERE mailboxes.email = messages.recipient))",
-		ownedMailboxes,
-		ownedPrivateDomains,
-	)
+	return query.Where("owner_id = ?", ownerID)
 }

@@ -6,7 +6,9 @@ import (
 	"testing"
 	"time"
 
+	"gptmail/internal/config"
 	"gptmail/internal/models"
+	"gptmail/internal/webhook"
 
 	"github.com/glebarez/sqlite"
 	"gorm.io/gorm"
@@ -18,7 +20,7 @@ func TestRunCleanupRemovesExpiredMessages(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := db.AutoMigrate(&models.User{}, &models.Domain{}, &models.Mailbox{}, &models.Message{}, &models.MessageAttachment{}, &models.ShareLink{}, &models.ShareLinkAccessLog{}, &models.AuditLog{}); err != nil {
+	if err := db.AutoMigrate(&models.User{}, &models.Domain{}, &models.Mailbox{}, &models.Message{}, &models.MessageAttachment{}, &models.ShareLink{}, &models.ShareLinkAccessLog{}, &models.WebhookEndpoint{}, &models.WebhookDelivery{}, &models.AuditLog{}); err != nil {
 		t.Fatal(err)
 	}
 	now := time.Now()
@@ -76,6 +78,54 @@ func TestRunCleanupRemovesExpiredMessages(t *testing.T) {
 	if err := db.Create(&accessLogs).Error; err != nil {
 		t.Fatal(err)
 	}
+	eventsJSON, err := webhook.EventsJSON([]string{models.WebhookEventMessageReceived})
+	if err != nil {
+		t.Fatal(err)
+	}
+	endpoint := models.WebhookEndpoint{
+		OwnerID:       owner.ID,
+		Name:          "cleanup",
+		URL:           "https://example.com/hook",
+		Secret:        "secret",
+		SecretPreview: "preview",
+		Enabled:       true,
+		EventsJSON:    eventsJSON,
+		Scope:         models.WebhookScopeAll,
+	}
+	if err := db.Create(&endpoint).Error; err != nil {
+		t.Fatal(err)
+	}
+	nextAttempt := now.Add(-time.Minute)
+	webhookDeliveries := []models.WebhookDelivery{
+		{
+			ID:            "00000000-0000-0000-0000-000000000401",
+			EndpointID:    endpoint.ID,
+			OwnerID:       owner.ID,
+			EventType:     models.WebhookEventMessageReceived,
+			MessageID:     msg.ID,
+			PayloadJSON:   `{"message":{"subject":"expired","text_content":"expired secret","headers_json":"x-private"}}`,
+			DedupKey:      "cleanup:expired",
+			Status:        models.WebhookDeliveryStatusRetry,
+			MaxAttempts:   8,
+			NextAttemptAt: &nextAttempt,
+			ResponseBody:  "echo expired secret",
+		},
+		{
+			ID:            "00000000-0000-0000-0000-000000000402",
+			EndpointID:    endpoint.ID,
+			OwnerID:       owner.ID,
+			EventType:     models.WebhookEventMessageReceived,
+			MessageID:     fresh.ID,
+			PayloadJSON:   `{"message":{"subject":"fresh","text_content":"fresh secret"}}`,
+			DedupKey:      "cleanup:fresh",
+			Status:        models.WebhookDeliveryStatusPending,
+			MaxAttempts:   8,
+			NextAttemptAt: &nextAttempt,
+		},
+	}
+	if err := db.Create(&webhookDeliveries).Error; err != nil {
+		t.Fatal(err)
+	}
 	if err := RunCleanup(db, now); err != nil {
 		t.Fatal(err)
 	}
@@ -128,6 +178,192 @@ func TestRunCleanupRemovesExpiredMessages(t *testing.T) {
 	}
 	if remainingMailboxLogs != 1 {
 		t.Fatalf("mailbox access logs = %d, want 1", remainingMailboxLogs)
+	}
+	var expiredDelivery models.WebhookDelivery
+	if err := db.First(&expiredDelivery, "id = ?", webhookDeliveries[0].ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if expiredDelivery.Status != models.WebhookDeliveryStatusFailed || expiredDelivery.NextAttemptAt != nil {
+		t.Fatalf("expired delivery was not canceled: %+v", expiredDelivery)
+	}
+	if !strings.Contains(expiredDelivery.PayloadJSON, `"redacted":true`) ||
+		strings.Contains(expiredDelivery.PayloadJSON, "expired secret") ||
+		strings.Contains(expiredDelivery.PayloadJSON, "x-private") ||
+		expiredDelivery.ResponseBody != "" {
+		t.Fatalf("expired delivery payload was not redacted: %+v", expiredDelivery)
+	}
+	var freshDelivery models.WebhookDelivery
+	if err := db.First(&freshDelivery, "id = ?", webhookDeliveries[1].ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if freshDelivery.Status != models.WebhookDeliveryStatusPending || !strings.Contains(freshDelivery.PayloadJSON, "fresh secret") {
+		t.Fatalf("fresh delivery changed unexpectedly: %+v", freshDelivery)
+	}
+}
+
+func TestRunCleanupWithConfigRemovesExpiredRegistrationDataAndKeepsExistingCleanup(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.AutoMigrate(
+		&models.User{},
+		&models.Domain{},
+		&models.Mailbox{},
+		&models.Message{},
+		&models.MessageAttachment{},
+		&models.ShareLink{},
+		&models.ShareLinkAccessLog{},
+		&models.PendingRegistration{},
+		&models.RegistrationCaptcha{},
+		&models.AuditLog{},
+	); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Date(2026, 5, 21, 12, 0, 0, 0, time.UTC)
+	expiredAt := now.Add(-time.Minute)
+	futureAt := now.Add(time.Hour)
+	pending := []models.PendingRegistration{
+		{
+			VerificationID: "expired-pending",
+			TokenHash:      "expired-token-hash",
+			Email:          "expired@example.test",
+			PasswordHash:   "expired-password-hash",
+			CodeHash:       "expired-code-hash",
+			ExpiresAt:      expiredAt,
+			LastSentAt:     now.Add(-2 * time.Hour),
+			IP:             "127.0.0.1",
+			UserAgent:      "test",
+		},
+		{
+			VerificationID: "fresh-pending",
+			TokenHash:      "fresh-token-hash",
+			Email:          "fresh@example.test",
+			PasswordHash:   "fresh-password-hash",
+			CodeHash:       "fresh-code-hash",
+			ExpiresAt:      futureAt,
+			LastSentAt:     now.Add(-time.Minute),
+			IP:             "127.0.0.1",
+			UserAgent:      "test",
+		},
+		{
+			VerificationID: "boundary-pending",
+			TokenHash:      "boundary-token-hash",
+			Email:          "boundary@example.test",
+			PasswordHash:   "boundary-password-hash",
+			CodeHash:       "boundary-code-hash",
+			ExpiresAt:      now,
+			LastSentAt:     now.Add(-time.Minute),
+			IP:             "127.0.0.1",
+			UserAgent:      "test",
+		},
+	}
+	if err := db.Create(&pending).Error; err != nil {
+		t.Fatal(err)
+	}
+	captchas := []models.RegistrationCaptcha{
+		{
+			CaptchaID:  "expired-captcha",
+			AnswerHash: "expired-answer-hash",
+			Challenge:  "1 + 1",
+			ExpiresAt:  expiredAt,
+			IP:         "127.0.0.1",
+			UserAgent:  "test",
+		},
+		{
+			CaptchaID:  "fresh-captcha",
+			AnswerHash: "fresh-answer-hash",
+			Challenge:  "2 + 2",
+			ExpiresAt:  futureAt,
+			IP:         "127.0.0.1",
+			UserAgent:  "test",
+		},
+		{
+			CaptchaID:  "boundary-captcha",
+			AnswerHash: "boundary-answer-hash",
+			Challenge:  "3 + 3",
+			ExpiresAt:  now,
+			IP:         "127.0.0.1",
+			UserAgent:  "test",
+		},
+	}
+	if err := db.Create(&captchas).Error; err != nil {
+		t.Fatal(err)
+	}
+	pendingDomain := models.Domain{
+		Domain:          "expired-domain.test",
+		Mode:            models.DomainModePrivate,
+		Active:          true,
+		PendingDeleteAt: &expiredAt,
+	}
+	retainedDomain := models.Domain{
+		Domain:          "fresh-domain.test",
+		Mode:            models.DomainModePrivate,
+		Active:          true,
+		PendingDeleteAt: &futureAt,
+	}
+	if err := db.Create(&[]models.Domain{pendingDomain, retainedDomain}).Error; err != nil {
+		t.Fatal(err)
+	}
+	messages := []models.Message{
+		{ID: "expired-message", Recipient: "old@example.test", ExpiresAt: expiredAt},
+		{ID: "fresh-message", Recipient: "new@example.test", ExpiresAt: futureAt},
+	}
+	if err := db.Create(&messages).Error; err != nil {
+		t.Fatal(err)
+	}
+	auditLogs := []models.AuditLog{
+		{Category: "activity", Severity: "info", Action: "cleanup.old_activity", Actor: "system", Target: "old-activity", CreatedAt: now.AddDate(0, 0, -31)},
+		{Category: "activity", Severity: "info", Action: "cleanup.fresh_activity", Actor: "system", Target: "fresh-activity", CreatedAt: now.AddDate(0, 0, -7)},
+		{Category: "security", Severity: "warning", Action: "cleanup.old_security", Actor: "system", Target: "old-security", CreatedAt: now.AddDate(0, 0, -181)},
+		{Category: "security", Severity: "warning", Action: "cleanup.fresh_security", Actor: "system", Target: "fresh-security", CreatedAt: now.AddDate(0, 0, -60)},
+	}
+	if err := db.Create(&auditLogs).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	if err := RunCleanupWithConfig(db, now, config.Config{}); err != nil {
+		t.Fatal(err)
+	}
+
+	assertCount := func(name string, model any, want int64, query string, args ...any) {
+		t.Helper()
+		var count int64
+		if err := db.Model(model).Where(query, args...).Count(&count).Error; err != nil {
+			t.Fatal(err)
+		}
+		if count != want {
+			t.Fatalf("%s count = %d, want %d", name, count, want)
+		}
+	}
+	assertCount("expired pending registration", &models.PendingRegistration{}, 0, "verification_id = ?", "expired-pending")
+	assertCount("fresh pending registration", &models.PendingRegistration{}, 1, "verification_id = ?", "fresh-pending")
+	assertCount("boundary pending registration", &models.PendingRegistration{}, 1, "verification_id = ?", "boundary-pending")
+	assertCount("expired registration captcha", &models.RegistrationCaptcha{}, 0, "captcha_id = ?", "expired-captcha")
+	assertCount("fresh registration captcha", &models.RegistrationCaptcha{}, 1, "captcha_id = ?", "fresh-captcha")
+	assertCount("boundary registration captcha", &models.RegistrationCaptcha{}, 1, "captcha_id = ?", "boundary-captcha")
+	assertCount("expired message", &models.Message{}, 0, "id = ?", "expired-message")
+	assertCount("fresh message", &models.Message{}, 1, "id = ?", "fresh-message")
+	assertCount("expired pending domain", &models.Domain{}, 0, "domain = ?", "expired-domain.test")
+	assertCount("fresh pending domain", &models.Domain{}, 1, "domain = ?", "fresh-domain.test")
+	assertCount("old activity audit log", &models.AuditLog{}, 0, "target = ?", "old-activity")
+	assertCount("fresh activity audit log", &models.AuditLog{}, 1, "target = ?", "fresh-activity")
+	assertCount("old security audit log", &models.AuditLog{}, 0, "target = ?", "old-security")
+	assertCount("fresh security audit log", &models.AuditLog{}, 1, "target = ?", "fresh-security")
+
+	var freshPending models.PendingRegistration
+	if err := db.First(&freshPending, "verification_id = ?", "fresh-pending").Error; err != nil {
+		t.Fatal(err)
+	}
+	if freshPending.PasswordHash != "fresh-password-hash" {
+		t.Fatalf("fresh pending password hash = %q, want unchanged", freshPending.PasswordHash)
+	}
+	var freshCaptcha models.RegistrationCaptcha
+	if err := db.First(&freshCaptcha, "captcha_id = ?", "fresh-captcha").Error; err != nil {
+		t.Fatal(err)
+	}
+	if freshCaptcha.AnswerHash != "fresh-answer-hash" {
+		t.Fatalf("fresh captcha answer hash = %q, want unchanged", freshCaptcha.AnswerHash)
 	}
 }
 

@@ -13,6 +13,13 @@ const (
 	UserRoleUser  = "user"
 	UserRoleAdmin = "admin"
 
+	EmailVerificationModeInternal = "internal"
+	EmailVerificationModeSMTP     = "smtp"
+
+	SMTPSecurityNone     = "none"
+	SMTPSecuritySTARTTLS = "starttls"
+	SMTPSecurityTLS      = "tls"
+
 	PendingDomainTTL = 2 * time.Hour
 
 	ShareResourceTypeMessage = "message"
@@ -51,6 +58,34 @@ type User struct {
 	PrivateMailboxCreated int64      `gorm:"not null;default:0" json:"private_mailbox_created"`
 	CreatedAt             time.Time  `json:"created_at"`
 	UpdatedAt             time.Time  `json:"updated_at"`
+}
+
+type PendingRegistration struct {
+	VerificationID string    `gorm:"primaryKey;size:96;not null" json:"verification_id"`
+	TokenHash      string    `gorm:"type:text;not null" json:"-"`
+	Email          string    `gorm:"uniqueIndex;size:255;not null" json:"email"`
+	PasswordHash   string    `gorm:"not null" json:"-"`
+	CodeHash       string    `gorm:"not null" json:"-"`
+	ExpiresAt      time.Time `gorm:"index;not null" json:"expires_at"`
+	AttemptCount   int       `gorm:"not null;default:0" json:"attempt_count"`
+	SentCount      int       `gorm:"not null;default:0" json:"sent_count"`
+	LastSentAt     time.Time `json:"last_sent_at"`
+	IP             string    `gorm:"size:120;not null" json:"ip"`
+	UserAgent      string    `gorm:"size:500;not null" json:"user_agent"`
+	CreatedAt      time.Time `json:"created_at"`
+	UpdatedAt      time.Time `json:"updated_at"`
+}
+
+type RegistrationCaptcha struct {
+	CaptchaID    string    `gorm:"primaryKey;size:96;not null" json:"captcha_id"`
+	AnswerHash   string    `gorm:"type:text;not null" json:"-"`
+	Challenge    string    `gorm:"type:text;not null" json:"challenge"`
+	ExpiresAt    time.Time `gorm:"index;not null" json:"expires_at"`
+	AttemptCount int       `gorm:"not null;default:0" json:"attempt_count"`
+	IP           string    `gorm:"size:120;not null" json:"ip"`
+	UserAgent    string    `gorm:"size:500;not null" json:"user_agent"`
+	CreatedAt    time.Time `json:"created_at"`
+	UpdatedAt    time.Time `json:"updated_at"`
 }
 
 type OAuthIdentity struct {
@@ -199,6 +234,10 @@ type Message struct {
 	RootDomain      string         `gorm:"size:255;not null" json:"root_domain"`
 	DomainID        *uint          `gorm:"index" json:"domain_id,omitempty"`
 	DomainRef       *Domain        `gorm:"foreignKey:DomainID;constraint:OnUpdate:CASCADE,OnDelete:SET NULL;" json:"-"`
+	OwnerID         *uint          `gorm:"index" json:"owner_id,omitempty"`
+	Owner           *User          `gorm:"foreignKey:OwnerID;constraint:OnUpdate:CASCADE,OnDelete:SET NULL;" json:"-"`
+	MailboxID       *uint          `gorm:"index" json:"mailbox_id,omitempty"`
+	Mailbox         *Mailbox       `gorm:"foreignKey:MailboxID;constraint:OnUpdate:CASCADE,OnDelete:SET NULL;" json:"-"`
 	FromAddress     string         `gorm:"size:320;not null" json:"from_address"`
 	FromName        string         `gorm:"size:255" json:"from_name,omitempty"`
 	Subject         string         `gorm:"size:500;not null" json:"subject"`
@@ -441,11 +480,22 @@ type SystemQuotaSettings struct {
 }
 
 type LoginSettings struct {
-	ID                 uint      `gorm:"primaryKey" json:"id"`
-	TurnstileEnabled   bool      `gorm:"not null;default:false" json:"turnstile_enabled"`
-	TurnstileSiteKey   string    `gorm:"type:text" json:"turnstile_site_key"`
-	TurnstileSecretKey string    `gorm:"type:text" json:"-"`
-	PasskeyEnabled     bool      `gorm:"not null;default:false" json:"passkey_enabled"`
-	CreatedAt          time.Time `json:"created_at"`
-	UpdatedAt          time.Time `json:"updated_at"`
+	ID                       uint      `gorm:"primaryKey" json:"id"`
+	TurnstileEnabled         bool      `gorm:"not null;default:false" json:"turnstile_enabled"`
+	TurnstileSiteKey         string    `gorm:"type:text" json:"turnstile_site_key"`
+	TurnstileSecretKey       string    `gorm:"type:text" json:"-"`
+	PasskeyEnabled           bool      `gorm:"not null;default:false" json:"passkey_enabled"`
+	RegistrationOpen         bool      `gorm:"not null;default:false" json:"registration_open"`
+	EmailRegistrationEnabled bool      `gorm:"not null;default:false" json:"email_registration_enabled"`
+	EmailVerificationMode    string    `gorm:"size:20;not null;default:internal" json:"email_verification_mode"`
+	InternalSenderPrefix     string    `gorm:"size:120;not null;default:no-reply" json:"internal_sender_prefix"`
+	SMTPHost                 string    `gorm:"type:text" json:"smtp_host"`
+	SMTPPort                 int       `gorm:"not null;default:0" json:"smtp_port"`
+	SMTPSecurity             string    `gorm:"size:20;not null;default:starttls" json:"smtp_security"`
+	SMTPUsername             string    `gorm:"type:text" json:"smtp_username"`
+	SMTPPassword             string    `gorm:"type:text" json:"-"`
+	SMTPFromName             string    `gorm:"type:text" json:"smtp_from_name"`
+	SMTPFromEmail            string    `gorm:"type:text" json:"smtp_from_email"`
+	CreatedAt                time.Time `json:"created_at"`
+	UpdatedAt                time.Time `json:"updated_at"`
 }

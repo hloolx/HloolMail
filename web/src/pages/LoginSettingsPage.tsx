@@ -1,12 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { createPortal } from 'react-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { AnimatePresence, motion } from 'framer-motion';
-import { CircleUserRound, Clipboard, ExternalLink, Github, Loader2, Pencil, Save, Shield, Fingerprint, X } from 'lucide-react';
+import { CircleUserRound, Clipboard, ExternalLink, Github, Loader2, Mail, Pencil, Save, Send, Shield, Fingerprint, UserPlus, X } from 'lucide-react';
 import { toast } from 'sonner';
-import { api, patchJSON } from '../api';
+import { api, patchJSON, postJSON } from '../api';
 import type { OAuthProvider, LoginSettings } from '../types';
-import { ConfirmModal, InfoTip, LoadingIndicator } from '../components/shared';
+import { ConfirmModal, DialogShell, InfoTip, LoadingIndicator } from '../components/shared';
 import { notifySuccess } from '../lib/feedback';
 import { useText } from '../locales';
 
@@ -15,6 +14,20 @@ type OAuthForm = {
   client_secret: string;
   redirect_url: string;
   enabled: boolean;
+};
+
+type RegistrationForm = {
+  registration_open: boolean;
+  email_registration_enabled: boolean;
+  email_verification_mode: 'internal' | 'smtp';
+  internal_sender_prefix: string;
+  smtp_host: string;
+  smtp_port: string;
+  smtp_security: 'none' | 'starttls' | 'tls';
+  smtp_username: string;
+  smtp_password: string;
+  smtp_from_name: string;
+  smtp_from_email: string;
 };
 
 export function LoginSettingsPage() {
@@ -33,6 +46,8 @@ export function LoginSettingsPage() {
   const [savingProvider, setSavingProvider] = useState<string | null>(null);
   const [pendingDiscard, setPendingDiscard] = useState<string | null>(null);
   const oauthSaveButtonRef = useRef<HTMLButtonElement | null>(null);
+  const oauthClientInputRef = useRef<HTMLInputElement | null>(null);
+  const registrationSaveButtonRef = useRef<HTMLButtonElement | null>(null);
   const turnstileSaveButtonRef = useRef<HTMLButtonElement | null>(null);
   const passkeyToggleButtonRef = useRef<HTMLButtonElement | null>(null);
   const loginSettingsFeedbackOriginRef = useRef<HTMLElement | null>(null);
@@ -100,6 +115,9 @@ export function LoginSettingsPage() {
   const [savingTurnstile, setSavingTurnstile] = useState(false);
   const [passkeyEnabled, setPasskeyEnabled] = useState(false);
   const [passkeyInitial, setPasskeyInitial] = useState(false);
+  const [registrationForm, setRegistrationForm] = useState<RegistrationForm>(emptyRegistrationForm());
+  const [registrationInitial, setRegistrationInitial] = useState<RegistrationForm>(emptyRegistrationForm());
+  const [testRecipient, setTestRecipient] = useState('');
 
   useEffect(() => {
     if (!loginSettings.data) return;
@@ -108,11 +126,15 @@ export function LoginSettingsPage() {
     setTurnstileInitial({ enabled: s.turnstile_enabled, site_key: s.turnstile_site_key || '', secret_key: '' });
     setPasskeyEnabled(s.passkey_enabled);
     setPasskeyInitial(s.passkey_enabled);
+    const nextRegistration = registrationFormFromSettings(s);
+    setRegistrationForm(nextRegistration);
+    setRegistrationInitial(nextRegistration);
   }, [loginSettings.data]);
 
   const saveLoginSettings = useMutation({
     mutationFn: (body: Record<string, unknown>) => patchJSON<LoginSettings>('/api/admin/login-settings', body),
-    onSuccess: () => {
+    onSuccess: (settings) => {
+      queryClient.setQueryData<LoginSettings>(['admin-login-settings'], settings);
       queryClient.invalidateQueries({ queryKey: ['admin-login-settings'] });
       setSavingTurnstile(false);
       notifySuccess(text.loginSettings.saved, { origin: loginSettingsFeedbackOriginRef.current });
@@ -121,6 +143,36 @@ export function LoginSettingsPage() {
     onError: (error) => {
       setSavingTurnstile(false);
       loginSettingsFeedbackOriginRef.current = null;
+      toast.error(error.message);
+    }
+  });
+
+  const saveRegistrationSettings = useMutation({
+    mutationFn: (form: RegistrationForm) => patchJSON<LoginSettings>('/api/admin/login-settings', registrationPayload(form)),
+    onSuccess: (settings) => {
+      queryClient.setQueryData<LoginSettings>(['admin-login-settings'], settings);
+      queryClient.invalidateQueries({ queryKey: ['admin-login-settings'] });
+      queryClient.invalidateQueries({ queryKey: ['login-settings'] });
+      const nextRegistration = registrationFormFromSettings(settings);
+      setRegistrationForm(nextRegistration);
+      setRegistrationInitial(nextRegistration);
+      notifySuccess(text.loginSettings.saved, { origin: registrationSaveButtonRef.current });
+    },
+    onError: (error) => {
+      toast.error(error.message);
+    }
+  });
+
+  const testEmail = useMutation({
+    mutationFn: () => {
+      const recipient = testRecipient.trim();
+      if (!recipient) throw new Error(text.loginSettings.testEmailRequired);
+      return postJSON('/api/admin/login-settings/test-email', { recipient });
+    },
+    onSuccess: () => {
+      notifySuccess(text.loginSettings.testEmailSent);
+    },
+    onError: (error) => {
       toast.error(error.message);
     }
   });
@@ -141,16 +193,32 @@ export function LoginSettingsPage() {
   };
 
   const handleTogglePasskey = () => {
+    if (saveLoginSettings.isPending) return;
+    const previous = passkeyEnabled;
     const next = !passkeyEnabled;
     setPasskeyEnabled(next);
     loginSettingsFeedbackOriginRef.current = passkeyToggleButtonRef.current;
-    saveLoginSettings.mutate({ passkey_enabled: next });
+    saveLoginSettings.mutate(
+      { passkey_enabled: next },
+      {
+        onSuccess: (settings) => {
+          setPasskeyEnabled(settings.passkey_enabled);
+          setPasskeyInitial(settings.passkey_enabled);
+        },
+        onError: () => {
+          setPasskeyEnabled(previous);
+        }
+      }
+    );
   };
 
   const hasTurnstileChanges =
     turnstileForm.enabled !== turnstileInitial.enabled ||
     turnstileForm.site_key.trim() !== turnstileInitial.site_key ||
     turnstileForm.secret_key.trim() !== '';
+
+  const turnstileReplacesTextCaptcha = turnstileForm.enabled;
+  const hasRegistrationChanges = registrationChanged(registrationForm, registrationInitial);
 
   // --- OAuth helpers ---
   const providerRows = useMemo(() => providers.data || [], [providers.data]);
@@ -190,31 +258,20 @@ export function LoginSettingsPage() {
 
   const editingProvider = providerRows.find((provider) => provider.provider === editing);
   const editingForm = editingProvider ? forms[editingProvider.provider] || formFromProvider(editingProvider) : null;
-  const oauthEditDialog = typeof document === 'undefined' ? null : createPortal(
-    <AnimatePresence>
-      {editingProvider && editingForm && (
-        <motion.div
-          className="modal-backdrop"
-          style={{ animation: 'none' }}
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          exit={{ opacity: 0 }}
-          transition={{ duration: 0.16 }}
-          onMouseDown={(event) => {
-            if (savingProvider === null && event.target === event.currentTarget) handleEditClick(editingProvider.provider);
-          }}
-        >
-          <motion.section
-            className="modal-panel admin-oauth-edit-modal"
-            style={{ animation: 'none' }}
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="admin-oauth-edit-title"
-            initial={{ opacity: 0, y: 10, scale: 0.97 }}
-            animate={{ opacity: 1, y: 0, scale: 1 }}
-            exit={{ opacity: 0, y: 10, scale: 0.97 }}
-            transition={{ duration: 0.18, ease: 'easeOut' }}
-          >
+  const closeOAuthEditor = () => {
+    if (!editingProvider || savingProvider !== null) return;
+    handleEditClick(editingProvider.provider);
+  };
+  const oauthEditDialog = editingProvider && editingForm ? (
+    <DialogShell
+      className="modal-panel admin-oauth-edit-modal"
+      titleId="admin-oauth-edit-title"
+      descriptionId="admin-oauth-edit-desc"
+      onClose={closeOAuthEditor}
+      closeOnBackdrop={savingProvider === null}
+      closeOnEscape={savingProvider === null}
+      initialFocusRef={oauthClientInputRef}
+    >
             <div className="modal-header">
               <div className="admin-oauth-edit-heading">
                 <span className={`admin-oauth-mark admin-oauth-mark-${editingProvider.provider}`}>
@@ -222,7 +279,7 @@ export function LoginSettingsPage() {
                 </span>
                 <div>
                   <h2 id="admin-oauth-edit-title">{editingProvider.name}</h2>
-                  <p>{editingProvider.auth_url}</p>
+                  <p id="admin-oauth-edit-desc">{editingProvider.auth_url}</p>
                 </div>
               </div>
               <button className="icon-btn" type="button" disabled={savingProvider !== null} onClick={() => handleEditClick(editingProvider.provider)} aria-label={text.common.close}>
@@ -239,7 +296,7 @@ export function LoginSettingsPage() {
             >
               <label className="user-form-field">
                 <span>{text.oauth.client_id}</span>
-                <input className="input" value={editingForm.client_id} onChange={(event) => setFormValue(editingProvider.provider, 'client_id', event.target.value)} placeholder="Iv1..." autoFocus />
+                <input ref={oauthClientInputRef} className="input" value={editingForm.client_id} onChange={(event) => setFormValue(editingProvider.provider, 'client_id', event.target.value)} placeholder="Iv1..." />
               </label>
               <label className="user-form-field">
                 <span>{text.oauth.client_secret}{editingProvider.client_secret && <InfoTip text={text.oauth.secret_hint} />}</span>
@@ -269,12 +326,8 @@ export function LoginSettingsPage() {
                 </button>
               </div>
             </form>
-          </motion.section>
-        </motion.div>
-      )}
-    </AnimatePresence>,
-    document.body
-  );
+    </DialogShell>
+  ) : null;
 
   return (
     <div className="admin-oauth-page grid gap-6">
@@ -371,7 +424,152 @@ export function LoginSettingsPage() {
         </div>
       </section>
 
-      {/* --- Section 2: Security Settings --- */}
+      {/* --- Section 2: Registration Settings --- */}
+      <section className="admin-settings-section">
+        <div className="admin-settings-section-header">
+          <h2>{text.loginSettings.registrationTitle}<InfoTip text={text.loginSettings.registrationDesc} /></h2>
+        </div>
+
+        {loginSettings.isLoading ? (
+          <div className="admin-oauth-state"><LoadingIndicator label={text.common.loading} size={18} /></div>
+        ) : loginSettings.isError ? (
+          <div className="admin-oauth-state"><span>{text.loginSettings.load_error}</span></div>
+        ) : (
+          <section className="panel admin-registration-panel">
+            <div className="panel-header admin-panel-header">
+              <div>
+                <h2 className="admin-oauth-provider-title">
+                  <span className="admin-oauth-mark">
+                    <UserPlus size={18} />
+                  </span>
+                  {text.loginSettings.registrationTitle}
+                </h2>
+              </div>
+              <span className={`severity-pill ${registrationForm.registration_open && registrationForm.email_registration_enabled ? 'severity-ok' : 'severity-warning'}`}>
+                {registrationForm.registration_open ? text.loginSettings.registrationOpen : text.loginSettings.registrationClosed}
+              </span>
+            </div>
+
+            <div className="login-config-fields">
+              <div className="toggle-row">
+                <span className="toggle-row-label">{text.loginSettings.registrationOpenLabel}</span>
+                <button
+                  type="button"
+                  className={`toggle-switch ${registrationForm.registration_open ? 'on' : ''}`}
+                  onClick={() => setRegistrationForm((form) => ({ ...form, registration_open: !form.registration_open }))}
+                  role="switch"
+                  aria-checked={registrationForm.registration_open}
+                >
+                  <span className="toggle-switch-knob" />
+                </button>
+              </div>
+              <div className="toggle-row">
+                <span className="toggle-row-label">{text.loginSettings.emailRegistrationLabel}</span>
+                <button
+                  type="button"
+                  className={`toggle-switch ${registrationForm.email_registration_enabled ? 'on' : ''}`}
+                  onClick={() => setRegistrationForm((form) => ({ ...form, email_registration_enabled: !form.email_registration_enabled }))}
+                  role="switch"
+                  aria-checked={registrationForm.email_registration_enabled}
+                >
+                  <span className="toggle-switch-knob" />
+                </button>
+              </div>
+            </div>
+
+            <div className="login-config-fields">
+              <div className="user-form-field">
+                <span>{text.loginSettings.emailVerificationMode}</span>
+                <div className="segmented-control segmented-control-compact" role="group" aria-label={text.loginSettings.emailVerificationMode}>
+                  <button
+                    type="button"
+                    className={`segment-choice ${registrationForm.email_verification_mode === 'internal' ? 'segment-choice-active' : ''}`}
+                    onClick={() => setRegistrationForm((form) => ({ ...form, email_verification_mode: 'internal' }))}
+                  >
+                    <Mail size={14} />{text.loginSettings.internalSender}
+                  </button>
+                  <button
+                    type="button"
+                    className={`segment-choice ${registrationForm.email_verification_mode === 'smtp' ? 'segment-choice-active' : ''}`}
+                    onClick={() => setRegistrationForm((form) => ({ ...form, email_verification_mode: 'smtp' }))}
+                  >
+                    <Send size={14} />{text.loginSettings.smtpSender}
+                  </button>
+                </div>
+                {turnstileReplacesTextCaptcha && (
+                  <p className="admin-registration-hint">{text.loginSettings.turnstileReplacesTextCaptcha}</p>
+                )}
+              </div>
+
+              {registrationForm.email_verification_mode === 'internal' ? (
+                <div className="admin-registration-grid">
+                  <label className="user-form-field">
+                    <span>{text.loginSettings.internalSenderPrefix}</span>
+                    <input className="input" value={registrationForm.internal_sender_prefix} onChange={(event) => setRegistrationForm((form) => ({ ...form, internal_sender_prefix: event.target.value }))} placeholder="noreply" />
+                  </label>
+                  <p className="field-hint admin-registration-hint">{text.loginSettings.internalSenderHint}</p>
+                </div>
+              ) : (
+                <div className="admin-registration-grid">
+                  <label className="user-form-field">
+                    <span>{text.loginSettings.smtpHost}</span>
+                    <input className="input" value={registrationForm.smtp_host} onChange={(event) => setRegistrationForm((form) => ({ ...form, smtp_host: event.target.value }))} placeholder="smtp.example.com" />
+                  </label>
+                  <label className="user-form-field">
+                    <span>{text.loginSettings.smtpPort}</span>
+                    <input className="input" value={registrationForm.smtp_port} onChange={(event) => setRegistrationForm((form) => ({ ...form, smtp_port: event.target.value }))} inputMode="numeric" placeholder="587" />
+                  </label>
+                  <label className="user-form-field">
+                    <span>{text.loginSettings.smtpSecurity}</span>
+                    <select className="input" value={registrationForm.smtp_security} onChange={(event) => setRegistrationForm((form) => ({ ...form, smtp_security: event.target.value as RegistrationForm['smtp_security'] }))}>
+                      <option value="none">{text.loginSettings.smtpSecurityNone}</option>
+                      <option value="starttls">{text.loginSettings.smtpSecurityStarttls}</option>
+                      <option value="tls">{text.loginSettings.smtpSecurityTls}</option>
+                    </select>
+                  </label>
+                  <label className="user-form-field">
+                    <span>{text.loginSettings.smtpUsername}</span>
+                    <input className="input" value={registrationForm.smtp_username} onChange={(event) => setRegistrationForm((form) => ({ ...form, smtp_username: event.target.value }))} autoComplete="username" />
+                  </label>
+                  <label className="user-form-field">
+                    <span>{text.loginSettings.smtpPassword}{registrationInitial.smtp_password && <InfoTip text={text.oauth.secret_hint} />}</span>
+                    <input className="input" value={registrationForm.smtp_password} onChange={(event) => setRegistrationForm((form) => ({ ...form, smtp_password: event.target.value }))} placeholder={registrationInitial.smtp_password ? '********' : ''} type="password" autoComplete="new-password" />
+                  </label>
+                  <label className="user-form-field">
+                    <span>{text.loginSettings.smtpFromName}</span>
+                    <input className="input" value={registrationForm.smtp_from_name} onChange={(event) => setRegistrationForm((form) => ({ ...form, smtp_from_name: event.target.value }))} />
+                  </label>
+                  <label className="user-form-field admin-oauth-wide">
+                    <span>{text.loginSettings.smtpFromEmail}</span>
+                    <input className="input" value={registrationForm.smtp_from_email} onChange={(event) => setRegistrationForm((form) => ({ ...form, smtp_from_email: event.target.value }))} type="email" />
+                  </label>
+                  <div className="admin-registration-test admin-oauth-wide">
+                    <label className="user-form-field">
+                      <span>{text.loginSettings.testRecipient}</span>
+                      <input className="input" value={testRecipient} onChange={(event) => setTestRecipient(event.target.value)} type="email" placeholder="you@example.com" />
+                    </label>
+                    <button className="btn-secondary" type="button" onClick={() => testEmail.mutate()} disabled={testEmail.isPending}>
+                      {testEmail.isPending ? <LoadingIndicator size={14} /> : <Send size={14} />}
+                      {text.loginSettings.testEmail}
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            <div className="admin-oauth-form-actions">
+              {hasRegistrationChanges && (
+                <button ref={registrationSaveButtonRef} className="btn-primary" type="button" onClick={() => saveRegistrationSettings.mutate(registrationForm)} disabled={saveRegistrationSettings.isPending}>
+                  {saveRegistrationSettings.isPending ? <Loader2 size={16} className="animate-spin" /> : <Save size={16} />}
+                  {text.loginSettings.save}
+                </button>
+              )}
+            </div>
+          </section>
+        )}
+      </section>
+
+      {/* --- Section 3: Security Settings --- */}
       <section className="admin-settings-section">
         <div className="admin-settings-section-header">
           <h2>{text.turnstile.title} / {text.passkey.title}</h2>
@@ -510,6 +708,70 @@ export function LoginSettingsPage() {
 
 function emptyForm(): OAuthForm {
   return { client_id: '', client_secret: '', redirect_url: '', enabled: false };
+}
+
+function emptyRegistrationForm(): RegistrationForm {
+  return {
+    registration_open: false,
+    email_registration_enabled: false,
+    email_verification_mode: 'internal',
+    internal_sender_prefix: '',
+    smtp_host: '',
+    smtp_port: '587',
+    smtp_security: 'starttls',
+    smtp_username: '',
+    smtp_password: '',
+    smtp_from_name: '',
+    smtp_from_email: ''
+  };
+}
+
+function registrationFormFromSettings(settings: LoginSettings): RegistrationForm {
+  return {
+    registration_open: !!settings.registration_open,
+    email_registration_enabled: !!settings.email_registration_enabled,
+    email_verification_mode: settings.email_verification_mode || 'internal',
+    internal_sender_prefix: settings.internal_sender_prefix || '',
+    smtp_host: settings.smtp_host || '',
+    smtp_port: String(settings.smtp_port || 587),
+    smtp_security: settings.smtp_security || 'starttls',
+    smtp_username: settings.smtp_username || '',
+    smtp_password: settings.smtp_password === '***' ? '***' : '',
+    smtp_from_name: settings.smtp_from_name || '',
+    smtp_from_email: settings.smtp_from_email || ''
+  };
+}
+
+function registrationPayload(form: RegistrationForm): Record<string, unknown> {
+  return {
+    registration_open: form.registration_open,
+    email_registration_enabled: form.email_registration_enabled,
+    email_verification_mode: form.email_verification_mode,
+    internal_sender_prefix: form.internal_sender_prefix.trim(),
+    smtp_host: form.smtp_host.trim(),
+    smtp_port: Number.parseInt(form.smtp_port, 10) || 0,
+    smtp_security: form.smtp_security,
+    smtp_username: form.smtp_username.trim(),
+    smtp_password: form.smtp_password.trim(),
+    smtp_from_name: form.smtp_from_name.trim(),
+    smtp_from_email: form.smtp_from_email.trim()
+  };
+}
+
+function registrationChanged(form: RegistrationForm, initial: RegistrationForm): boolean {
+  return (
+    form.registration_open !== initial.registration_open ||
+    form.email_registration_enabled !== initial.email_registration_enabled ||
+    form.email_verification_mode !== initial.email_verification_mode ||
+    form.internal_sender_prefix.trim() !== initial.internal_sender_prefix ||
+    form.smtp_host.trim() !== initial.smtp_host ||
+    form.smtp_port.trim() !== initial.smtp_port ||
+    form.smtp_security !== initial.smtp_security ||
+    form.smtp_username.trim() !== initial.smtp_username ||
+    form.smtp_password.trim() !== initial.smtp_password ||
+    form.smtp_from_name.trim() !== initial.smtp_from_name ||
+    form.smtp_from_email.trim() !== initial.smtp_from_email
+  );
 }
 
 function formFromProvider(provider: OAuthProvider): OAuthForm {

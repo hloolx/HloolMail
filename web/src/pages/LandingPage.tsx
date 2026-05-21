@@ -1,11 +1,11 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
-import type { FormEvent } from 'react';
+import type { FormEvent, KeyboardEvent } from 'react';
 import { useMutation, useQuery } from '@tanstack/react-query';
-import { ArrowRight, Bot, Check, CircleUserRound, Code2, Fingerprint, Github, Globe2, Inbox, KeyRound, LockKeyhole, MailCheck, MailPlus, Network, PackageCheck, Share2, ShieldCheck, Sparkles, Terminal, Users, Zap } from 'lucide-react';
+import { ArrowRight, Bot, Check, CircleUserRound, Code2, Fingerprint, Github, Globe2, Inbox, KeyRound, LockKeyhole, MailCheck, MailPlus, Network, PackageCheck, RefreshCcw, Share2, ShieldCheck, Sparkles, Terminal, Users, Zap } from 'lucide-react';
 import { toast } from 'sonner';
 import type { InstallStatus, User } from '../api';
 import { api, postJSON } from '../api';
-import type { OAuthProvider, PublicLoginSettings } from '../types';
+import type { OAuthProvider, PublicLoginSettings, RegisterCaptcha, RegisterResponse } from '../types';
 import { useText } from '../locales';
 import { useCountUp } from '../hooks/useCountUp';
 import { HeaderSettings } from '../components/layout/HeaderSettings';
@@ -43,10 +43,15 @@ export function LandingPage({ status, onDone }: { status?: InstallStatus; onDone
   const authPanelRef = useRef<HTMLElement>(null);
   const authSubmitRef = useRef<HTMLButtonElement>(null);
   const passkeySubmitRef = useRef<HTMLButtonElement>(null);
+  const loginTabRef = useRef<HTMLButtonElement>(null);
+  const registerTabRef = useRef<HTMLButtonElement>(null);
   const [mode, setMode] = useState<'login' | 'register'>('login');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
+  const [verification, setVerification] = useState<RegisterResponse | null>(null);
+  const [verificationCode, setVerificationCode] = useState('');
+  const [captchaAnswer, setCaptchaAnswer] = useState('');
   const oauthProviders = useQuery({
     queryKey: ['oauth-providers'],
     queryFn: () => api<OAuthProvider[]>('/api/oauth/providers'),
@@ -67,6 +72,23 @@ export function LandingPage({ status, onDone }: { status?: InstallStatus; onDone
   const turnstileEnabled = Boolean(loginSettings.data?.turnstile_enabled && loginSettings.data?.turnstile_site_key);
   const turnstileSiteKey = loginSettings.data?.turnstile_site_key || '';
   const passkeyEnabled = !!loginSettings.data?.passkey_enabled;
+  const emailRegistrationAvailable = loginSettings.data
+    ? loginSettings.data.registration_open !== false && loginSettings.data.email_registration_enabled !== false
+    : true;
+  const isRegister = mode === 'register';
+  const isVerificationStep = isRegister && verification !== null;
+  const captchaRequired = isRegister && !isVerificationStep && loginSettings.isSuccess && !turnstileEnabled;
+  const registerCaptcha = useQuery({
+    queryKey: ['register-captcha'],
+    queryFn: () => postJSON<RegisterCaptcha>('/api/auth/register/captcha', {}),
+    enabled: captchaRequired,
+    retry: false
+  });
+
+  const refreshCaptcha = useCallback(() => {
+    setCaptchaAnswer('');
+    void registerCaptcha.refetch();
+  }, [registerCaptcha]);
 
   const resetTurnstile = useCallback(() => {
     setTurnstileToken('');
@@ -78,6 +100,47 @@ export function LandingPage({ status, onDone }: { status?: InstallStatus; onDone
       }
     }
   }, []);
+
+  const selectAuthMode = useCallback((nextMode: 'login' | 'register') => {
+    if (nextMode === 'register' && !emailRegistrationAvailable) return;
+    setMode(nextMode);
+    setVerification(null);
+    setVerificationCode('');
+    resetTurnstile();
+  }, [emailRegistrationAvailable, resetTurnstile]);
+
+  const focusAuthTab = useCallback((nextMode: 'login' | 'register') => {
+    const ref = nextMode === 'login' ? loginTabRef : registerTabRef;
+    window.requestAnimationFrame(() => ref.current?.focus());
+  }, []);
+
+  const handleAuthTabKeyDown = useCallback((event: KeyboardEvent<HTMLDivElement>) => {
+    let nextMode: 'login' | 'register' | null = null;
+
+    if (event.key === 'ArrowRight' || event.key === 'ArrowDown') {
+      nextMode = mode === 'login' && emailRegistrationAvailable ? 'register' : 'login';
+    } else if (event.key === 'ArrowLeft' || event.key === 'ArrowUp') {
+      nextMode = mode === 'register' || !emailRegistrationAvailable ? 'login' : 'register';
+    } else if (event.key === 'Home') {
+      nextMode = 'login';
+    } else if (event.key === 'End') {
+      nextMode = 'register';
+    }
+
+    if (!nextMode) return;
+    event.preventDefault();
+    selectAuthMode(nextMode);
+    focusAuthTab(nextMode);
+  }, [emailRegistrationAvailable, focusAuthTab, mode, selectAuthMode]);
+
+  useEffect(() => {
+    if (!emailRegistrationAvailable && mode === 'register') {
+      setMode('login');
+      setVerification(null);
+      setVerificationCode('');
+      setCaptchaAnswer('');
+    }
+  }, [emailRegistrationAvailable, mode]);
 
   useEffect(() => {
     if (!turnstileEnabled) {
@@ -173,7 +236,11 @@ export function LandingPage({ status, onDone }: { status?: InstallStatus; onDone
   }, [turnstileEnabled, turnstileSiteKey]);
 
   const login = useMutation({
-    mutationFn: () => postJSON<User>('/api/auth/login', { email, password, turnstile_token: turnstileToken }),
+    mutationFn: () => {
+      const normalizedEmail = email.trim();
+      if (!normalizedEmail) throw new Error(text.login.emailRequired);
+      return postJSON<User>('/api/auth/login', { email: normalizedEmail, password, turnstile_token: turnstileToken });
+    },
     onSuccess: () => {
       notifySuccess(text.toast.loginDone, { origin: authSubmitRef.current });
       onDone();
@@ -185,20 +252,53 @@ export function LandingPage({ status, onDone }: { status?: InstallStatus; onDone
   });
   const register = useMutation({
     mutationFn: () => {
+      const normalizedEmail = email.trim();
+      if (!normalizedEmail) throw new Error(text.login.emailRequired);
       if (password.length < 8) {
         throw new Error(text.login.passwordTooShort || '密码至少 8 位');
       }
       if (password !== confirmPassword) {
         throw new Error(text.login.passwordMismatch);
       }
-      return postJSON<User>('/api/auth/register', { email, password, turnstile_token: turnstileToken });
+      if (!emailRegistrationAvailable) throw new Error(text.login.registrationUnavailable);
+      const body: Record<string, string> = { email: normalizedEmail, password };
+      if (turnstileEnabled) {
+        body.turnstile_token = turnstileToken;
+      } else {
+        const captchaId = registerCaptcha.data?.captcha_id;
+        const captchaAnswerValue = captchaAnswer.trim();
+        if (!captchaId) throw new Error(text.login.captchaLoadError);
+        if (!captchaAnswerValue) throw new Error(text.login.captchaAnswerRequired);
+        body.captcha_id = captchaId;
+        body.captcha_answer = captchaAnswerValue;
+      }
+      return postJSON<RegisterResponse>('/api/auth/register', body);
+    },
+    onSuccess: (response) => {
+      setVerification(response);
+      setVerificationCode('');
+      setCaptchaAnswer('');
+      resetTurnstile();
+      notifySuccess(text.login.verificationSent, { origin: authSubmitRef.current });
+    },
+    onError: (error) => {
+      resetTurnstile();
+      if (!turnstileEnabled) refreshCaptcha();
+      toast.error(error.message);
+    }
+  });
+  const verifyRegister = useMutation({
+    mutationFn: () => {
+      if (!verification?.verification_id) throw new Error(text.login.verificationMissing);
+      const code = verificationCode.trim();
+      if (!code) throw new Error(text.login.verificationCodeRequired);
+      return postJSON<User>('/api/auth/register/verify', { verification_id: verification.verification_id, code });
     },
     onSuccess: () => {
       notifySuccess(text.login.registerDone, { origin: authSubmitRef.current });
       onDone();
     },
     onError: (error) => {
-      resetTurnstile();
       toast.error(error.message);
     }
   });
@@ -213,10 +313,14 @@ export function LandingPage({ status, onDone }: { status?: InstallStatus; onDone
     },
     onError: (error) => toast.error(error.message),
   });
-  const isRegister = mode === 'register';
-  const pending = login.isPending || register.isPending || passkeyLogin.isPending;
+  const pending = login.isPending || register.isPending || verifyRegister.isPending || passkeyLogin.isPending;
+  const registerCaptchaBlocked = captchaRequired && (registerCaptcha.isLoading || !registerCaptcha.data?.captcha_id || !captchaAnswer.trim());
   const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
+    if (isVerificationStep) {
+      verifyRegister.mutate();
+      return;
+    }
     if (isRegister) {
       register.mutate();
       return;
@@ -254,10 +358,12 @@ export function LandingPage({ status, onDone }: { status?: InstallStatus; onDone
           <p>{text.login.homeSlogan}</p>
           <p className="landing-hero-desc">{text.login.homeDesc}</p>
           <div className="landing-actions">
-            <button className="btn-primary" type="button" onClick={() => { setMode('register'); authPanelRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }); }}>
-              <MailPlus size={16} />
-              {text.login.primaryAction}
-            </button>
+            {emailRegistrationAvailable && (
+              <button className="btn-primary" type="button" onClick={() => { selectAuthMode('register'); authPanelRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }); }}>
+                <MailPlus size={16} />
+                {text.login.primaryAction}
+              </button>
+            )}
             <a className="btn-secondary" href="#features">
               <ShieldCheck size={16} />
               {text.login.secondaryAction}
@@ -287,29 +393,43 @@ export function LandingPage({ status, onDone }: { status?: InstallStatus; onDone
         </section>
 
         <section id="auth-panel" ref={authPanelRef} className="auth-panel" aria-label={isRegister ? text.login.registerTitle : text.login.title}>
-          <div className="auth-tabs" role="tablist">
-            <button className={!isRegister ? 'auth-tab-active' : ''} type="button" role="tab" aria-selected={!isRegister} tabIndex={!isRegister ? 0 : -1} onClick={() => { setMode('login'); resetTurnstile(); }}>
+          <div className="auth-tabs" role="tablist" aria-orientation="horizontal" aria-label={text.login.title} onKeyDown={handleAuthTabKeyDown}>
+            <button ref={loginTabRef} className={!isRegister ? 'auth-tab-active' : ''} type="button" role="tab" aria-selected={!isRegister} tabIndex={!isRegister ? 0 : -1} onClick={() => selectAuthMode('login')}>
               {text.login.loginTab}
             </button>
-            <button className={isRegister ? 'auth-tab-active' : ''} type="button" role="tab" aria-selected={isRegister} tabIndex={isRegister ? 0 : -1} onClick={() => { setMode('register'); resetTurnstile(); }}>
-              {text.login.registerTab}
-            </button>
+            {emailRegistrationAvailable && (
+              <button ref={registerTabRef} className={isRegister ? 'auth-tab-active' : ''} type="button" role="tab" aria-selected={isRegister} tabIndex={isRegister ? 0 : -1} onClick={() => selectAuthMode('register')}>
+                {text.login.registerTab}
+              </button>
+            )}
           </div>
           <div className="auth-heading">
-            <h2>{isRegister ? text.login.registerTitle : text.login.title}</h2>
-            <p>{isRegister ? text.login.registerDesc : text.login.desc}</p>
+            <h2>{isVerificationStep ? text.login.verificationTitle : isRegister ? text.login.registerTitle : text.login.title}</h2>
+            <p>{isVerificationStep ? text.login.verificationDesc.replace('{email}', email.trim()) : isRegister ? text.login.registerDesc : text.login.desc}</p>
           </div>
           <form className="auth-form" onSubmit={submit}>
-            <label htmlFor="auth-email" className="sr-only">{text.login.email}</label>
-            <input id="auth-email" className="input" value={email} onChange={(event) => setEmail(event.target.value)} placeholder={text.login.email} type="email" autoComplete="email" />
-            <label htmlFor="auth-password" className="sr-only">{text.login.password}</label>
-            <input id="auth-password" className="input" value={password} onChange={(event) => setPassword(event.target.value)} placeholder={text.login.password} type="password" autoComplete={isRegister ? 'new-password' : 'current-password'} />
-            {isRegister && <InfoTip text={text.login.passwordHint} />}
-            <div className={`auth-confirm-wrapper${isRegister ? '' : ' auth-confirm-collapsed'}`}>
-              <label htmlFor="auth-confirm-password" className="sr-only">{text.login.confirmPassword}</label>
-              <input id="auth-confirm-password" className="input" value={confirmPassword} onChange={(event) => setConfirmPassword(event.target.value)} placeholder={text.login.confirmPassword} type="password" autoComplete="new-password" />
-            </div>
-            {turnstileEnabled && (
+            {isVerificationStep ? (
+              <>
+                <label htmlFor="auth-verification-code" className="sr-only">{text.login.verificationCode}</label>
+                <input id="auth-verification-code" className="input" value={verificationCode} onChange={(event) => setVerificationCode(event.target.value)} placeholder={text.login.verificationCode} inputMode="numeric" autoComplete="one-time-code" />
+                <button className="btn-secondary auth-submit" type="button" disabled={pending} onClick={() => selectAuthMode('register')}>
+                  {text.login.backToRegister}
+                </button>
+              </>
+            ) : (
+              <>
+                <label htmlFor="auth-email" className="sr-only">{text.login.email}</label>
+                <input id="auth-email" className="input" value={email} onChange={(event) => setEmail(event.target.value)} placeholder={text.login.email} type="email" autoComplete="email" />
+                <label htmlFor="auth-password" className="sr-only">{text.login.password}</label>
+                <input id="auth-password" className="input" value={password} onChange={(event) => setPassword(event.target.value)} placeholder={text.login.password} type="password" autoComplete={isRegister ? 'new-password' : 'current-password'} />
+                {isRegister && <InfoTip text={text.login.passwordHint} />}
+                <div className={`auth-confirm-wrapper${isRegister ? '' : ' auth-confirm-collapsed'}`}>
+                  <label htmlFor="auth-confirm-password" className="sr-only">{text.login.confirmPassword}</label>
+                  <input id="auth-confirm-password" className="input" value={confirmPassword} onChange={(event) => setConfirmPassword(event.target.value)} placeholder={text.login.confirmPassword} type="password" autoComplete="new-password" />
+                </div>
+              </>
+            )}
+            {!isVerificationStep && turnstileEnabled && (
               <>
                 <div ref={turnstileContainerRef} className="auth-turnstile-widget" />
                 {turnstileLoadError && (
@@ -319,11 +439,23 @@ export function LandingPage({ status, onDone }: { status?: InstallStatus; onDone
                 )}
               </>
             )}
-            <button ref={authSubmitRef} className="btn-primary auth-submit" type="submit" disabled={pending || (!!turnstileEnabled && !turnstileToken)}>
+            {captchaRequired && (
+              <div className="auth-captcha-box">
+                <div className="auth-captcha-challenge">
+                  <span>{registerCaptcha.isLoading ? text.login.captchaLoading : registerCaptcha.data?.challenge || text.login.captchaLoadError}</span>
+                  <button className="icon-button" type="button" onClick={refreshCaptcha} disabled={pending || registerCaptcha.isFetching} aria-label={text.login.captchaRefresh}>
+                    <RefreshCcw size={15} />
+                  </button>
+                </div>
+                <label htmlFor="auth-captcha-answer" className="sr-only">{text.login.captchaAnswer}</label>
+                <input id="auth-captcha-answer" className="input" value={captchaAnswer} onChange={(event) => setCaptchaAnswer(event.target.value)} placeholder={text.login.captchaAnswer} autoComplete="off" />
+              </div>
+            )}
+            <button ref={authSubmitRef} className="btn-primary auth-submit" type="submit" disabled={pending || (!isVerificationStep && !!turnstileEnabled && !turnstileToken) || registerCaptchaBlocked}>
               {pending ? (
-                <LoadingIndicator className="auth-submit-loading" label={isRegister ? text.login.registerPending : text.login.loginPending} />
+                <LoadingIndicator className="auth-submit-loading" label={isVerificationStep ? text.login.verificationPending : isRegister ? text.login.registerPending : text.login.loginPending} />
               ) : (
-                <>{isRegister ? text.login.registerSubmit : text.login.submit}<ArrowRight size={16} /></>
+                <>{isVerificationStep ? text.login.verificationSubmit : isRegister ? text.login.registerSubmit : text.login.submit}{isVerificationStep ? <MailCheck size={16} /> : <ArrowRight size={16} />}</>
               )}
             </button>
             {!isRegister && passkeyEnabled && (

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { AlertTriangle, Clock3, Plus, RefreshCw, Trash2, X } from 'lucide-react';
 import { toast } from 'sonner';
@@ -94,15 +94,7 @@ export function DomainManagementPage({ user }: { user: User }) {
   });
   const deleteWaitingDomain = useMutation({
     mutationFn: (domain: Domain) => api(`/api/domains/${domain.id}`, { method: 'DELETE' }),
-    onSuccess: () => {
-      setConfirmDeleteId(null);
-      invalidateDomainQueries(queryClient);
-      queryClient.invalidateQueries({ queryKey: ['admin-stats'] });
-      queryClient.invalidateQueries({ queryKey: ['admin-domain-health'] });
-      notifySuccess(text.domains.domainDeleted, { burst: false });
-    },
     onError: (error) => {
-      setConfirmDeleteId(null);
       toast.error(error.message);
     }
   });
@@ -120,12 +112,6 @@ export function DomainManagementPage({ user }: { user: User }) {
       toast.error(error.message);
     }
   });
-
-  // Reset delete confirmation when data reloads (e.g. after another delete)
-  useEffect(() => {
-    setConfirmDeleteId(null);
-  }, [domains.dataUpdatedAt]);
-
   return (
     <>
       <section className="panel">
@@ -162,19 +148,22 @@ export function DomainManagementPage({ user }: { user: User }) {
             ]}
             rows={managedDomains.map((domain) => {
               const canEdit = user.role === 'admin' || domain.owner_id === user.id;
+              const modeBusy = updateDomain.isPending;
               return {
                 key: domain.id,
                 cells: [
                   <span className="domain-name-cell font-medium" style={{ display: 'inline-block', maxWidth: '100%' }}>{domain.domain}</span>,
                   domainHealthBadge(domain, text),
                   <div className="segmented-control">
-                    <button type="button" className={`segment-choice ${domain.mode === 'private' ? 'segment-choice-active' : ''}`} style={{ fontSize: '0.75rem' }} disabled={!canEdit} onClick={(event) => {
+                    <button type="button" className={`segment-choice ${domain.mode === 'private' ? 'segment-choice-active' : ''}`} style={{ fontSize: '0.75rem' }} disabled={!canEdit || modeBusy} onClick={(event) => {
+                      if (domain.mode === 'private' || modeBusy) return;
                       feedbackOriginRef.current = event.currentTarget;
                       updateDomain.mutate({ id: domain.id, mode: 'private' });
                     }}>
                       {text.domains.modePrivate}
                     </button>
-                    <button type="button" className={`segment-choice ${domain.mode === 'public' ? 'segment-choice-active' : ''}`} style={{ fontSize: '0.75rem' }} disabled={!canEdit} onClick={(event) => {
+                    <button type="button" className={`segment-choice ${domain.mode === 'public' ? 'segment-choice-active' : ''}`} style={{ fontSize: '0.75rem' }} disabled={!canEdit || modeBusy} onClick={(event) => {
+                      if (domain.mode === 'public' || modeBusy) return;
                       feedbackOriginRef.current = event.currentTarget;
                       updateDomain.mutate({ id: domain.id, mode: 'public' });
                     }}>
@@ -239,8 +228,17 @@ export function DomainManagementPage({ user }: { user: User }) {
                         </button>
                         <button className="btn-ghost" aria-label={text.domains.deleteConfirm} onClick={async (e) => {
                           const row = (e.currentTarget as HTMLElement).closest('tr') as HTMLElement | null;
-                          await runDeleteEffect(row);
-                          deleteWaitingDomain.mutate(domain);
+                          try {
+                            await deleteWaitingDomain.mutateAsync(domain);
+                            await runDeleteEffect(row);
+                            setConfirmDeleteId(null);
+                            invalidateDomainQueries(queryClient);
+                            queryClient.invalidateQueries({ queryKey: ['admin-stats'] });
+                            queryClient.invalidateQueries({ queryKey: ['admin-domain-health'] });
+                            notifySuccess(text.domains.domainDeleted, { burst: false });
+                          } catch {
+                            // Error toast is handled by the mutation.
+                          }
                         }} disabled={deleteWaitingDomain.isPending}>
                           <Trash2 size={14} />
                           {text.domains.deleteConfirm}

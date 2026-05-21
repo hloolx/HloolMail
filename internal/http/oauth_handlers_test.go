@@ -18,16 +18,18 @@ func TestBindOAuthIdentityCreatesSingleProviderBinding(t *testing.T) {
 		t.Fatal(err)
 	}
 	user := models.User{
-		Email:        "user@example.com",
-		PasswordHash: hash,
-		Role:         models.UserRoleUser,
-		Enabled:      true,
+		Email:         "user@example.com",
+		PasswordHash:  hash,
+		EmailVerified: true,
+		Role:          models.UserRoleUser,
+		Enabled:       true,
 	}
 	admin := models.User{
-		Email:        "admin@example.com",
-		PasswordHash: hash,
-		Role:         models.UserRoleAdmin,
-		Enabled:      true,
+		Email:         "admin@example.com",
+		PasswordHash:  hash,
+		EmailVerified: true,
+		Role:          models.UserRoleAdmin,
+		Enabled:       true,
 	}
 	if err := db.Create(&admin).Error; err != nil {
 		t.Fatal(err)
@@ -71,16 +73,18 @@ func TestUserOAuthIdentityEndpointsListAndUnbind(t *testing.T) {
 		t.Fatal(err)
 	}
 	user := models.User{
-		Email:        "user@example.com",
-		PasswordHash: hash,
-		Role:         models.UserRoleUser,
-		Enabled:      true,
+		Email:         "user@example.com",
+		PasswordHash:  hash,
+		EmailVerified: true,
+		Role:          models.UserRoleUser,
+		Enabled:       true,
 	}
 	admin := models.User{
-		Email:        "admin@example.com",
-		PasswordHash: hash,
-		Role:         models.UserRoleAdmin,
-		Enabled:      true,
+		Email:         "admin@example.com",
+		PasswordHash:  hash,
+		EmailVerified: true,
+		Role:          models.UserRoleAdmin,
+		Enabled:       true,
 	}
 	if err := db.Create(&admin).Error; err != nil {
 		t.Fatal(err)
@@ -146,16 +150,18 @@ func TestBindOAuthIdentityRejectsIdentityBoundToAnotherUser(t *testing.T) {
 		t.Fatal(err)
 	}
 	first := models.User{
-		Email:        "first@example.com",
-		PasswordHash: hash,
-		Role:         models.UserRoleUser,
-		Enabled:      true,
+		Email:         "first@example.com",
+		PasswordHash:  hash,
+		EmailVerified: true,
+		Role:          models.UserRoleUser,
+		Enabled:       true,
 	}
 	second := models.User{
-		Email:        "second@example.com",
-		PasswordHash: hash,
-		Role:         models.UserRoleUser,
-		Enabled:      true,
+		Email:         "second@example.com",
+		PasswordHash:  hash,
+		EmailVerified: true,
+		Role:          models.UserRoleUser,
+		Enabled:       true,
 	}
 	if err := db.Create(&first).Error; err != nil {
 		t.Fatal(err)
@@ -178,5 +184,216 @@ func TestBindOAuthIdentityRejectsIdentityBoundToAnotherUser(t *testing.T) {
 	}, oauthToken{})
 	if err == nil || !strings.Contains(err.Error(), "already bound to another user") {
 		t.Fatalf("expected cross-user bind error, got %v", err)
+	}
+}
+
+func TestBindOAuthIdentityMarksCurrentUserEmailVerified(t *testing.T) {
+	db := httpTestDB(t)
+	hash, err := auth.HashSecret("password123")
+	if err != nil {
+		t.Fatal(err)
+	}
+	user := models.User{
+		Email:        "bind-me@example.com",
+		PasswordHash: hash,
+		Role:         models.UserRoleUser,
+		Enabled:      true,
+	}
+	if err := db.Create(&user).Error; err != nil {
+		t.Fatal(err)
+	}
+	handler := &Handler{DB: db}
+
+	boundUser, err := handler.bindOAuthIdentity(user.ID, oauthProviderGitHub, OAuthUserInfo{
+		ProviderUID: "github-bind-me",
+		Email:       "bind-me@example.com",
+	}, oauthToken{})
+	if err != nil {
+		t.Fatalf("bind identity: %v", err)
+	}
+	if !boundUser.EmailVerified {
+		t.Fatal("bound user should be marked email verified")
+	}
+
+	var reloaded models.User
+	if err := db.First(&reloaded, user.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if !reloaded.EmailVerified {
+		t.Fatal("stored user should be marked email verified")
+	}
+}
+
+func TestLoginOAuthUserRejectsUnverifiedEmailMatch(t *testing.T) {
+	db := httpTestDB(t)
+	hash, err := auth.HashSecret("password123")
+	if err != nil {
+		t.Fatal(err)
+	}
+	user := models.User{
+		Email:        "claimed@example.com",
+		PasswordHash: hash,
+		Role:         models.UserRoleUser,
+		Enabled:      true,
+	}
+	if err := db.Create(&user).Error; err != nil {
+		t.Fatal(err)
+	}
+	handler := &Handler{DB: db}
+
+	_, _, err = handler.loginOAuthUser(oauthProviderGitHub, OAuthUserInfo{
+		ProviderUID: "github-claimed",
+		Email:       "claimed@example.com",
+	}, oauthToken{})
+	if err == nil || !strings.Contains(err.Error(), "unverified local account") {
+		t.Fatalf("expected unverified local account error, got %v", err)
+	}
+
+	var identityCount int64
+	db.Model(&models.OAuthIdentity{}).Where("user_id = ?", user.ID).Count(&identityCount)
+	if identityCount != 0 {
+		t.Fatalf("identity count = %d, want 0", identityCount)
+	}
+	var reloaded models.User
+	if err := db.First(&reloaded, user.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if reloaded.EmailVerified {
+		t.Fatal("unverified local account was marked verified")
+	}
+}
+
+func TestLoginOAuthUserRejectsNewUserWhenRegistrationClosed(t *testing.T) {
+	db := httpTestDB(t)
+	if err := db.Create(&models.LoginSettings{
+		ID:                       1,
+		RegistrationOpen:         false,
+		EmailRegistrationEnabled: true,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	handler := &Handler{DB: db}
+
+	_, isNew, err := handler.loginOAuthUser(oauthProviderGitHub, OAuthUserInfo{
+		ProviderUID: "github-new-closed",
+		Email:       "new-closed@example.com",
+	}, oauthToken{})
+	if err == nil || !strings.Contains(err.Error(), "registration is disabled") {
+		t.Fatalf("expected registration disabled error, got %v", err)
+	}
+	if isNew {
+		t.Fatal("closed registration should not report a new OAuth user")
+	}
+
+	var userCount int64
+	db.Model(&models.User{}).Where("email = ?", "new-closed@example.com").Count(&userCount)
+	if userCount != 0 {
+		t.Fatalf("user count = %d, want 0", userCount)
+	}
+	var identityCount int64
+	db.Model(&models.OAuthIdentity{}).Where("provider = ? AND provider_uid = ?", oauthProviderGitHub, "github-new-closed").Count(&identityCount)
+	if identityCount != 0 {
+		t.Fatalf("identity count = %d, want 0", identityCount)
+	}
+}
+
+func TestLoginOAuthUserAllowsExistingIdentityWhenRegistrationClosed(t *testing.T) {
+	db := httpTestDB(t)
+	if err := db.Create(&models.LoginSettings{
+		ID:                       1,
+		RegistrationOpen:         false,
+		EmailRegistrationEnabled: false,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	hash, err := auth.HashSecret("password123")
+	if err != nil {
+		t.Fatal(err)
+	}
+	user := models.User{
+		Email:         "bound@example.com",
+		PasswordHash:  hash,
+		EmailVerified: true,
+		Role:          models.UserRoleUser,
+		Enabled:       true,
+	}
+	if err := db.Create(&user).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&models.OAuthIdentity{
+		UserID:      user.ID,
+		Provider:    oauthProviderGitHub,
+		ProviderUID: "github-bound",
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	handler := &Handler{DB: db}
+
+	loggedIn, isNew, err := handler.loginOAuthUser(oauthProviderGitHub, OAuthUserInfo{
+		ProviderUID: "github-bound",
+		Email:       "bound@example.com",
+		AvatarURL:   "https://example.com/bound.png",
+	}, oauthToken{})
+	if err != nil {
+		t.Fatalf("login oauth user: %v", err)
+	}
+	if isNew {
+		t.Fatal("existing OAuth identity should not create a new user")
+	}
+	if loggedIn.ID != user.ID {
+		t.Fatalf("logged in user id = %d, want %d", loggedIn.ID, user.ID)
+	}
+
+	var identityCount int64
+	db.Model(&models.OAuthIdentity{}).Where("user_id = ? AND provider = ?", user.ID, oauthProviderGitHub).Count(&identityCount)
+	if identityCount != 1 {
+		t.Fatalf("identity count = %d, want 1", identityCount)
+	}
+}
+
+func TestLoginOAuthUserMergesVerifiedEmailMatch(t *testing.T) {
+	db := httpTestDB(t)
+	if err := db.Create(&models.LoginSettings{
+		ID:                       1,
+		RegistrationOpen:         false,
+		EmailRegistrationEnabled: false,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	hash, err := auth.HashSecret("password123")
+	if err != nil {
+		t.Fatal(err)
+	}
+	user := models.User{
+		Email:         "verified@example.com",
+		PasswordHash:  hash,
+		EmailVerified: true,
+		Role:          models.UserRoleUser,
+		Enabled:       true,
+	}
+	if err := db.Create(&user).Error; err != nil {
+		t.Fatal(err)
+	}
+	handler := &Handler{DB: db}
+
+	merged, isNew, err := handler.loginOAuthUser(oauthProviderGitHub, OAuthUserInfo{
+		ProviderUID: "github-verified",
+		Email:       "verified@example.com",
+		AvatarURL:   "https://example.com/verified.png",
+	}, oauthToken{})
+	if err != nil {
+		t.Fatalf("login oauth user: %v", err)
+	}
+	if isNew {
+		t.Fatal("verified email match should merge existing account when registration is closed")
+	}
+	if merged.ID != user.ID {
+		t.Fatalf("merged user id = %d, want %d", merged.ID, user.ID)
+	}
+
+	var identityCount int64
+	db.Model(&models.OAuthIdentity{}).Where("user_id = ? AND provider = ?", user.ID, oauthProviderGitHub).Count(&identityCount)
+	if identityCount != 1 {
+		t.Fatalf("identity count = %d, want 1", identityCount)
 	}
 }

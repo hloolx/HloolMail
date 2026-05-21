@@ -11,6 +11,7 @@ import (
 
 	"gptmail/internal/db"
 	"gptmail/internal/jobs"
+	"gptmail/internal/mailer"
 	"gptmail/internal/models"
 
 	"github.com/gin-gonic/gin"
@@ -747,10 +748,21 @@ func (h *Handler) patchAdminLoginSettings(c *gin.Context) {
 		return
 	}
 	var input struct {
-		TurnstileEnabled   *bool   `json:"turnstile_enabled"`
-		TurnstileSiteKey   *string `json:"turnstile_site_key"`
-		TurnstileSecretKey *string `json:"turnstile_secret_key"`
-		PasskeyEnabled     *bool   `json:"passkey_enabled"`
+		TurnstileEnabled         *bool   `json:"turnstile_enabled"`
+		TurnstileSiteKey         *string `json:"turnstile_site_key"`
+		TurnstileSecretKey       *string `json:"turnstile_secret_key"`
+		PasskeyEnabled           *bool   `json:"passkey_enabled"`
+		RegistrationOpen         *bool   `json:"registration_open"`
+		EmailRegistrationEnabled *bool   `json:"email_registration_enabled"`
+		EmailVerificationMode    *string `json:"email_verification_mode"`
+		InternalSenderPrefix     *string `json:"internal_sender_prefix"`
+		SMTPHost                 *string `json:"smtp_host"`
+		SMTPPort                 *int    `json:"smtp_port"`
+		SMTPSecurity             *string `json:"smtp_security"`
+		SMTPUsername             *string `json:"smtp_username"`
+		SMTPPassword             *string `json:"smtp_password"`
+		SMTPFromName             *string `json:"smtp_from_name"`
+		SMTPFromEmail            *string `json:"smtp_from_email"`
 	}
 	if err := c.ShouldBindJSON(&input); err != nil {
 		fail(c, http.StatusBadRequest, "invalid json")
@@ -770,8 +782,47 @@ func (h *Handler) patchAdminLoginSettings(c *gin.Context) {
 	if input.PasskeyEnabled != nil {
 		settings.PasskeyEnabled = *input.PasskeyEnabled
 	}
+	if input.RegistrationOpen != nil {
+		settings.RegistrationOpen = *input.RegistrationOpen
+	}
+	if input.EmailRegistrationEnabled != nil {
+		settings.EmailRegistrationEnabled = *input.EmailRegistrationEnabled
+	}
+	if input.EmailVerificationMode != nil {
+		settings.EmailVerificationMode = strings.ToLower(strings.TrimSpace(*input.EmailVerificationMode))
+	}
+	if input.InternalSenderPrefix != nil {
+		settings.InternalSenderPrefix = strings.TrimSpace(*input.InternalSenderPrefix)
+	}
+	if input.SMTPHost != nil {
+		settings.SMTPHost = strings.TrimSpace(*input.SMTPHost)
+	}
+	if input.SMTPPort != nil {
+		settings.SMTPPort = *input.SMTPPort
+	}
+	if input.SMTPSecurity != nil {
+		settings.SMTPSecurity = strings.ToLower(strings.TrimSpace(*input.SMTPSecurity))
+	}
+	if input.SMTPUsername != nil {
+		settings.SMTPUsername = strings.TrimSpace(*input.SMTPUsername)
+	}
+	if input.SMTPPassword != nil {
+		if *input.SMTPPassword != "***" {
+			settings.SMTPPassword = strings.TrimSpace(*input.SMTPPassword)
+		}
+	}
+	if input.SMTPFromName != nil {
+		settings.SMTPFromName = strings.TrimSpace(*input.SMTPFromName)
+	}
+	if input.SMTPFromEmail != nil {
+		settings.SMTPFromEmail = strings.TrimSpace(*input.SMTPFromEmail)
+	}
 	if settings.TurnstileEnabled && (settings.TurnstileSiteKey == "" || settings.TurnstileSecretKey == "") {
 		fail(c, http.StatusBadRequest, "turnstile site key and secret key are required when turnstile is enabled")
+		return
+	}
+	if err := validateLoginEmailSettings(settings); err != nil {
+		fail(c, http.StatusBadRequest, err.Error())
 		return
 	}
 	if err := h.DB.Save(settings).Error; err != nil {
@@ -782,17 +833,117 @@ func (h *Handler) patchAdminLoginSettings(c *gin.Context) {
 	ok(c, loginSettingsDTO(settings))
 }
 
+func (h *Handler) testAdminLoginSettingsEmail(c *gin.Context) {
+	if !h.requireAdmin(c) {
+		return
+	}
+	var input struct {
+		Recipient string `json:"recipient"`
+	}
+	if err := c.ShouldBindJSON(&input); err != nil {
+		fail(c, http.StatusBadRequest, "invalid json")
+		return
+	}
+	recipient := strings.ToLower(strings.TrimSpace(input.Recipient))
+	if !strings.Contains(recipient, "@") {
+		fail(c, http.StatusBadRequest, "valid recipient is required")
+		return
+	}
+	settings, err := db.EnsureLoginSettings(h.DB)
+	if err != nil {
+		fail(c, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if err := validateLoginEmailSendSettings(settings); err != nil {
+		fail(c, http.StatusBadRequest, err.Error())
+		return
+	}
+	err = h.mailSender().Send(c.Request.Context(), mailerSettingsFromLoginSettings(h.Config, settings), mailer.Message{
+		To:      recipient,
+		Subject: "HloolMail test email",
+		Text:    "This is a test email from HloolMail.",
+		HTML:    "<p>This is a test email from HloolMail.</p>",
+	})
+	if err != nil {
+		fail(c, http.StatusBadGateway, err.Error())
+		return
+	}
+	h.audit("login_settings.test_email", actor(c), "login-settings", recipient)
+	ok(c, gin.H{"sent": true})
+}
+
+func validateLoginEmailSettings(settings *models.LoginSettings) error {
+	return validateLoginEmailSettingsForUse(settings)
+}
+
+func validateLoginEmailSendSettings(settings *models.LoginSettings) error {
+	return validateLoginEmailSettingsForUse(settings)
+}
+
+func validateLoginEmailSettingsForUse(settings *models.LoginSettings) error {
+	mode := strings.ToLower(strings.TrimSpace(settings.EmailVerificationMode))
+	if mode == "" {
+		settings.EmailVerificationMode = models.EmailVerificationModeInternal
+		mode = settings.EmailVerificationMode
+	}
+	switch mode {
+	case models.EmailVerificationModeInternal, models.EmailVerificationModeSMTP:
+	default:
+		return errors.New("email_verification_mode must be internal or smtp")
+	}
+	if strings.TrimSpace(settings.InternalSenderPrefix) == "" {
+		settings.InternalSenderPrefix = "no-reply"
+	}
+	security := strings.ToLower(strings.TrimSpace(settings.SMTPSecurity))
+	if security == "" {
+		settings.SMTPSecurity = models.SMTPSecuritySTARTTLS
+		security = settings.SMTPSecurity
+	}
+	switch security {
+	case models.SMTPSecurityNone, models.SMTPSecuritySTARTTLS, models.SMTPSecurityTLS:
+	default:
+		return errors.New("smtp_security must be none, starttls, or tls")
+	}
+	if settings.SMTPPort < 0 || settings.SMTPPort > 65535 {
+		return errors.New("smtp_port must be between 0 and 65535")
+	}
+	if mode == models.EmailVerificationModeSMTP {
+		if strings.TrimSpace(settings.SMTPHost) == "" {
+			return errors.New("smtp_host is required when email_verification_mode is smtp")
+		}
+		if !strings.Contains(strings.TrimSpace(settings.SMTPFromEmail), "@") {
+			return errors.New("smtp_from_email is required when email_verification_mode is smtp")
+		}
+	}
+	return nil
+}
+
 func loginSettingsDTO(settings *models.LoginSettings) gin.H {
 	secretKey := ""
 	if settings.TurnstileSecretKey != "" {
 		secretKey = "***"
 	}
+	smtpPassword := ""
+	if settings.SMTPPassword != "" {
+		smtpPassword = "***"
+	}
 	return gin.H{
-		"id":                   settings.ID,
-		"turnstile_enabled":    settings.TurnstileEnabled,
-		"turnstile_site_key":   settings.TurnstileSiteKey,
-		"turnstile_secret_key": secretKey,
-		"passkey_enabled":      settings.PasskeyEnabled,
-		"updated_at":           settings.UpdatedAt,
+		"id":                         settings.ID,
+		"turnstile_enabled":          settings.TurnstileEnabled,
+		"turnstile_site_key":         settings.TurnstileSiteKey,
+		"turnstile_secret_key":       secretKey,
+		"passkey_enabled":            settings.PasskeyEnabled,
+		"registration_open":          settings.RegistrationOpen,
+		"email_registration_enabled": settings.EmailRegistrationEnabled,
+		"email_verification_mode":    settings.EmailVerificationMode,
+		"internal_sender_prefix":     settings.InternalSenderPrefix,
+		"smtp_host":                  settings.SMTPHost,
+		"smtp_port":                  settings.SMTPPort,
+		"smtp_security":              settings.SMTPSecurity,
+		"smtp_username":              settings.SMTPUsername,
+		"smtp_password":              smtpPassword,
+		"smtp_from_name":             settings.SMTPFromName,
+		"smtp_from_email":            settings.SMTPFromEmail,
+		"updated_at":                 settings.UpdatedAt,
 	}
 }

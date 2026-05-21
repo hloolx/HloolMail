@@ -78,6 +78,33 @@
   line-height: 1.45;
 }
 
+.auth-captcha-box {
+  display: grid;
+  gap: 0.5rem;
+}
+
+.auth-captcha-challenge {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 2.25rem;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.auth-captcha-challenge span {
+  min-height: 2.4rem;
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid var(--border);
+  border-radius: 0.65rem;
+  background: color-mix(in srgb, var(--soft) 70%, var(--background));
+  color: var(--foreground);
+  padding: 0.45rem 0.65rem;
+  font-size: 0.86rem;
+  font-weight: 780;
+  line-height: 1.25;
+  overflow-wrap: anywhere;
+}
+
 .oauth-login-box {
   display: grid;
   gap: 0.65rem;

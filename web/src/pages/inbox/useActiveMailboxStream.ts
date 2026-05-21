@@ -69,10 +69,13 @@ export function useActiveMailboxStream({ email, onMessage }: ActiveMailboxStream
       } catch (error) {
         if (controller.signal.aborted) return;
         const now = Date.now();
-        if (now - sseErrorCooldownRef.current < 30000) return;
-        sseErrorCooldownRef.current = now;
-        toast.error(error instanceof Error ? error.message : String(error));
-        reconnectTimer = setTimeout(() => setSseGen((g) => g + 1), 5000);
+        const elapsed = now - sseErrorCooldownRef.current;
+        if (elapsed >= 30000) {
+          sseErrorCooldownRef.current = now;
+          toast.error(error instanceof Error ? error.message : String(error));
+        }
+        const cooldownDelay = elapsed >= 30000 ? 5000 : Math.max(5000, 30000 - elapsed);
+        reconnectTimer = setTimeout(() => setSseGen((g) => g + 1), cooldownDelay);
       }
     })();
     return () => {

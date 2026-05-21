@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Activity, AlertTriangle, Globe2, Inbox, MailPlus } from 'lucide-react';
 import type { AppNotification, DomainAvailability, PublicDomainItem, User } from '../api';
@@ -46,6 +46,10 @@ export function Dashboard({ user }: { user: User }) {
   );
   const totalPages = Math.max(1, Math.ceil(publicDomains.length / pageSize));
   const pagedDomains = publicDomains.slice((domainPage - 1) * pageSize, domainPage * pageSize);
+
+  useEffect(() => {
+    if (domainPage > totalPages) setDomainPage(totalPages);
+  }, [domainPage, totalPages]);
 
   const domainColumns: DataTableColumn[] = [
     { key: 'domain', header: text.dashboard.tableDomain, minWidth: '14rem' },

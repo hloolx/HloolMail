@@ -23,9 +23,209 @@
   width: 100%;
 }
 
+.inbox-domain-select {
+  position: relative;
+  width: 100%;
+}
+
+.inbox-domain-trigger {
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  height: 2.35rem;
+  align-items: center;
+  gap: 0.55rem;
+  border: 1px solid var(--border);
+  border-radius: 0.55rem;
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--panel) 98%, var(--soft)), var(--panel));
+  color: var(--foreground);
+  padding: 0 0.65rem;
+  text-align: left;
+  outline: none;
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--background) 82%, transparent);
+  transition: border-color 160ms ease, box-shadow 160ms ease, transform 160ms ease;
+}
+
+.inbox-domain-trigger:hover,
+.inbox-domain-trigger-open {
+  border-color: color-mix(in srgb, var(--focus) 42%, var(--border));
+}
+
+.inbox-domain-trigger:focus-visible {
+  border-color: var(--foreground);
+  box-shadow: 0 0 0 3px var(--focus-soft);
+}
+
+.inbox-domain-trigger-open {
+  box-shadow:
+    0 0 0 3px var(--focus-soft),
+    inset 0 1px 0 color-mix(in srgb, var(--background) 82%, transparent);
+}
+
+.inbox-domain-trigger-copy,
+.inbox-domain-option-copy {
+  display: flex;
+  min-width: 0;
+  flex: 1 1 auto;
+  align-items: center;
+  gap: 0.45rem;
+}
+
+.inbox-domain-name {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--foreground);
+  font-size: 0.85rem;
+  font-weight: 650;
+  line-height: 1.2;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.inbox-domain-pill {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  border: 1px solid color-mix(in srgb, var(--border) 80%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--soft) 72%, var(--panel));
+  color: color-mix(in srgb, var(--muted) 82%, var(--foreground));
+  padding: 0.08rem 0.4rem;
+  font-size: 0.66rem;
+  font-weight: 760;
+  line-height: 1.15;
+  white-space: nowrap;
+}
+
+.inbox-domain-pill-public {
+  border-color: color-mix(in srgb, var(--good) 24%, var(--border));
+  background: color-mix(in srgb, var(--good) 8%, var(--panel));
+  color: color-mix(in srgb, var(--good) 82%, var(--foreground));
+}
+
+.inbox-domain-pill-private {
+  border-color: color-mix(in srgb, var(--focus) 30%, var(--border));
+  background: color-mix(in srgb, var(--focus) 10%, var(--panel));
+  color: color-mix(in srgb, var(--focus) 78%, var(--foreground));
+}
+
+.inbox-domain-icon {
+  display: block;
+  width: 1.55rem;
+  height: 1.55rem;
+  flex: 0 0 auto;
+  border: 1px solid color-mix(in srgb, var(--border) 76%, transparent);
+  border-radius: 0.5rem;
+  padding: 0.28rem;
+  background: color-mix(in srgb, var(--soft) 72%, var(--panel));
+  color: var(--muted);
+}
+
+.inbox-domain-icon-random {
+  border-color: color-mix(in srgb, var(--primary) 24%, var(--border));
+  background: color-mix(in srgb, var(--primary) 8%, var(--panel));
+  color: var(--primary);
+}
+
+.inbox-domain-icon-public {
+  border-color: color-mix(in srgb, var(--good) 24%, var(--border));
+  background: color-mix(in srgb, var(--good) 8%, var(--panel));
+  color: var(--good);
+}
+
+.inbox-domain-icon-private {
+  border-color: color-mix(in srgb, var(--focus) 28%, var(--border));
+  background: color-mix(in srgb, var(--focus) 10%, var(--panel));
+  color: var(--focus);
+}
+
+.inbox-domain-chevron {
+  flex: 0 0 auto;
+  color: var(--muted);
+  transition: transform 160ms ease;
+  transform-box: fill-box;
+  transform-origin: center;
+}
+
+.inbox-domain-trigger-open .inbox-domain-chevron {
+  transform: rotate(180deg);
+}
+
+.inbox-domain-menu {
+  position: absolute;
+  z-index: 35;
+  top: calc(100% + 0.35rem);
+  left: 0;
+  width: min(20rem, calc(100vw - 2rem));
+  min-width: 100%;
+  max-height: min(18rem, 52vh);
+  overflow: auto;
+  border: 1px solid color-mix(in srgb, var(--border) 86%, transparent);
+  border-radius: 0.65rem;
+  background: color-mix(in srgb, var(--panel) 98%, var(--soft));
+  padding: 0.32rem;
+  box-shadow:
+    0 18px 42px rgba(15, 15, 15, 0.14),
+    0 1px 0 color-mix(in srgb, var(--background) 72%, transparent) inset;
+}
+
+.inbox-domain-option-group {
+  margin-top: 0.25rem;
+  border-top: 1px solid color-mix(in srgb, var(--border) 62%, transparent);
+  padding-top: 0.25rem;
+}
+
+.inbox-domain-option-label {
+  padding: 0.35rem 0.45rem 0.28rem;
+  color: var(--muted);
+  font-size: 0.68rem;
+  font-weight: 780;
+  line-height: 1;
+}
+
+.inbox-domain-option {
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  align-items: center;
+  gap: 0.55rem;
+  border: 1px solid transparent;
+  border-radius: 0.5rem;
+  background: transparent;
+  color: inherit;
+  padding: 0.42rem 0.48rem;
+  text-align: left;
+  transition: background-color 140ms ease, border-color 140ms ease;
+}
+
+.inbox-domain-option:hover,
+.inbox-domain-option:focus-visible {
+  border-color: color-mix(in srgb, var(--focus) 24%, var(--border));
+  background: color-mix(in srgb, var(--focus) 8%, var(--panel));
+  outline: none;
+}
+
+.inbox-domain-option-active {
+  border-color: color-mix(in srgb, var(--focus) 34%, var(--border));
+  background: color-mix(in srgb, var(--focus) 11%, var(--panel));
+}
+
+.inbox-domain-check {
+  flex: 0 0 auto;
+  color: var(--focus);
+  opacity: 0;
+}
+
+.inbox-domain-option-active .inbox-domain-check {
+  opacity: 1;
+}
+
 .inbox-message-actions {
   display: inline-flex;
   align-items: center;
+  flex-wrap: wrap;
+  justify-content: flex-end;
   gap: 0.5rem;
 }
 
@@ -436,6 +636,19 @@
   }
 }
 
+@media (min-width: 1024px) and (max-width: 1279px) {
+  .inbox-layout {
+    max-width: min(100%, 62rem);
+    margin-inline: auto;
+  }
+
+  .inbox-column,
+  .inbox-detail-pane,
+  .mail-detail-panel {
+    min-height: calc(100vh - var(--app-header-height) - 2rem);
+  }
+}
+
 @media (min-width: 1280px) {
   .inbox-layout {
     display: grid;
@@ -490,5 +703,35 @@
 
   .mail-row-side {
     justify-content: space-between;
+  }
+
+  .inbox-message-actions {
+    justify-content: flex-start;
+  }
+}
+
+@media (pointer: coarse), (max-width: 640px) {
+  .inbox-search,
+  .mailbox-row-main,
+  .mail-row,
+  .mail-row-select,
+  .mailbox-delete-btn,
+  .verification-code-copy,
+  .attachment-row,
+  .inbox-active-mailbox {
+    min-height: 2.5rem;
+  }
+
+  .mailbox-delete-btn {
+    min-width: 2.5rem;
+    margin-right: 0.15rem;
+  }
+
+  .verification-code-copy-compact {
+    min-height: 2.5rem;
+  }
+
+  .message-code-row {
+    flex-wrap: wrap;
   }
 }

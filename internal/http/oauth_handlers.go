@@ -19,6 +19,7 @@ import (
 
 	"gptmail/internal/auth"
 	"gptmail/internal/config"
+	appdb "gptmail/internal/db"
 	"gptmail/internal/models"
 
 	"github.com/gin-gonic/gin"
@@ -310,6 +311,8 @@ func (h *Handler) oauthCallback(c *gin.Context) {
 		status := http.StatusBadRequest
 		if strings.Contains(strings.ToLower(err.Error()), "disabled") {
 			status = http.StatusForbidden
+		} else if strings.Contains(strings.ToLower(err.Error()), "unverified local account") {
+			status = http.StatusConflict
 		}
 		fail(c, status, err.Error())
 		return
@@ -790,10 +793,20 @@ func (h *Handler) loginOAuthUser(provider string, info OAuthUserInfo, token oaut
 			if !user.Enabled {
 				return fmt.Errorf("matched user is disabled")
 			}
+			if !user.EmailVerified {
+				return fmt.Errorf("email already belongs to an unverified local account; complete email verification, sign in to the original account, or use account recovery before linking OAuth")
+			}
 			if err := updateOAuthUserProfile(tx, &user, info); err != nil {
 				return err
 			}
 		} else if errors.Is(err, gorm.ErrRecordNotFound) {
+			settings, err := appdb.EnsureLoginSettings(tx)
+			if err != nil {
+				return err
+			}
+			if !settings.RegistrationOpen {
+				return fmt.Errorf("registration is disabled")
+			}
 			password, err := randomURLToken(32)
 			if err != nil {
 				return err
@@ -839,6 +852,9 @@ func (h *Handler) bindOAuthIdentity(userID uint, provider string, info OAuthUser
 	info.Email = strings.ToLower(strings.TrimSpace(info.Email))
 	if info.ProviderUID == "" {
 		return nil, fmt.Errorf("oauth provider did not return a user id")
+	}
+	if !strings.Contains(info.Email, "@") {
+		return nil, fmt.Errorf("oauth provider did not return a verified email")
 	}
 	var user models.User
 	if err := h.DB.Transaction(func(tx *gorm.DB) error {

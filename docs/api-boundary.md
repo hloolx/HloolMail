@@ -60,9 +60,8 @@ These endpoints are allowed in the API-key automation OpenAPI group:
 | `DELETE` | `/api/emails/clear` | Clear messages for an authorized mailbox. |
 | `GET` | `/api/stats` | Read API-key-visible aggregate stats. |
 
-`GET /api/stats/timeseries` is currently registered in the router, but it is not
-part of the phase 7 API-key automation list unless a later boundary review
-explicitly promotes it.
+`GET /api/stats/timeseries` is registered in the router for the Web Console
+only. API-key automation should use `GET /api/stats` for aggregate stats.
 
 ## Web-session Surface
 
@@ -74,6 +73,7 @@ API-key automation OpenAPI group:
 | Webhooks | Current: `GET/POST /api/webhooks`, `PATCH/DELETE /api/webhooks/:id`, `POST /api/webhooks/:id/rotate-secret`, `POST /api/webhooks/:id/test`, `GET /api/webhooks/:id/deliveries` | Session-only management. Delivery runtime is backend worker initiated. |
 | Share-link management | Current: `POST /api/share-links`, `GET /api/share-links`, `GET /api/share-links/:id`, `PATCH /api/share-links/:id`, `DELETE /api/share-links/:id`, `POST /api/share-links/:id/revoke`, `POST /api/share-links/:id/rotate-token`, `POST /api/share-links/:id/rotate-key`, `GET /api/share-links/:id/access-logs` | Session-only management for mailbox shares. `rotate-token` regenerates a complete one-time mailbox access URL. |
 | SSE | Current: `GET /api/inbox-stream`, `GET /api/notification-stream`, `GET /api/announcement-stream` | Session-only web realtime. Excluded from OpenAPI automation. |
+| Stats charts | Current: `GET /api/stats/timeseries` | Session-only Web Console chart data. API-key automation should not access it. |
 | Domain management | Current: `/api/domains`, `/api/domains/request`, `/api/domains/batch-request`, `/api/domains/check-mx`, `/api/domains/:id`, `/api/domains/:id/mx-auto-retry` | Web-console task, except `GET /api/domains/available` which is API-key automation. |
 | API-key management | Current: `/api/api-keys`, `/api/api-keys/:id`, `/api/api-keys/:id/reveal` | Session-only; API keys cannot create or manage API keys. |
 | Admin | Current: `/api/admin/*`, `/api/users*` | Admin/session-only. |
@@ -204,11 +204,10 @@ At phase 0, the router registered 82 explicit API routes:
 
 ## Current Gaps To Feed Later Phases
 
-- Current router has no `/api/openapi.json` or `/api/openapi.yaml` routes.
 - Current middleware explicitly skips API-key auth for `/api/docs.md`,
-  `/api/skill.md`, public shared-token paths, session-only SSE, and webhook
-  management paths; OpenAPI public paths must join the public skip list when
-  implemented.
+  `/api/skill.md`, public OpenAPI paths, public shared-token paths, session-only
+  SSE, notifications, announcements, stats timeseries, domain management paths
+  except `GET /api/domains/available`, and Web Console management paths.
 - Phase 1 hardened SSE routes so API-key headers are ignored on
   `/api/inbox-stream`, `/api/notification-stream`, and
   `/api/announcement-stream`; handlers remain session-only and do not consume

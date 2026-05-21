@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, useCallback, type CSSProperties } from 'react';
+import { useEffect, useId, useRef, useState, useCallback, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent } from 'react';
 import { Info } from 'lucide-react';
 import { createPortal } from 'react-dom';
 
@@ -12,6 +12,7 @@ export function InfoTip({ text }: InfoTipProps) {
   const [pos, setPos] = useState<CSSProperties>({});
   const iconRef = useRef<HTMLSpanElement | null>(null);
   const hoverRef = useRef(false);
+  const tooltipId = useId();
 
   const recalc = useCallback(() => {
     if (!iconRef.current) return;
@@ -57,6 +58,21 @@ export function InfoTip({ text }: InfoTipProps) {
     };
   }, [pinned]);
 
+  const togglePinned = useCallback(() => {
+    setPinned((current) => {
+      const next = !current;
+      setVisible(next || hoverRef.current);
+      return next;
+    });
+  }, []);
+
+  const handleKeyDown = useCallback((event: ReactKeyboardEvent<HTMLSpanElement>) => {
+    if (event.key !== 'Enter' && event.key !== ' ') return;
+    event.preventDefault();
+    event.stopPropagation();
+    togglePinned();
+  }, [togglePinned]);
+
   const show = pinned || visible;
   const active = pinned || hoverRef.current;
 
@@ -66,14 +82,17 @@ export function InfoTip({ text }: InfoTipProps) {
       className={`info-tip ${active ? 'info-tip-active' : ''}`}
       onMouseEnter={() => { hoverRef.current = true; setVisible(true); }}
       onMouseLeave={() => { hoverRef.current = false; if (!pinned) setVisible(false); }}
-      onClick={(event) => { event.stopPropagation(); setPinned((v) => !v); }}
+      onClick={(event) => { event.stopPropagation(); togglePinned(); }}
+      onKeyDown={handleKeyDown}
       role="button"
       tabIndex={0}
       aria-label={text}
+      aria-describedby={show ? tooltipId : undefined}
+      aria-expanded={show}
     >
       <Info size={14} />
       {show && createPortal(
-        <div className={`info-tip-popup ${pinned ? 'info-tip-popup-pinned' : ''}`} style={pos}>
+        <div id={tooltipId} role="tooltip" className={`info-tip-popup ${pinned ? 'info-tip-popup-pinned' : ''}`} style={pos}>
           {text}
         </div>,
         document.body

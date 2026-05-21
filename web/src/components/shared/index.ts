@@ -14,5 +14,6 @@ export { LoadingIndicator, LoadingState } from './LoadingIndicator';
 export { ErrorBoundary } from './ErrorBoundary';
 export { PaginationControls } from './PaginationControls';
 export { ConfirmModal } from './ConfirmModal';
+export { DialogShell } from './DialogShell';
 export { QuotaThermometer } from './QuotaThermometer';
 export { InfoTip } from './InfoTip';

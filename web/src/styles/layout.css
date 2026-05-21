@@ -939,6 +939,45 @@
   opacity: 0.5;
 }
 
+@media (pointer: coarse), (max-width: 640px) {
+  .btn-primary,
+  .btn-secondary,
+  .btn-danger,
+  .btn-ghost,
+  .icon-btn,
+  .input,
+  .input-textarea,
+  .check-row,
+  .key-copy,
+  .key-switch,
+  .install-step,
+  .app-header-trigger,
+  .app-header-github,
+  .header-settings-btn,
+  .notification-trigger,
+  .notification-mark-all,
+  .message-center-section-clear {
+    min-height: 2.5rem;
+  }
+
+  .icon-btn,
+  .app-header-trigger,
+  .app-header-github,
+  .header-settings-btn,
+  .notification-trigger,
+  .notification-mark-all {
+    min-width: 2.5rem;
+  }
+
+  .btn-ghost {
+    padding-inline: 0.75rem;
+  }
+
+  .message-center-section-clear {
+    min-width: 2.5rem;
+  }
+}
+
 .metric {
   display: flex;
   min-height: 5rem;
@@ -1212,6 +1251,24 @@
   gap: 0.65rem;
   border-top: 1px solid var(--border);
   padding: 0.85rem 1rem;
+}
+
+@media (max-width: 520px) {
+  .modal-footer,
+  .modal-actions,
+  .confirm-modal-actions,
+  .admin-oauth-form-actions {
+    flex-wrap: wrap;
+    align-items: stretch;
+    justify-content: stretch;
+  }
+
+  .modal-footer > *,
+  .modal-actions > *,
+  .confirm-modal-actions > *,
+  .admin-oauth-form-actions > * {
+    flex: 1 1 100%;
+  }
 }
 
 .profile-dialog {

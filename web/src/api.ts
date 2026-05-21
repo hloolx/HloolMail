@@ -455,11 +455,15 @@ export async function api<T>(path: string, options: RequestOptions = {}): Promis
       let envelope: ApiEnvelope<T>;
       try {
         envelope = JSON.parse(raw) as ApiEnvelope<T>;
-      } catch (parseErr) {
-        if (parseErr instanceof SyntaxError) throw parseErr;
+      } catch {
         const fallback = raw.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
         const details = fallback ? `：${fallback.slice(0, 120)}` : '';
-        throw new ApiError(response.ok ? `接口 ${path} 返回了非 JSON 内容，请确认后端路由已生效${details}` : (response.statusText || `HTTP ${response.status}`), response.status);
+        const message = response.ok
+          ? `接口 ${path} 返回了非 JSON 内容，请确认后端路由或登录状态${details}`
+          : fallback
+            ? `请求失败（HTTP ${response.status}）${details}`
+            : (response.statusText || `HTTP ${response.status}`);
+        throw new ApiError(message, response.status);
       }
       if (!response.ok || !envelope.success) {
         throw new ApiError(String(envelope.error || response.statusText || `HTTP ${response.status}`), response.status);

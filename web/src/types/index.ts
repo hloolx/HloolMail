@@ -215,6 +215,17 @@ export type MeResponse = {
 
 export type LoginSettings = {
   id: number;
+  registration_open: boolean;
+  email_registration_enabled: boolean;
+  email_verification_mode: 'internal' | 'smtp';
+  internal_sender_prefix: string;
+  smtp_host: string;
+  smtp_port: number;
+  smtp_security: 'none' | 'starttls' | 'tls';
+  smtp_username: string;
+  smtp_password: string;
+  smtp_from_name: string;
+  smtp_from_email: string;
   turnstile_enabled: boolean;
   turnstile_site_key: string;
   turnstile_secret_key: string;
@@ -224,8 +235,23 @@ export type LoginSettings = {
 
 export type PublicLoginSettings = {
   installed: boolean;
+  registration_open?: boolean;
+  email_registration_enabled?: boolean;
+  email_verification_mode?: 'internal' | 'smtp';
   turnstile_enabled?: boolean;
   turnstile_site_key?: string;
   passkey_enabled?: boolean;
   oauth_providers?: OAuthProvider[];
+};
+
+export type RegisterCaptcha = {
+  captcha_id: string;
+  challenge: string;
+  expires_at: string;
+};
+
+export type RegisterResponse = {
+  email_verification_required: boolean;
+  verification_id: string;
+  expires_at: string;
 };

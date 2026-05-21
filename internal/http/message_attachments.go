@@ -1,7 +1,10 @@
 package httpapi
 
 import (
+	"time"
+
 	"gptmail/internal/models"
+	"gptmail/internal/webhook"
 
 	"gorm.io/gorm"
 )
@@ -56,12 +59,53 @@ func deleteAttachmentsForMessageQuery(tx *gorm.DB, query *gorm.DB) error {
 	return tx.Where("message_id IN (?)", query.Select("id")).Delete(&models.MessageAttachment{}).Error
 }
 
+func redactWebhookDeliveriesForDeletedMessages(tx *gorm.DB, query *gorm.DB) error {
+	return webhook.RedactMessageDeliveriesForQuery(tx, query, time.Now().UTC(), webhook.RedactionReasonMessageDeleted)
+}
+
+func redactWebhookDeliveriesForDeletedMailboxMessages(tx *gorm.DB, query *gorm.DB) error {
+	return webhook.RedactMessageDeliveriesForQuery(tx, query, time.Now().UTC(), webhook.RedactionReasonMailboxDeleted)
+}
+
 func deleteShareLinksForMessageQuery(tx *gorm.DB, query *gorm.DB) error {
 	shareLinks := tx.Model(&models.ShareLink{}).Where("resource_type = ? AND message_id IN (?)", models.ShareResourceTypeMessage, query.Select("id"))
 	if err := tx.Where("share_link_id IN (?)", shareLinks.Select("id")).Delete(&models.ShareLinkAccessLog{}).Error; err != nil {
 		return err
 	}
 	return tx.Where("resource_type = ? AND message_id IN (?)", models.ShareResourceTypeMessage, query.Select("id")).Delete(&models.ShareLink{}).Error
+}
+
+func deleteMessageDependentsForQuery(tx *gorm.DB, query *gorm.DB) error {
+	if err := redactWebhookDeliveriesForDeletedMessages(tx, query); err != nil {
+		return err
+	}
+	if err := deleteShareLinksForMessageQuery(tx, query); err != nil {
+		return err
+	}
+	if err := deleteAttachmentsForMessageQuery(tx, query); err != nil {
+		return err
+	}
+	return nil
+}
+
+func deleteMailboxMessageDependentsForQuery(tx *gorm.DB, query *gorm.DB) error {
+	if err := redactWebhookDeliveriesForDeletedMailboxMessages(tx, query); err != nil {
+		return err
+	}
+	if err := deleteShareLinksForMessageQuery(tx, query); err != nil {
+		return err
+	}
+	return deleteAttachmentsForMessageQuery(tx, query)
+}
+
+func deleteDomainMessageDependentsForQuery(tx *gorm.DB, query *gorm.DB) error {
+	if err := webhook.RedactMessageDeliveriesForQuery(tx, query, time.Now().UTC(), webhook.RedactionReasonDomainDeleted); err != nil {
+		return err
+	}
+	if err := deleteShareLinksForMessageQuery(tx, query); err != nil {
+		return err
+	}
+	return deleteAttachmentsForMessageQuery(tx, query)
 }
 
 func deleteShareLinksForMailboxQuery(tx *gorm.DB, mailboxID uint) error {

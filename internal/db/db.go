@@ -98,6 +98,8 @@ func configureSQLite(db *gorm.DB) error {
 func AutoMigrate(db *gorm.DB) error {
 	if err := db.AutoMigrate(
 		&models.User{},
+		&models.PendingRegistration{},
+		&models.RegistrationCaptcha{},
 		&models.OAuthIdentity{},
 		&models.PasskeyCredential{},
 		&models.WebAuthnSession{},
@@ -303,21 +305,47 @@ func EnsureLoginSettings(db *gorm.DB) (*models.LoginSettings, error) {
 	var settings models.LoginSettings
 	err := db.First(&settings).Error
 	if err == nil {
-		return &settings, nil
+		return normalizeLoginSettings(db, &settings)
 	}
 	if err != gorm.ErrRecordNotFound {
 		return nil, err
 	}
 	settings = models.LoginSettings{
-		ID: 1,
+		ID:                    1,
+		EmailVerificationMode: models.EmailVerificationModeInternal,
+		InternalSenderPrefix:  "no-reply",
+		SMTPSecurity:          models.SMTPSecuritySTARTTLS,
 	}
 	if err := db.Create(&settings).Error; err != nil {
 		if err2 := db.First(&settings).Error; err2 != nil {
 			return nil, err
 		}
-		return &settings, nil
+		return normalizeLoginSettings(db, &settings)
 	}
-	return &settings, nil
+	return normalizeLoginSettings(db, &settings)
+}
+
+func normalizeLoginSettings(db *gorm.DB, settings *models.LoginSettings) (*models.LoginSettings, error) {
+	changed := false
+	if strings.TrimSpace(settings.EmailVerificationMode) == "" {
+		settings.EmailVerificationMode = models.EmailVerificationModeInternal
+		changed = true
+	}
+	if strings.TrimSpace(settings.InternalSenderPrefix) == "" {
+		settings.InternalSenderPrefix = "no-reply"
+		changed = true
+	}
+	if strings.TrimSpace(settings.SMTPSecurity) == "" {
+		settings.SMTPSecurity = models.SMTPSecuritySTARTTLS
+		changed = true
+	}
+	if !changed {
+		return settings, nil
+	}
+	if err := db.Save(settings).Error; err != nil {
+		return nil, err
+	}
+	return settings, nil
 }
 
 func EnsureSystemQuotaSettings(db *gorm.DB) (*models.SystemQuotaSettings, error) {

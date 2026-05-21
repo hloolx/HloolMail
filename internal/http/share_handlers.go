@@ -395,7 +395,8 @@ func (h *Handler) listSharedMailboxMessages(c *gin.Context) {
 		page := parsePage(c.Query("page"))
 		perPage := parseLimit(c.Query("per_page"), 10, 100)
 		var total int64
-		if err := h.DB.Model(&models.Message{}).Where("recipient = ?", mailbox.Email).Count(&total).Error; err != nil {
+		messageQuery := h.scopeInboxMessagesForMailbox(h.DB.Model(&models.Message{}), mailbox)
+		if err := messageQuery.Session(&gorm.Session{}).Count(&total).Error; err != nil {
 			fail(c, http.StatusInternalServerError, err.Error())
 			return
 		}
@@ -404,7 +405,7 @@ func (h *Handler) listSharedMailboxMessages(c *gin.Context) {
 			page = totalPages
 		}
 		var messages []models.Message
-		if err := h.DB.Where("recipient = ?", mailbox.Email).
+		if err := messageQuery.Session(&gorm.Session{}).
 			Order("created_at desc").
 			Limit(perPage).
 			Offset((page - 1) * perPage).
@@ -432,7 +433,7 @@ func (h *Handler) listSharedMailboxMessages(c *gin.Context) {
 	}
 	limit := parseLimit(c.Query("limit"), 50, 200)
 	var messages []models.Message
-	if err := h.DB.Where("recipient = ?", mailbox.Email).
+	if err := h.scopeInboxMessagesForMailbox(h.DB.Model(&models.Message{}), mailbox).
 		Order("created_at desc").
 		Limit(limit).
 		Find(&messages).Error; err != nil {
@@ -457,7 +458,7 @@ func (h *Handler) getSharedMailboxMessage(c *gin.Context) {
 		return
 	}
 	var msg models.Message
-	if err := h.DB.Where("id = ? AND recipient = ?", c.Param("message_id"), mailbox.Email).First(&msg).Error; err != nil {
+	if err := h.scopeInboxMessagesForMailbox(h.DB.Model(&models.Message{}), mailbox).Where("id = ?", c.Param("message_id")).First(&msg).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			fail(c, http.StatusNotFound, "message not found")
 			return
@@ -621,10 +622,10 @@ func (h *Handler) sharedMailboxForLink(c *gin.Context, link *models.ShareLink) (
 
 func (h *Handler) sharedMailboxDTO(link *models.ShareLink, mailbox models.Mailbox) publicSharedMailboxDTO {
 	var count int64
-	h.DB.Model(&models.Message{}).Where("recipient = ?", mailbox.Email).Count(&count)
+	h.scopeInboxMessagesForMailbox(h.DB.Model(&models.Message{}), mailbox).Count(&count)
 	var lastMsg models.Message
 	var lastAt *time.Time
-	if err := h.DB.Where("recipient = ?", mailbox.Email).Order("created_at desc").First(&lastMsg).Error; err == nil {
+	if err := h.scopeInboxMessagesForMailbox(h.DB.Model(&models.Message{}), mailbox).Order("created_at desc").First(&lastMsg).Error; err == nil {
 		t := lastMsg.CreatedAt
 		lastAt = &t
 	}

@@ -1,6 +1,4 @@
-import { useEffect, useRef } from 'react';
-import { createPortal } from 'react-dom';
-import { AnimatePresence, motion } from 'framer-motion';
+import { useRef } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { CircleUserRound, Fingerprint, Github, Plus, Trash2, Unlink, X } from 'lucide-react';
 import { toast } from 'sonner';
@@ -8,7 +6,7 @@ import type { User } from '../api';
 import { api } from '../api';
 import type { OAuthProvider, PublicLoginSettings } from '../types';
 import { roleText, useText } from '../locales';
-import { IconButton, InfoTip, LoadingIndicator } from '../components/shared';
+import { DialogShell, IconButton, InfoTip, LoadingIndicator } from '../components/shared';
 import { notifySuccess } from '../lib/feedback';
 import { registerPasskey, type PasskeyCredentialSummary } from '../lib/passkeys';
 
@@ -22,7 +20,6 @@ type OAuthIdentity = {
 export function UserProfileDialog({ open, onClose, user }: { open: boolean; onClose: () => void; user: User }) {
   const queryClient = useQueryClient();
   const text = useText();
-  const panelRef = useRef<HTMLDivElement | null>(null);
   const feedbackOriginRef = useRef<HTMLElement | null>(null);
 
   const identities = useQuery({
@@ -90,34 +87,6 @@ export function UserProfileDialog({ open, onClose, user }: { open: boolean; onCl
     onError: (error) => toast.error(error.message),
   });
 
-  useEffect(() => {
-    if (!open) return;
-    panelRef.current?.focus();
-    const handleKey = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') {
-        event.preventDefault();
-        onClose();
-        return;
-      }
-      if (event.key !== 'Tab') return;
-      const focusableElements = panelRef.current?.querySelectorAll<HTMLElement>(
-        'button:not([disabled]), [tabindex]:not([tabindex="-1"])'
-      );
-      if (!focusableElements || focusableElements.length === 0) return;
-      const first = focusableElements[0];
-      const last = focusableElements[focusableElements.length - 1];
-      if (event.shiftKey && document.activeElement === first) {
-        event.preventDefault();
-        last.focus();
-      } else if (!event.shiftKey && document.activeElement === last) {
-        event.preventDefault();
-        first.focus();
-      }
-    };
-    document.addEventListener('keydown', handleKey);
-    return () => document.removeEventListener('keydown', handleKey);
-  }, [open, onClose]);
-
   const boundProviders = new Set((identities.data || []).map((id) => id.provider));
   const availableProviders = (providers.data || []).filter((p) => p.configured && p.enabled);
   const loadingProviders = providers.isLoading || identities.isLoading;
@@ -127,45 +96,13 @@ export function UserProfileDialog({ open, onClose, user }: { open: boolean; onCl
     window.location.href = bindURL;
   };
 
-  const backdropVariants = {
-    hidden: { opacity: 0 },
-    visible: { opacity: 1 },
-  };
-
-  const panelVariants = {
-    hidden: { opacity: 0, transform: 'translateY(0.55rem) scale(0.96)' },
-    visible: { opacity: 1, transform: 'translateY(0) scale(1)' },
-    exit: { opacity: 0, transform: 'translateY(0.55rem) scale(0.96)' },
-  };
-
-  return createPortal(
-    <AnimatePresence>
-      {open && (
-        <motion.div
-          className="modal-backdrop"
-          style={{ animation: 'none' }}
-          role="presentation"
-          variants={backdropVariants}
-          initial="hidden"
-          animate="visible"
-          exit="hidden"
-          transition={{ duration: 0.15 }}
-          onMouseDown={(event) => event.target === event.currentTarget && onClose()}
-        >
-          <motion.div
-            ref={panelRef}
-            className="modal-panel profile-dialog"
-            style={{ animation: 'none' }}
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="profile-dialog-title"
-            tabIndex={-1}
-            variants={panelVariants}
-            initial="hidden"
-            animate="visible"
-            exit="exit"
-            transition={{ duration: 0.18 }}
-          >
+  return (
+    <DialogShell
+      open={open}
+      className="modal-panel profile-dialog"
+      titleId="profile-dialog-title"
+      onClose={onClose}
+    >
             <div className="modal-header">
               <div>
                 <h2 id="profile-dialog-title">{text.profile.title}<InfoTip text={text.profile.desc} /></h2>
@@ -289,11 +226,7 @@ export function UserProfileDialog({ open, onClose, user }: { open: boolean; onCl
                 {text.common.close}
               </button>
             </div>
-          </motion.div>
-        </motion.div>
-      )}
-    </AnimatePresence>,
-    document.body
+    </DialogShell>
   );
 }
 

@@ -1,6 +1,8 @@
 package httpapi
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"log"
@@ -48,7 +50,7 @@ func (h *Handler) optionalAPIKey() gin.HandlerFunc {
 		// These paths are intentionally outside API-key automation. Ignore any
 		// X-API-Key header so public docs/share reads and Web Console session
 		// routes do not consume API-key quota or create APIUsageLog rows.
-		if isPublicDocsPath(c.Request.URL.Path) || isPublicSharedPath(c.Request.URL.Path) || isSessionOnlyStreamPath(c.Request.URL.Path) || isSessionOnlyManagementPath(c.Request.URL.Path) {
+		if isPublicDocsPath(c.Request.URL.Path) || isPublicSharedPath(c.Request.URL.Path) || isSessionOnlyWebPath(c.Request.URL.Path) || isSessionOnlyManagementPath(c.Request.URL.Path) {
 			c.Next()
 			return
 		}
@@ -63,8 +65,14 @@ func (h *Handler) optionalAPIKey() gin.HandlerFunc {
 			c.Next()
 			return
 		}
+		if !h.allowAPIKeyAuthAttempt(c) {
+			fail(c, http.StatusTooManyRequests, "rate limit exceeded")
+			c.Abort()
+			return
+		}
 		key, err := h.APIKeys.Authenticate(plain)
 		if err != nil {
+			h.logAPIKeyAuthFailure(c, plain, err)
 			status := http.StatusUnauthorized
 			if errors.Is(err, auth.ErrAPIKeyDisabled) || errors.Is(err, auth.ErrAPIKeyExpired) {
 				status = http.StatusForbidden
@@ -133,6 +141,33 @@ func isSessionOnlyStreamPath(path string) bool {
 	}
 }
 
+func isSessionOnlyNotificationPath(path string) bool {
+	return path == "/api/notifications" || strings.HasPrefix(path, "/api/notifications/")
+}
+
+func isSessionOnlyWebPath(path string) bool {
+	return isSessionOnlyStreamPath(path) ||
+		isSessionOnlyNotificationPath(path) ||
+		isSessionOnlyAnnouncementPath(path) ||
+		isSessionOnlyStatsPath(path) ||
+		isSessionOnlyDomainPath(path)
+}
+
+func isSessionOnlyAnnouncementPath(path string) bool {
+	return path == "/api/announcements" || strings.HasPrefix(path, "/api/announcements/")
+}
+
+func isSessionOnlyStatsPath(path string) bool {
+	return path == "/api/stats/timeseries"
+}
+
+func isSessionOnlyDomainPath(path string) bool {
+	if path == "/api/domains/available" {
+		return false
+	}
+	return path == "/api/domains" || strings.HasPrefix(path, "/api/domains/")
+}
+
 func isSessionOnlyManagementPath(path string) bool {
 	for _, prefix := range []string{
 		"/api/webhooks",
@@ -149,6 +184,31 @@ func isSessionOnlyManagementPath(path string) bool {
 		}
 	}
 	return false
+}
+
+func (h *Handler) allowAPIKeyAuthAttempt(c *gin.Context) bool {
+	limiter := h.ensureRateLimiter()
+	route := rateLimitRoute(c)
+	ip := c.ClientIP()
+	if !limiter.allow("api-key-auth:global:"+route, rate.Limit(50), 200) {
+		return false
+	}
+	return limiter.allow("api-key-auth:ip:"+ip+":"+route, rate.Limit(5), 20)
+}
+
+func (h *Handler) logAPIKeyAuthFailure(c *gin.Context, plain string, err error) {
+	log.Printf(
+		"api key auth failed: fingerprint=%s ip=%s path=%s reason=%s",
+		apiKeyAttemptFingerprint(plain),
+		c.ClientIP(),
+		c.Request.URL.Path,
+		err.Error(),
+	)
+}
+
+func apiKeyAttemptFingerprint(plain string) string {
+	sum := sha256.Sum256([]byte(strings.TrimSpace(plain)))
+	return hex.EncodeToString(sum[:])[:16]
 }
 
 func (h *Handler) securityHeaders() gin.HandlerFunc {

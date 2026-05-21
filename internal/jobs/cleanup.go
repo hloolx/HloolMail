@@ -7,6 +7,7 @@ import (
 	"gptmail/internal/config"
 	"gptmail/internal/models"
 	"gptmail/internal/scheduler"
+	"gptmail/internal/webhook"
 
 	"gorm.io/gorm"
 )
@@ -29,16 +30,36 @@ func RunCleanupWithConfig(db *gorm.DB, now time.Time, cfg config.Config) error {
 	if err := RunPendingDomainCleanupWithDataProtection(db, now, !cfg.DisablePendingDomainDataProtection); err != nil {
 		return err
 	}
+	if err := RunExpiredRegistrationCleanup(db, now); err != nil {
+		return err
+	}
 	if err := RunExpiredMessageCleanup(db, now); err != nil {
 		return err
 	}
 	return RunAuditLogCleanup(db, now, auditRetentionDays(cfg.AuditLogRetentionDays, defaultAuditLogRetentionDays), auditRetentionDays(cfg.AuditActivityRetentionDays, defaultAuditActivityRetentionDays))
 }
 
+func RunExpiredRegistrationCleanup(db *gorm.DB, now time.Time) error {
+	return db.Transaction(func(tx *gorm.DB) error {
+		if tx.Migrator().HasTable(&models.PendingRegistration{}) {
+			if err := tx.Where("expires_at < ?", now).Delete(&models.PendingRegistration{}).Error; err != nil {
+				return err
+			}
+		}
+		if tx.Migrator().HasTable(&models.RegistrationCaptcha{}) {
+			return tx.Where("expires_at < ?", now).Delete(&models.RegistrationCaptcha{}).Error
+		}
+		return nil
+	})
+}
+
 func RunExpiredMessageCleanup(db *gorm.DB, now time.Time) error {
 	return db.Transaction(func(tx *gorm.DB) error {
 		expiredMessages := tx.Model(&models.Message{}).Where("expires_at < ?", now)
 		expiredShareLinks := tx.Model(&models.ShareLink{}).Where("resource_type = ? AND message_id IN (?)", models.ShareResourceTypeMessage, expiredMessages.Select("id"))
+		if err := webhook.RedactMessageDeliveriesForQuery(tx, expiredMessages, now, webhook.RedactionReasonMessageExpired); err != nil {
+			return err
+		}
 		if err := tx.Where("share_link_id IN (?)", expiredShareLinks.Select("id")).Delete(&models.ShareLinkAccessLog{}).Error; err != nil {
 			return err
 		}
@@ -57,11 +78,16 @@ func RunPendingDomainCleanup(db *gorm.DB, now time.Time) error {
 }
 
 func RunPendingDomainCleanupWithDataProtection(db *gorm.DB, now time.Time, protectBusinessData bool) error {
-	query := expiredPendingDomainQuery(db, now)
-	if protectBusinessData {
-		query = protectDomainsWithBusinessData(query)
-	}
-	return query.Delete(&models.Domain{}).Error
+	return db.Transaction(func(tx *gorm.DB) error {
+		query := expiredPendingDomainQuery(tx, now)
+		if protectBusinessData {
+			query = protectDomainsWithBusinessData(query)
+		}
+		if err := webhook.RedactMessageDeliveriesForDomainQuery(tx, query, now, webhook.RedactionReasonDomainDeleted); err != nil {
+			return err
+		}
+		return query.Delete(&models.Domain{}).Error
+	})
 }
 
 func expiredPendingDomainQuery(db *gorm.DB, now time.Time) *gorm.DB {

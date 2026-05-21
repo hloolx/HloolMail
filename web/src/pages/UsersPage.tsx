@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useDeferredValue, useEffect, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Ban, CheckCircle, Pencil, Save, Search, Trash2, UserCog } from 'lucide-react';
 import { toast } from 'sonner';
@@ -20,22 +20,24 @@ export function UsersPage({ currentUser }: { currentUser: User }) {
   const [showCreateDialog, setShowCreateDialog] = useState(false);
   const [page, setPage] = useState(1);
   const [search, setSearch] = useState('');
+  const deferredSearch = useDeferredValue(search.trim());
   const [roleFilter, setRoleFilter] = useState<'all' | User['role']>('all');
   const [statusFilter, setStatusFilter] = useState<'all' | 'enabled' | 'disabled'>('all');
   const [editingUser, setEditingUser] = useState<User | null>(null);
   const [disableTarget, setDisableTarget] = useState<User | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<User | null>(null);
   const [dissolveTarget, setDissolveTarget] = useState<HTMLElement | null>(null);
+  const [quotaDirty, setQuotaDirty] = useState(false);
   const quotaSaveButtonRef = useRef<HTMLButtonElement | null>(null);
   const userFeedbackOriginRef = useRef<HTMLElement | null>(null);
   const users = useQuery({
-    queryKey: ['users', page, search.trim(), roleFilter, statusFilter],
+    queryKey: ['users', page, deferredSearch, roleFilter, statusFilter],
     queryFn: () => {
       const params = new URLSearchParams({
         page: String(page),
         page_size: String(USER_PAGE_SIZE)
       });
-      const term = search.trim();
+      const term = deferredSearch;
       if (term) params.set('search', term);
       if (roleFilter !== 'all') params.set('role', roleFilter);
       if (statusFilter !== 'all') params.set('status', statusFilter);
@@ -81,13 +83,13 @@ export function UsersPage({ currentUser }: { currentUser: User }) {
   });
   useEffect(() => {
     const qs = quotaSettings.data;
-    if (!qs) return;
+    if (!qs || quotaDirty) return;
     setQuotaForm({
       public_domain_mailbox_limit: String(qs.public_domain_mailbox_limit),
       user_daily_public_mailbox_limit: String(qs.user_daily_public_mailbox_limit),
       require_public_domain_for_quota: qs.require_public_domain_for_quota
     });
-  }, [quotaSettings.data]);
+  }, [quotaDirty, quotaSettings.data]);
 
   const saveQuotaSettings = useMutation({
     mutationFn: () => patchJSON<SystemQuotaSettings>('/api/admin/quota-settings', {
@@ -96,6 +98,7 @@ export function UsersPage({ currentUser }: { currentUser: User }) {
       require_public_domain_for_quota: quotaForm.require_public_domain_for_quota
     }),
     onSuccess: () => {
+      setQuotaDirty(false);
       queryClient.invalidateQueries({ queryKey: ['admin-quota-settings'] });
       notifySuccess(text.admin.quotaSettings.saved, { origin: quotaSaveButtonRef.current });
     },
@@ -161,11 +164,11 @@ export function UsersPage({ currentUser }: { currentUser: User }) {
           <div className="admin-dns-settings">
             <label className="grid gap-1 text-sm">
               <span className="text-[var(--muted)]">{text.admin.quotaSettings.publicDomainMailboxLimit}<InfoTip text={text.admin.quotaSettings.publicDomainMailboxLimitHint} /></span>
-              <input className="input" type="number" min="0" value={quotaForm.public_domain_mailbox_limit} onChange={(event) => setQuotaForm((current) => ({ ...current, public_domain_mailbox_limit: event.target.value }))} />
+              <input className="input" type="number" min="0" value={quotaForm.public_domain_mailbox_limit} onChange={(event) => { setQuotaDirty(true); setQuotaForm((current) => ({ ...current, public_domain_mailbox_limit: event.target.value })); }} />
             </label>
             <label className="grid gap-1 text-sm">
               <span className="text-[var(--muted)]">{text.admin.quotaSettings.userDailyPublicMailboxLimit}<InfoTip text={text.admin.quotaSettings.userDailyPublicMailboxLimitHint} /></span>
-              <input className="input" type="number" min="0" value={quotaForm.user_daily_public_mailbox_limit} onChange={(event) => setQuotaForm((current) => ({ ...current, user_daily_public_mailbox_limit: event.target.value }))} />
+              <input className="input" type="number" min="0" value={quotaForm.user_daily_public_mailbox_limit} onChange={(event) => { setQuotaDirty(true); setQuotaForm((current) => ({ ...current, user_daily_public_mailbox_limit: event.target.value })); }} />
             </label>
             <label className="grid gap-1 text-sm">
               <div className="toggle-row">
@@ -173,7 +176,7 @@ export function UsersPage({ currentUser }: { currentUser: User }) {
                 <button
                   type="button"
                   className={`toggle-switch ${quotaForm.require_public_domain_for_quota ? 'on' : ''}`}
-                  onClick={() => setQuotaForm((current) => ({ ...current, require_public_domain_for_quota: !current.require_public_domain_for_quota }))}
+                  onClick={() => { setQuotaDirty(true); setQuotaForm((current) => ({ ...current, require_public_domain_for_quota: !current.require_public_domain_for_quota })); }}
                   role="switch"
                   aria-checked={quotaForm.require_public_domain_for_quota}
                 >

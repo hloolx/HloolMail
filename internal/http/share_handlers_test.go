@@ -685,6 +685,15 @@ func createShareTestMessage(t *testing.T, db *gorm.DB, id, recipient string, dom
 	t.Helper()
 	parts := strings.Split(recipient, "@")
 	local := parts[0]
+	var mailbox models.Mailbox
+	var ownerID *uint
+	var mailboxID *uint
+	if err := db.First(&mailbox, "email = ?", recipient).Error; err == nil {
+		resolvedOwnerID := mailbox.OwnerID
+		resolvedMailboxID := mailbox.ID
+		ownerID = &resolvedOwnerID
+		mailboxID = &resolvedMailboxID
+	}
 	msg := models.Message{
 		ID:              id,
 		Recipient:       recipient,
@@ -692,6 +701,8 @@ func createShareTestMessage(t *testing.T, db *gorm.DB, id, recipient string, dom
 		RecipientDomain: domain.Domain,
 		RootDomain:      domain.Domain,
 		DomainID:        &domain.ID,
+		OwnerID:         ownerID,
+		MailboxID:       mailboxID,
 		FromAddress:     "sender@example.test",
 		FromName:        "Sender",
 		Subject:         "Safe subject",

@@ -2,6 +2,10 @@ import type { MouseEvent as ReactMouseEvent } from 'react';
 import { flushSync } from 'react-dom';
 import type { ThemeMode } from '../store';
 
+function prefersReducedMotion() {
+  return window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false;
+}
+
 export function resolveTheme(mode: ThemeMode) {
   if (mode === 'system') {
     return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
@@ -12,24 +16,30 @@ export function resolveTheme(mode: ThemeMode) {
 export function animateThemeSwitch(event: ReactMouseEvent<HTMLButtonElement>, nextMode: ThemeMode, setTheme: (theme: ThemeMode) => void) {
   const x = event.clientX;
   const y = event.clientY;
-  const endRadius = Math.hypot(Math.max(x, window.innerWidth - x), Math.max(y, window.innerHeight - y));
   const root = document.documentElement;
   const nextTheme = resolveTheme(nextMode);
   const currentTheme = root.classList.contains('dark') ? 'dark' : 'light';
+  const applyTheme = () => {
+    root.classList.toggle('dark', nextTheme === 'dark');
+    setTheme(nextMode);
+  };
 
   if (nextTheme === currentTheme) {
     setTheme(nextMode);
     return;
   }
 
+  if (prefersReducedMotion()) {
+    flushSync(applyTheme);
+    return;
+  }
+
+  const endRadius = Math.hypot(Math.max(x, window.innerWidth - x), Math.max(y, window.innerHeight - y));
+
   root.style.setProperty('--theme-x', `${x}px`);
   root.style.setProperty('--theme-y', `${y}px`);
   root.style.setProperty('--theme-radius', `${endRadius}px`);
 
-  const applyTheme = () => {
-    root.classList.toggle('dark', nextTheme === 'dark');
-    setTheme(nextMode);
-  };
   const cleanup = () => {
     root.classList.remove('theme-switching');
     root.style.removeProperty('--theme-x');

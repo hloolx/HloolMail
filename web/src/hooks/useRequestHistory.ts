@@ -8,7 +8,6 @@ export type HistoryEntry = {
   requestPath: string;
   queryString: string;
   requestBody: string;
-  apiKey?: string;
   status?: number;
   statusText?: string;
   responsePreview?: string;
@@ -22,6 +21,47 @@ function generateId(): string {
   return `${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
 }
 
+function optionalString(value: unknown): string | undefined {
+  return typeof value === "string" ? value : undefined;
+}
+
+function optionalNumber(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
+
+function sanitizeHistoryEntry(value: unknown): HistoryEntry | null {
+  if (!value || typeof value !== "object") return null;
+  const entry = value as Record<string, unknown>;
+  const id = optionalString(entry.id);
+  const endpointKey = optionalString(entry.endpointKey);
+  const apiBase = optionalString(entry.apiBase);
+  const requestPath = optionalString(entry.requestPath);
+  const queryString = optionalString(entry.queryString);
+  const requestBody = optionalString(entry.requestBody);
+  if (!id || !endpointKey || apiBase === undefined || requestPath === undefined || queryString === undefined || requestBody === undefined) {
+    return null;
+  }
+  return {
+    id,
+    timestamp: optionalNumber(entry.timestamp) ?? Date.now(),
+    endpointKey,
+    apiBase,
+    requestPath,
+    queryString,
+    requestBody,
+    status: optionalNumber(entry.status),
+    statusText: optionalString(entry.statusText),
+    responsePreview: optionalString(entry.responsePreview),
+    duration: optionalNumber(entry.duration),
+  };
+}
+
+function sanitizeHistory(entries: unknown[]): HistoryEntry[] {
+  return entries
+    .map(sanitizeHistoryEntry)
+    .filter((entry): entry is HistoryEntry => Boolean(entry));
+}
+
 function loadHistory(): HistoryEntry[] {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
@@ -31,7 +71,7 @@ function loadHistory(): HistoryEntry[] {
       localStorage.removeItem(STORAGE_KEY);
       return [];
     }
-    return parsed;
+    return sanitizeHistory(parsed);
   } catch {
     localStorage.removeItem(STORAGE_KEY);
     return [];
@@ -40,7 +80,7 @@ function loadHistory(): HistoryEntry[] {
 
 function saveHistory(entries: HistoryEntry[]): boolean {
   try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(entries));
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(sanitizeHistory(entries)));
     return true;
   } catch {
     return false;

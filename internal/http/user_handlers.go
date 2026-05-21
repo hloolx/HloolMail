@@ -94,12 +94,13 @@ func (h *Handler) createUser(c *gin.Context) {
 		return
 	}
 	user := models.User{
-		Email:        email,
-		PasswordHash: hash,
-		Role:         role,
-		Enabled:      true,
-		DailyLimit:   input.DailyLimit,
-		TotalLimit:   input.TotalLimit,
+		Email:         email,
+		PasswordHash:  hash,
+		EmailVerified: true,
+		Role:          role,
+		Enabled:       true,
+		DailyLimit:    input.DailyLimit,
+		TotalLimit:    input.TotalLimit,
 	}
 	if err := h.DB.Create(&user).Error; err != nil {
 		fail(c, http.StatusBadRequest, err.Error())
@@ -245,6 +246,53 @@ func (h *Handler) deleteUser(c *gin.Context) {
 	if err := h.DB.Transaction(func(tx *gorm.DB) error {
 		var domainIDs []uint
 		if err := tx.Model(&models.Domain{}).Where("owner_id = ?", user.ID).Pluck("id", &domainIDs).Error; err != nil {
+			return err
+		}
+		var mailboxIDs []uint
+		if err := tx.Model(&models.Mailbox{}).Where("owner_id = ?", user.ID).Pluck("id", &mailboxIDs).Error; err != nil {
+			return err
+		}
+		var mailboxEmails []string
+		if err := tx.Model(&models.Mailbox{}).Where("owner_id = ?", user.ID).Pluck("email", &mailboxEmails).Error; err != nil {
+			return err
+		}
+		if len(mailboxIDs) > 0 {
+			mailboxShares := tx.Model(&models.ShareLink{}).Where("resource_type = ? AND mailbox_id IN ?", models.ShareResourceTypeMailbox, mailboxIDs)
+			if err := tx.Where("share_link_id IN (?)", mailboxShares.Select("id")).Delete(&models.ShareLinkAccessLog{}).Error; err != nil {
+				return err
+			}
+			if err := tx.Where("resource_type = ? AND mailbox_id IN ?", models.ShareResourceTypeMailbox, mailboxIDs).Delete(&models.ShareLink{}).Error; err != nil {
+				return err
+			}
+		}
+		messageQuery := tx.Model(&models.Message{}).Where("owner_id = ?", user.ID)
+		if len(domainIDs) > 0 {
+			messageQuery = messageQuery.Or("domain_id IN ?", domainIDs)
+		}
+		if len(mailboxEmails) > 0 {
+			messageQuery = messageQuery.Or("recipient IN ?", mailboxEmails)
+		}
+		if err := deleteMessageDependentsForQuery(tx, messageQuery); err != nil {
+			return err
+		}
+		if err := messageQuery.Unscoped().Delete(&models.Message{}).Error; err != nil {
+			return err
+		}
+		userShareLinks := tx.Model(&models.ShareLink{}).Where("owner_id = ?", user.ID)
+		if err := tx.Where("share_link_id IN (?)", userShareLinks.Select("id")).Delete(&models.ShareLinkAccessLog{}).Error; err != nil {
+			return err
+		}
+		if err := tx.Where("owner_id = ?", user.ID).Delete(&models.ShareLink{}).Error; err != nil {
+			return err
+		}
+		if err := tx.Where("owner_id = ?", user.ID).Delete(&models.ShareLinkAccessLog{}).Error; err != nil {
+			return err
+		}
+		endpoints := tx.Model(&models.WebhookEndpoint{}).Where("owner_id = ?", user.ID)
+		if err := tx.Where("endpoint_id IN (?) OR owner_id = ?", endpoints.Select("id"), user.ID).Delete(&models.WebhookDelivery{}).Error; err != nil {
+			return err
+		}
+		if err := tx.Where("owner_id = ?", user.ID).Delete(&models.WebhookEndpoint{}).Error; err != nil {
 			return err
 		}
 		if err := tx.Where("owner_id = ?", user.ID).Delete(&models.APIKey{}).Error; err != nil {

@@ -139,6 +139,58 @@ func TestWorkerRetryClassification(t *testing.T) {
 	}
 }
 
+func TestWorkerCancelsExpiredMessageDeliveryWithoutPosting(t *testing.T) {
+	db := webhookTestDB(t)
+	owner := createWebhookTestUser(t, db, "expired-owner@example.test")
+	domain := createWebhookTestDomain(t, db, "expired-webhook.test", models.DomainModePrivate, &owner.ID)
+	msg := createWebhookTestMessage(t, db, "msg-expired-webhook", "demo@expired-webhook.test", domain)
+	endpoint := createWebhookTestEndpointForOwner(t, db, owner.ID, "https://example.com/hook", "secret", models.WebhookScopeAll, nil, nil)
+	delivery := createWebhookTestDelivery(t, db, endpoint, `{"message":{"text_content":"old secret","headers_json":"x-private"}}`)
+	now := time.Date(2026, 5, 20, 9, 30, 0, 0, time.UTC)
+	if err := db.Model(&models.Message{}).Where("id = ?", msg.ID).Update("expires_at", now.Add(-time.Minute)).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Model(&models.WebhookDelivery{}).Where("id = ?", delivery.ID).Updates(map[string]any{
+		"message_id": msg.ID,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	seen := false
+	worker := NewWorker(db)
+	worker.Now = func() time.Time { return now }
+	worker.Client = &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+		seen = true
+		return webhookHTTPResponse(http.StatusAccepted, "accepted"), nil
+	})}
+
+	if err := worker.RunOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if seen {
+		t.Fatal("worker posted an expired message delivery")
+	}
+	var refreshed models.WebhookDelivery
+	if err := db.First(&refreshed, "id = ?", delivery.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if refreshed.Status != models.WebhookDeliveryStatusFailed || refreshed.AttemptCount != 0 || refreshed.NextAttemptAt != nil {
+		t.Fatalf("expired delivery was not canceled: %+v", refreshed)
+	}
+	if refreshed.Error != RedactionReasonMessageExpired ||
+		!strings.Contains(refreshed.PayloadJSON, `"redacted":true`) ||
+		strings.Contains(refreshed.PayloadJSON, "old secret") ||
+		strings.Contains(refreshed.PayloadJSON, "x-private") {
+		t.Fatalf("expired delivery was not redacted: %+v", refreshed)
+	}
+	var refreshedEndpoint models.WebhookEndpoint
+	if err := db.First(&refreshedEndpoint, endpoint.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if refreshedEndpoint.FailureCount != 0 || refreshedEndpoint.LastFailureAt != nil {
+		t.Fatalf("message expiry should not count as endpoint failure: %+v", refreshedEndpoint)
+	}
+}
+
 func TestWorkerLockPreventsDuplicateClaims(t *testing.T) {
 	db := webhookTestDB(t)
 	endpoint := createWebhookTestEndpoint(t, db, 1, "https://example.com/hook", "secret")
@@ -176,6 +228,11 @@ func TestEnqueueMessageMatchesStrictOwnerAndScope(t *testing.T) {
 	publicOwnerEndpoint := createWebhookTestEndpointForOwner(t, db, publicOwner.ID, "https://example.com/public", "secret", models.WebhookScopeDomain, &publicDomain.ID, nil)
 	mailboxOwnerEndpoint := createWebhookTestEndpointForOwner(t, db, mailboxOwner.ID, "https://example.com/mailbox", "secret", models.WebhookScopeMailbox, nil, &mailbox.ID)
 	msg := createWebhookTestMessage(t, db, "msg-public-mailbox", mailbox.Email, publicDomain)
+	msg.OwnerID = &mailboxOwner.ID
+	msg.MailboxID = &mailbox.ID
+	if err := db.Model(&msg).Updates(map[string]any{"owner_id": mailboxOwner.ID, "mailbox_id": mailbox.ID}).Error; err != nil {
+		t.Fatal(err)
+	}
 	if err := db.Create(&models.MessageAttachment{
 		ID:          "00000000-0000-0000-0000-000000000501",
 		MessageID:   msg.ID,

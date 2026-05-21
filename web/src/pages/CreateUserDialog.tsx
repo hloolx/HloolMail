@@ -1,10 +1,9 @@
-import { useEffect, useRef, useState } from 'react';
+import { useRef, useState } from 'react';
 import type { FormEvent } from 'react';
-import { createPortal } from 'react-dom';
 import { X } from 'lucide-react';
 import type { User } from '../api';
 import { useText } from '../locales';
-import { IconButton, InfoTip, LoadingIndicator } from '../components/shared';
+import { DialogShell, IconButton, InfoTip, LoadingIndicator } from '../components/shared';
 import { type UserForm, emptyCreateForm, validateEmail } from './userFormHelpers';
 
 export function CreateUserDialog({
@@ -19,15 +18,8 @@ export function CreateUserDialog({
   const text = useText();
   const [form, setForm] = useState<UserForm>(() => emptyCreateForm());
   const [emailError, setEmailError] = useState('');
+  const emailInputRef = useRef<HTMLInputElement | null>(null);
   const submitButtonRef = useRef<HTMLButtonElement | null>(null);
-
-  useEffect(() => {
-    const handler = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') onClose();
-    };
-    window.addEventListener('keydown', handler);
-    return () => window.removeEventListener('keydown', handler);
-  }, [onClose]);
 
   const set = (key: keyof UserForm, value: string | boolean) => {
     setForm((current) => ({ ...current, [key]: value }));
@@ -40,13 +32,18 @@ export function CreateUserDialog({
     if (!isPending) onSubmit(form, submitButtonRef.current);
   };
 
-  return createPortal(
-    <div className="modal-backdrop" role="presentation" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
-      <section className="modal-panel user-edit-modal" role="dialog" aria-modal="true" aria-labelledby="create-user-title">
+  return (
+    <DialogShell
+      className="modal-panel user-edit-modal"
+      titleId="create-user-title"
+      descriptionId="create-user-desc"
+      onClose={onClose}
+      initialFocusRef={emailInputRef}
+    >
         <div className="modal-header">
           <div>
             <h2 id="create-user-title">{text.users.createTitle}</h2>
-            <p>{text.users.desc}</p>
+            <p id="create-user-desc">{text.users.desc}</p>
           </div>
           <IconButton title={text.common.close} onClick={onClose}>
             <X size={16} />
@@ -55,7 +52,7 @@ export function CreateUserDialog({
         <form className="user-form" onSubmit={submit}>
           <label className="user-form-field">
             <span>{text.users.email}</span>
-            <input className="input" value={form.email} onChange={(event) => set('email', event.target.value)} placeholder="user@example.com" />
+            <input ref={emailInputRef} className="input" value={form.email} onChange={(event) => set('email', event.target.value)} placeholder="user@example.com" />
             {emailError && <span className="field-error">{emailError}</span>}
           </label>
           <label className="user-form-field">
@@ -88,8 +85,6 @@ export function CreateUserDialog({
             </button>
           </div>
         </form>
-      </section>
-    </div>,
-    document.body
+    </DialogShell>
   );
 }

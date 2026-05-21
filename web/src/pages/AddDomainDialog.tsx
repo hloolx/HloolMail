@@ -1,6 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { createPortal } from 'react-dom';
-import { AnimatePresence, motion } from 'framer-motion';
+import { useCallback, useMemo, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Check, Copy, Globe2, Plus, ShieldCheck, X } from 'lucide-react';
 import { toast } from 'sonner';
@@ -12,7 +10,7 @@ import { useCopyState } from '../hooks/useCopyState';
 import { copy } from '../lib/clipboard';
 import { domainInputWantsWildcard, normalizeDomainInput } from '../lib/domain';
 import { notifySuccess } from '../lib/feedback';
-import { IconButton, InfoTip, LoadingIndicator } from '../components/shared';
+import { DialogShell, IconButton, InfoTip, LoadingIndicator } from '../components/shared';
 
 const MAX_BATCH_SIZE = 50;
 
@@ -55,7 +53,6 @@ export function AddDomainDialog({ open, onClose }: { open: boolean; onClose: () 
   const [mode, setMode] = useState<Domain['mode']>('private');
   const [results, setResults] = useState<BatchDomainItemResult[] | null>(null);
   const [mxCopied, markMxCopied] = useCopyState();
-  const panelRef = useRef<HTMLDivElement | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const submitButtonRef = useRef<HTMLButtonElement | null>(null);
 
@@ -80,41 +77,6 @@ export function AddDomainDialog({ open, onClose }: { open: boolean; onClose: () 
   const cfg = installStatus.data?.config;
   const mxTarget = (cfg?.expected_mx || 'mail.example.com').replace(/\.$/, '');
   const submitted = results !== null;
-
-  // Focus trap and escape handling
-  useEffect(() => {
-    if (!open) return;
-    panelRef.current?.focus();
-    const timer = setTimeout(() => textareaRef.current?.focus(), 50);
-
-    const handleKey = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') {
-        event.preventDefault();
-        onClose();
-        return;
-      }
-      if (event.key !== 'Tab') return;
-      const focusableElements = panelRef.current?.querySelectorAll<HTMLElement>(
-        'button:not([disabled]), textarea:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])'
-      );
-      if (!focusableElements || focusableElements.length === 0) return;
-      const first = focusableElements[0];
-      const last = focusableElements[focusableElements.length - 1];
-      if (event.shiftKey && document.activeElement === first) {
-        event.preventDefault();
-        last.focus();
-      } else if (!event.shiftKey && document.activeElement === last) {
-        event.preventDefault();
-        first.focus();
-      }
-    };
-
-    document.addEventListener('keydown', handleKey);
-    return () => {
-      clearTimeout(timer);
-      document.removeEventListener('keydown', handleKey);
-    };
-  }, [open, onClose]);
 
   const resetForm = () => {
     setDomainsText('');
@@ -189,49 +151,19 @@ export function AddDomainDialog({ open, onClose }: { open: boolean; onClose: () 
     setDomainsText(value);
   };
 
-  const backdropVariants = {
-    hidden: { opacity: 0 },
-    visible: { opacity: 1 },
-  };
-
-  const panelVariants = {
-    hidden: { opacity: 0, transform: 'translateY(0.55rem) scale(0.96)' },
-    visible: { opacity: 1, transform: 'translateY(0) scale(1)' },
-    exit: { opacity: 0, transform: 'translateY(0.55rem) scale(0.96)' },
-  };
-
-  return createPortal(
-    <AnimatePresence>
-      {open && (
-        <motion.div
-          className="modal-backdrop"
-          style={{ animation: 'none' }}
-          role="presentation"
-          variants={backdropVariants}
-          initial="hidden"
-          animate="visible"
-          exit="hidden"
-          transition={{ duration: 0.15 }}
-          onMouseDown={(event) => event.target === event.currentTarget && onClose()}
-        >
-          <motion.div
-            ref={panelRef}
-            className="modal-panel add-domain-modal"
-            style={{ animation: 'none' }}
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="add-domain-title"
-            tabIndex={-1}
-            variants={panelVariants}
-            initial="hidden"
-            animate="visible"
-            exit="exit"
-            transition={{ duration: 0.18 }}
-          >
+  return (
+    <DialogShell
+      open={open}
+      className="modal-panel add-domain-modal"
+      titleId="add-domain-title"
+      descriptionId="add-domain-desc"
+      onClose={onClose}
+      initialFocusRef={textareaRef}
+    >
             <div className="modal-header">
               <div>
                 <h2 id="add-domain-title">{text.domains.dialogTitle}</h2>
-                <p>{text.domains.batchDialogDesc}</p>
+                <p id="add-domain-desc">{text.domains.batchDialogDesc}</p>
               </div>
               <IconButton title={text.domains.closeTitle} onClick={onClose}>
                 <X size={16} />
@@ -350,11 +282,7 @@ export function AddDomainDialog({ open, onClose }: { open: boolean; onClose: () 
                 </button>
               )}
             </div>
-          </motion.div>
-        </motion.div>
-      )}
-    </AnimatePresence>,
-    document.body
+    </DialogShell>
   );
 }
 

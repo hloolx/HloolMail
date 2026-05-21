@@ -1,4 +1,4 @@
-import { FormEvent, useMemo, useState } from 'react';
+import { FormEvent, useMemo, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Check, Copy, ListChecks, RefreshCw, Share2, Trash2, X } from 'lucide-react';
 import { toast } from 'sonner';
@@ -9,7 +9,7 @@ import { copy } from '../lib/clipboard';
 import { relativeTime } from '../lib/display';
 import { notifySuccess, runDeleteEffect } from '../lib/feedback';
 import { useCopyState } from '../hooks/useCopyState';
-import { ConfirmModal, DataTable, EmptyState, IconButton, PaginationControls } from '../components/shared';
+import { ConfirmModal, DataTable, DialogShell, EmptyState, IconButton, PaginationControls } from '../components/shared';
 
 const SHARE_PER_PAGE = 10;
 
@@ -166,6 +166,7 @@ function CreateShareLinkDialog({ onClose, onCreated }: { onClose: () => void; on
   const text = useText();
   const [mailboxInput, setMailboxInput] = useState('');
   const [expiresAt, setExpiresAt] = useState('');
+  const mailboxInputRef = useRef<HTMLInputElement | null>(null);
   const mailboxes = useQuery({
     queryKey: ['mailboxes', 'share-links-create'],
     queryFn: () => api<PaginatedResponse<MailboxInfo>>('/api/mailboxes?page=1&per_page=50'),
@@ -195,12 +196,19 @@ function CreateShareLinkDialog({ onClose, onCreated }: { onClose: () => void; on
   };
 
   return (
-    <div className="modal-backdrop">
-      <form className="modal-panel automation-dialog" onSubmit={submit}>
+    <DialogShell
+      as="form"
+      className="modal-panel automation-dialog"
+      titleId="share-link-create-title"
+      descriptionId="share-link-create-desc"
+      onClose={onClose}
+      onSubmit={submit}
+      initialFocusRef={mailboxInputRef}
+    >
         <div className="modal-header">
           <div>
-            <h2>{text.shareLinks.createTitle}</h2>
-            <p>{text.shareLinks.createDesc}</p>
+            <h2 id="share-link-create-title">{text.shareLinks.createTitle}</h2>
+            <p id="share-link-create-desc">{text.shareLinks.createDesc}</p>
           </div>
           <IconButton title={text.common.close} onClick={onClose}>
             <X size={16} />
@@ -210,6 +218,7 @@ function CreateShareLinkDialog({ onClose, onCreated }: { onClose: () => void; on
           <label className="api-key-field">
             {text.shareLinks.mailboxIdOrEmail}
             <input
+              ref={mailboxInputRef}
               className="input"
               list="share-mailbox-options"
               value={mailboxInput}
@@ -236,8 +245,7 @@ function CreateShareLinkDialog({ onClose, onCreated }: { onClose: () => void; on
             {text.common.create}
           </button>
         </div>
-      </form>
-    </div>
+    </DialogShell>
   );
 }
 
@@ -275,12 +283,16 @@ function ShareAccessLogsModal({ link, onClose }: { link: ShareLinkDTO; onClose: 
     retry: false
   });
   return (
-    <div className="modal-backdrop">
-      <section className="modal-panel automation-log-modal">
+    <DialogShell
+      className="modal-panel automation-log-modal"
+      titleId="share-access-logs-title"
+      descriptionId="share-access-logs-desc"
+      onClose={onClose}
+    >
         <div className="modal-header">
           <div>
-            <h2>{text.shareLinks.accessLogsTitle}</h2>
-            <p>{shareTargetText(link, text)}</p>
+            <h2 id="share-access-logs-title">{text.shareLinks.accessLogsTitle}</h2>
+            <p id="share-access-logs-desc">{shareTargetText(link, text)}</p>
           </div>
           <IconButton title={text.common.close} onClick={onClose}>
             <X size={16} />
@@ -311,8 +323,7 @@ function ShareAccessLogsModal({ link, onClose }: { link: ShareLinkDTO; onClose: 
           />
           <PaginationControls page={logs.data?.page || page} totalPages={logs.data?.total_pages || 1} onPageChange={setPage} />
         </div>
-      </section>
-    </div>
+    </DialogShell>
   );
 }
 

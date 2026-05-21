@@ -49,15 +49,18 @@ export function APIKeysPage({ user }: { user: User }) {
     }
   });
   const deleteKeys = useMutation({
-    mutationFn: (targets: APIKey[]) =>
-      Promise.all(targets.map((key) => api(`/api/api-keys/${key.id}`, { method: 'DELETE' }))).then(() => undefined),
-    onSuccess: () => {
-      setDeleteTargets([]);
-      setSelectedKeyIds([]);
-      queryClient.invalidateQueries({ queryKey: ['api-keys'] });
-      notifySuccess(text.toast.apiKeyDeleted, { burst: false });
+    mutationFn: async (targets: APIKey[]) => {
+      const results = await Promise.allSettled(targets.map((key) => api(`/api/api-keys/${key.id}`, { method: 'DELETE' })));
+      const failed = results.find((result): result is PromiseRejectedResult => result.status === 'rejected');
+      if (failed) {
+        throw failed.reason instanceof Error ? failed.reason : new Error(String(failed.reason));
+      }
+      return targets;
     },
-    onError: (error) => toast.error(error.message)
+    onError: (error) => {
+      queryClient.invalidateQueries({ queryKey: ['api-keys'] });
+      toast.error(error.message);
+    }
   });
 
   const handleCopyKey = async (key: APIKey, event: MouseEvent<Element>) => {
@@ -78,6 +81,20 @@ export function APIKeysPage({ user }: { user: User }) {
 
   const toggleSelectAllKeys = () => {
     setSelectedKeyIds(allKeysSelected ? [] : keyList.map((key) => key.id));
+  };
+
+  const animateDeletedKeys = async (targets: APIKey[], targetEl: HTMLElement | null) => {
+    await new Promise(r => requestAnimationFrame(r));
+    if (targets.length === 1 && targetEl?.isConnected) {
+      await runDeleteEffect(targetEl);
+      return;
+    }
+    const rows = targets
+      .map((key) => document.querySelector(`[data-key-id="${key.id}"]`)?.closest('tr') as HTMLElement | null)
+      .filter((row): row is HTMLElement => Boolean(row?.isConnected));
+    for (const row of rows) {
+      await runDeleteEffect(row, { duration: 300, direction: 'up' });
+    }
   };
 
   const deleteConfirmText = deleteTargets.length > 1
@@ -212,18 +229,16 @@ export function APIKeysPage({ user }: { user: User }) {
           const targetEl = dissolveTarget;
           setDeleteTargets([]);
           setDissolveTarget(null);
-          await new Promise(r => requestAnimationFrame(r));
-          if (targets.length === 1 && targetEl) {
-            await runDeleteEffect(targetEl);
-          } else if (targets.length > 1) {
-            const rows = targets
-              .map((key) => document.querySelector(`[data-key-id="${key.id}"]`)?.closest('tr') as HTMLElement | null)
-              .filter(Boolean) as HTMLElement[];
-            for (const row of rows) {
-              await runDeleteEffect(row, { duration: 300, direction: 'up' });
-            }
+          try {
+            await deleteKeys.mutateAsync(targets);
+            const deletedIds = new Set(targets.map((key) => key.id));
+            setSelectedKeyIds((current) => current.filter((id) => !deletedIds.has(id)));
+            await animateDeletedKeys(targets, targetEl);
+            queryClient.invalidateQueries({ queryKey: ['api-keys'] });
+            notifySuccess(text.toast.apiKeyDeleted, { burst: false });
+          } catch {
+            // Error toast and cache refresh are handled by the mutation.
           }
-          deleteKeys.mutate(targets);
         }}
         onCancel={() => {
           setDeleteTargets([]);

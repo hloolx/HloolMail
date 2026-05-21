@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import type { MouseEventHandler } from 'react'
-import { AnimatePresence, motion } from 'framer-motion'
+import { AnimatePresence, motion, useReducedMotion } from 'framer-motion'
 import { AlertTriangle, X } from 'lucide-react'
 
 type ConfirmModalProps = {
@@ -32,6 +32,7 @@ export function ConfirmModal({
   const cancelButtonRef = useRef<HTMLButtonElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
   const closeButtonRef = useRef<HTMLButtonElement>(null)
+  const shouldReduceMotion = useReducedMotion()
 
   const canConfirm = requireType ? inputValue === requireType : true
 
@@ -85,14 +86,14 @@ export function ConfirmModal({
   }, [open, onCancel])
 
   return (
-    <AnimatePresence>
+    <AnimatePresence initial={!shouldReduceMotion}>
       {open && (
         <motion.div
           className="fixed inset-0 z-[90] flex items-center justify-center"
-          initial={{ opacity: 0 }}
+          initial={shouldReduceMotion ? false : { opacity: 0 }}
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
-          transition={{ duration: 0.15 }}
+          transition={shouldReduceMotion ? { duration: 0 } : { duration: 0.15 }}
         >
           {/* Backdrop */}
           <div
@@ -110,10 +111,10 @@ export function ConfirmModal({
             aria-labelledby="confirm-modal-title"
             aria-describedby="confirm-modal-desc"
             className="relative z-10 w-full max-w-md rounded-xl border border-[var(--border)] bg-[var(--panel)] p-6 shadow-xl"
-            initial={{ opacity: 0, scale: 0.95 }}
-            animate={{ opacity: 1, scale: 1 }}
-            exit={{ opacity: 0, scale: 0.95 }}
-            transition={{ duration: 0.2, ease: 'easeOut' }}
+            initial={shouldReduceMotion ? false : { opacity: 0, scale: 0.95 }}
+            animate={shouldReduceMotion ? { opacity: 1 } : { opacity: 1, scale: 1 }}
+            exit={shouldReduceMotion ? { opacity: 0 } : { opacity: 0, scale: 0.95 }}
+            transition={shouldReduceMotion ? { duration: 0 } : { duration: 0.2, ease: 'easeOut' }}
           >
             {/* Close button */}
             <button

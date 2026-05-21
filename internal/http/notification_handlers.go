@@ -122,14 +122,7 @@ func (h *Handler) notificationStream(c *gin.Context) {
 }
 
 func (h *Handler) notificationUser(c *gin.Context) (*models.User, bool) {
-	if user := currentUser(c); user != nil {
-		return user, true
-	}
-	if user := currentAPIKeyUser(c); user != nil {
-		return user, true
-	}
-	fail(c, http.StatusUnauthorized, "login required")
-	return nil, false
+	return h.requireLogin(c)
 }
 
 func (h *Handler) notificationScope(user *models.User) *gorm.DB {

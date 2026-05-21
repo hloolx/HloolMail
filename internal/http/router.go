@@ -17,6 +17,7 @@ import (
 	"gptmail/internal/events"
 	"gptmail/internal/frontend"
 	"gptmail/internal/jobs"
+	"gptmail/internal/mailer"
 )
 
 type noDirFS struct {
@@ -51,6 +52,7 @@ type Handler struct {
 	DomainHealth *jobs.DomainHealthJob
 	RateLimiter  *rateLimiter
 	AuditLogger  *AuditLogger
+	Mailer       mailer.Sender
 
 	rateLimiterOnce sync.Once
 }
@@ -75,7 +77,9 @@ func NewRouter(h *Handler) *gin.Engine {
 	api.POST("/auth/login", h.perIPRateLimit(1.0/3, 5), h.login)
 	api.POST("/auth/passkeys/login/start", h.perIPRateLimit(1.0/3, 5), h.beginPasskeyLogin)
 	api.POST("/auth/passkeys/login/finish", h.perIPRateLimit(1.0/3, 5), h.finishPasskeyLogin)
+	api.POST("/auth/register/captcha", h.perIPRateLimit(1.0/3, 5), h.registrationCaptcha)
 	api.POST("/auth/register", h.perIPRateLimit(1.0/3, 5), h.register)
+	api.POST("/auth/register/verify", h.perIPRateLimit(1.0/3, 5), h.verifyRegistration)
 	api.GET("/oauth/providers", h.perIPRateLimit(1, 10), h.listOAuthProviders)
 	api.GET("/oauth/:provider/login", h.perIPRateLimit(1.0/3, 5), h.oauthRedirect)
 	api.GET("/oauth/:provider/callback", h.perIPRateLimit(1, 10), h.oauthCallback)
@@ -183,6 +187,7 @@ func NewRouter(h *Handler) *gin.Engine {
 	adminGroup.GET("/admin/quota-alerts", h.adminQuotaAlerts)
 	adminGroup.GET("/admin/login-settings", h.adminLoginSettings)
 	adminGroup.PATCH("/admin/login-settings", h.patchAdminLoginSettings)
+	adminGroup.POST("/admin/login-settings/test-email", h.testAdminLoginSettingsEmail)
 	adminGroup.GET("/admin/quota-settings", h.adminQuotaSettings)
 	adminGroup.PATCH("/admin/quota-settings", h.patchAdminQuotaSettings)
 	adminGroup.GET("/admin/audit-logs", h.adminAuditLogs)

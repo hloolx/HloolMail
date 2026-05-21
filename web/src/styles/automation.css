@@ -214,6 +214,15 @@
     grid-template-columns: minmax(0, 1fr);
   }
 
+  .one-time-secret-card .btn-secondary,
+  .shared-password-form .btn-primary {
+    width: 100%;
+  }
+
+  .one-time-secret-card .icon-btn {
+    justify-self: start;
+  }
+
   .shared-meta {
     grid-template-columns: minmax(0, 1fr);
   }

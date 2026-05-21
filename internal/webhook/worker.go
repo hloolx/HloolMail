@@ -7,6 +7,7 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"math/big"
@@ -151,6 +152,13 @@ func (w *Worker) deliver(ctx context.Context, delivery *models.WebhookDelivery) 
 			return err
 		}
 	}
+	deliverable, err := w.messageStillDeliverable(ctx, delivery, now)
+	if err != nil {
+		return err
+	}
+	if !deliverable {
+		return nil
+	}
 	if !delivery.Endpoint.Enabled || delivery.Endpoint.DisabledAt != nil || delivery.Endpoint.DeletedAt.Valid {
 		return w.finishFailure(ctx, delivery, now, "endpoint disabled", nil, "", false)
 	}
@@ -158,14 +166,27 @@ func (w *Worker) deliver(ctx context.Context, delivery *models.WebhookDelivery) 
 		return w.finishFailure(ctx, delivery, now, err.Error(), nil, "", false)
 	}
 	attempt := delivery.AttemptCount + 1
-	if err := w.DB.WithContext(ctx).Model(&models.WebhookDelivery{}).Where("id = ?", delivery.ID).Updates(map[string]any{
-		"attempt_count":   attempt,
-		"last_attempt_at": now,
-		"response_status": nil,
-		"response_body":   "",
-		"error":           "",
-	}).Error; err != nil {
+	result := w.DB.WithContext(ctx).Model(&models.WebhookDelivery{}).
+		Where("id = ? AND status = ?", delivery.ID, models.WebhookDeliveryStatusDelivering).
+		Updates(map[string]any{
+			"attempt_count":   attempt,
+			"last_attempt_at": now,
+			"response_status": nil,
+			"response_body":   "",
+			"error":           "",
+		})
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected == 0 {
+		return nil
+	}
+	claimed, err := w.deliveryStillClaimed(ctx, delivery)
+	if err != nil {
 		return err
+	}
+	if !claimed {
+		return nil
 	}
 	timestamp := now.UTC().Format(time.RFC3339)
 	rawPayload := []byte(delivery.PayloadJSON)
@@ -202,18 +223,53 @@ func (w *Worker) deliver(ctx context.Context, delivery *models.WebhookDelivery) 
 	return w.finishFailure(ctx, delivery, now, fmt.Sprintf("webhook returned HTTP %d", resp.StatusCode), &resp.StatusCode, responseBody, retryable)
 }
 
+func (w *Worker) messageStillDeliverable(ctx context.Context, delivery *models.WebhookDelivery, now time.Time) (bool, error) {
+	if delivery.EventType != models.WebhookEventMessageReceived || delivery.MessageID == "" {
+		return true, nil
+	}
+	var msg models.Message
+	err := w.DB.WithContext(ctx).Select("id", "expires_at").First(&msg, "id = ?", delivery.MessageID).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return false, RedactMessageDeliveriesByID(w.DB.WithContext(ctx), delivery.MessageID, now, RedactionReasonMessageDeleted)
+	}
+	if err != nil {
+		return false, err
+	}
+	if !msg.ExpiresAt.After(now) {
+		return false, RedactMessageDeliveriesByID(w.DB.WithContext(ctx), delivery.MessageID, now, RedactionReasonMessageExpired)
+	}
+	return true, nil
+}
+
+func (w *Worker) deliveryStillClaimed(ctx context.Context, delivery *models.WebhookDelivery) (bool, error) {
+	var current models.WebhookDelivery
+	if err := w.DB.WithContext(ctx).Select("status", "payload_json").First(&current, "id = ?", delivery.ID).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return false, nil
+		}
+		return false, err
+	}
+	return current.Status == models.WebhookDeliveryStatusDelivering && current.PayloadJSON == delivery.PayloadJSON, nil
+}
+
 func (w *Worker) finishSuccess(ctx context.Context, delivery *models.WebhookDelivery, now time.Time, status int, body string) error {
 	return w.DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if err := tx.Model(&models.WebhookDelivery{}).Where("id = ?", delivery.ID).Updates(map[string]any{
-			"status":          models.WebhookDeliveryStatusSucceeded,
-			"locked_at":       nil,
-			"locked_by":       "",
-			"succeeded_at":    now,
-			"response_status": status,
-			"response_body":   body,
-			"error":           "",
-		}).Error; err != nil {
-			return err
+		result := tx.Model(&models.WebhookDelivery{}).
+			Where("id = ? AND status = ?", delivery.ID, models.WebhookDeliveryStatusDelivering).
+			Updates(map[string]any{
+				"status":          models.WebhookDeliveryStatusSucceeded,
+				"locked_at":       nil,
+				"locked_by":       "",
+				"succeeded_at":    now,
+				"response_status": status,
+				"response_body":   body,
+				"error":           "",
+			})
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected == 0 {
+			return nil
 		}
 		return tx.Model(&models.WebhookEndpoint{}).Where("id = ?", delivery.EndpointID).Updates(map[string]any{
 			"last_success_at": now,
@@ -244,8 +300,14 @@ func (w *Worker) finishFailure(ctx context.Context, delivery *models.WebhookDeli
 			"response_body":   body,
 			"error":           message,
 		}
-		if err := tx.Model(&models.WebhookDelivery{}).Where("id = ?", delivery.ID).Updates(updates).Error; err != nil {
-			return err
+		result := tx.Model(&models.WebhookDelivery{}).
+			Where("id = ? AND status = ?", delivery.ID, models.WebhookDeliveryStatusDelivering).
+			Updates(updates)
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected == 0 {
+			return nil
 		}
 		return tx.Model(&models.WebhookEndpoint{}).Where("id = ?", delivery.EndpointID).Updates(map[string]any{
 			"last_failure_at": now,

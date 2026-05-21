@@ -1,4 +1,4 @@
-import { FormEvent, useEffect, useState } from 'react';
+import { FormEvent, useEffect, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Check, Copy, Edit3, ListChecks, Play, Plus, RefreshCw, Trash2, Webhook, X } from 'lucide-react';
 import { toast } from 'sonner';
@@ -8,7 +8,7 @@ import { useText } from '../locales';
 import { copy } from '../lib/clipboard';
 import { relativeTime } from '../lib/display';
 import { useCopyState } from '../hooks/useCopyState';
-import { ConfirmModal, DataTable, EmptyState, IconButton, PaginationControls } from '../components/shared';
+import { ConfirmModal, DataTable, DialogShell, EmptyState, IconButton, PaginationControls } from '../components/shared';
 
 const WEBHOOK_PER_PAGE = 10;
 const DELIVERY_PER_PAGE = 20;
@@ -197,6 +197,7 @@ function WebhookEditor({
 }) {
   const text = useText();
   const [form, setForm] = useState<WebhookFormState>(() => formFromEndpoint(endpoint));
+  const nameInputRef = useRef<HTMLInputElement | null>(null);
   const isEdit = Boolean(endpoint);
   const save = useMutation({
     mutationFn: () => {
@@ -220,12 +221,19 @@ function WebhookEditor({
   };
 
   return (
-    <div className="modal-backdrop">
-      <form className="modal-panel automation-dialog" onSubmit={submit}>
+    <DialogShell
+      as="form"
+      className="modal-panel automation-dialog"
+      titleId="webhook-editor-title"
+      descriptionId="webhook-editor-desc"
+      onClose={onClose}
+      onSubmit={submit}
+      initialFocusRef={nameInputRef}
+    >
         <div className="modal-header">
           <div>
-            <h2>{isEdit ? text.webhooks.editTitle : text.webhooks.createTitle}</h2>
-            <p>{text.webhooks.dialogDesc}</p>
+            <h2 id="webhook-editor-title">{isEdit ? text.webhooks.editTitle : text.webhooks.createTitle}</h2>
+            <p id="webhook-editor-desc">{text.webhooks.dialogDesc}</p>
           </div>
           <IconButton title={text.common.close} onClick={onClose}>
             <X size={16} />
@@ -234,7 +242,7 @@ function WebhookEditor({
         <div className="automation-form">
           <label className="api-key-field">
             {text.webhooks.name}
-            <input className="input" value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} required />
+            <input ref={nameInputRef} className="input" value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} required />
           </label>
           <label className="api-key-field">
             {text.webhooks.url}
@@ -283,8 +291,7 @@ function WebhookEditor({
             {isEdit ? text.webhooks.save : text.common.create}
           </button>
         </div>
-      </form>
-    </div>
+    </DialogShell>
   );
 }
 
@@ -319,12 +326,16 @@ function WebhookDeliveriesModal({ endpoint, onClose }: { endpoint: WebhookEndpoi
     retry: false
   });
   return (
-    <div className="modal-backdrop">
-      <section className="modal-panel automation-log-modal">
+    <DialogShell
+      className="modal-panel automation-log-modal"
+      titleId="webhook-deliveries-title"
+      descriptionId="webhook-deliveries-desc"
+      onClose={onClose}
+    >
         <div className="modal-header">
           <div>
-            <h2>{text.webhooks.deliveriesTitle}</h2>
-            <p>{endpoint.name}</p>
+            <h2 id="webhook-deliveries-title">{text.webhooks.deliveriesTitle}</h2>
+            <p id="webhook-deliveries-desc">{endpoint.name}</p>
           </div>
           <IconButton title={text.common.close} onClick={onClose}>
             <X size={16} />
@@ -359,8 +370,7 @@ function WebhookDeliveriesModal({ endpoint, onClose }: { endpoint: WebhookEndpoi
           />
           <PaginationControls page={deliveries.data?.page || page} totalPages={deliveries.data?.total_pages || 1} onPageChange={setPage} />
         </div>
-      </section>
-    </div>
+    </DialogShell>
   );
 }
 

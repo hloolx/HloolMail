@@ -194,10 +194,11 @@ func (h *Handler) stats(c *gin.Context) {
 }
 
 func (h *Handler) statsTimeseries(c *gin.Context) {
-	actor, allowed := h.requireActor(c)
-	if !allowed {
+	user, loggedIn := h.requireLogin(c)
+	if !loggedIn {
 		return
 	}
+	actor := &requestActor{User: user}
 	days := parseLimit(c.Query("days"), 7, 30)
 	if days < 2 {
 		days = 7
@@ -553,8 +554,12 @@ func (h *Handler) listEmails(c *gin.Context) {
 	if !allowed {
 		return
 	}
-	_ = d
 	if currentAPIKey(c) == nil && !h.consumeUserQuota(c) {
+		return
+	}
+	messageQuery, err := h.scopeInboxMessages(h.DB.Model(&models.Message{}), h.currentActor(c), parts.Recipient, d)
+	if err != nil {
+		fail(c, http.StatusInternalServerError, err.Error())
 		return
 	}
 	paged := c.Query("page") != "" || c.Query("per_page") != ""
@@ -562,7 +567,7 @@ func (h *Handler) listEmails(c *gin.Context) {
 		page := parsePage(c.Query("page"))
 		perPage := parseLimit(c.Query("per_page"), 10, 100)
 		var total int64
-		if err := h.DB.Model(&models.Message{}).Where("recipient = ?", parts.Recipient).Count(&total).Error; err != nil {
+		if err := messageQuery.Session(&gorm.Session{}).Count(&total).Error; err != nil {
 			fail(c, http.StatusInternalServerError, err.Error())
 			return
 		}
@@ -571,7 +576,7 @@ func (h *Handler) listEmails(c *gin.Context) {
 			page = totalPages
 		}
 		var messages []models.Message
-		if err := h.DB.Where("recipient = ?", parts.Recipient).
+		if err := messageQuery.Session(&gorm.Session{}).
 			Order("created_at desc").
 			Limit(perPage).
 			Offset((page - 1) * perPage).
@@ -595,7 +600,7 @@ func (h *Handler) listEmails(c *gin.Context) {
 	}
 	limit := parseLimit(c.Query("limit"), 50, 200)
 	var messages []models.Message
-	if err := h.DB.Where("recipient = ?", parts.Recipient).
+	if err := messageQuery.
 		Order("created_at desc").
 		Limit(limit).
 		Find(&messages).Error; err != nil {
@@ -611,16 +616,21 @@ func (h *Handler) listEmails(c *gin.Context) {
 }
 
 func (h *Handler) nextEmail(c *gin.Context) {
-	parts, _, allowed := h.authorizeInbox(c, c.Query("email"))
+	parts, d, allowed := h.authorizeInbox(c, c.Query("email"))
 	if !allowed {
 		return
 	}
 	if currentAPIKey(c) == nil && !h.consumeUserQuota(c) {
 		return
 	}
+	messageQuery, err := h.scopeInboxMessages(h.DB.Model(&models.Message{}), h.currentActor(c), parts.Recipient, d)
+	if err != nil {
+		fail(c, http.StatusInternalServerError, err.Error())
+		return
+	}
 	for attempt := 0; attempt < 5; attempt++ {
 		var msg models.Message
-		err := h.DB.Where("recipient = ? AND seen = ?", parts.Recipient, false).
+		err := messageQuery.Session(&gorm.Session{}).Where("seen = ?", false).
 			Order("created_at desc").
 			First(&msg).Error
 		if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -667,6 +677,15 @@ func (h *Handler) getEmail(c *gin.Context) {
 	if _, _, allowed := h.authorizeInbox(c, msg.Recipient); !allowed {
 		return
 	}
+	canAccess, err := h.actorCanAccessMessage(h.currentActor(c), msg)
+	if err != nil {
+		fail(c, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if !canAccess {
+		fail(c, http.StatusNotFound, "message not found")
+		return
+	}
 	msg.HTMLContent = mailhtml.Sanitize(msg.HTMLContent)
 	attachments, err := h.attachmentMetadataForMessage(msg.ID)
 	if err != nil {
@@ -689,6 +708,15 @@ func (h *Handler) markEmailRead(c *gin.Context) {
 	if _, _, allowed := h.authorizeInbox(c, msg.Recipient); !allowed {
 		return
 	}
+	canAccess, err := h.actorCanAccessMessage(h.currentActor(c), msg)
+	if err != nil {
+		fail(c, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if !canAccess {
+		fail(c, http.StatusNotFound, "message not found")
+		return
+	}
 	if err := h.DB.Model(&msg).Update("seen", true).Error; err != nil {
 		fail(c, http.StatusInternalServerError, err.Error())
 		return
@@ -705,12 +733,18 @@ func (h *Handler) deleteEmail(c *gin.Context) {
 	if _, _, allowed := h.authorizeInbox(c, msg.Recipient); !allowed {
 		return
 	}
+	canAccess, err := h.actorCanAccessMessage(h.currentActor(c), msg)
+	if err != nil {
+		fail(c, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if !canAccess {
+		fail(c, http.StatusNotFound, "message not found")
+		return
+	}
 	if err := h.DB.Transaction(func(tx *gorm.DB) error {
 		messageQuery := tx.Model(&models.Message{}).Where("id = ?", msg.ID)
-		if err := deleteShareLinksForMessageQuery(tx, messageQuery); err != nil {
-			return err
-		}
-		if err := tx.Where("message_id = ?", msg.ID).Delete(&models.MessageAttachment{}).Error; err != nil {
+		if err := deleteMessageDependentsForQuery(tx, messageQuery); err != nil {
 			return err
 		}
 		return tx.Unscoped().Delete(&msg).Error
@@ -722,19 +756,19 @@ func (h *Handler) deleteEmail(c *gin.Context) {
 }
 
 func (h *Handler) clearEmails(c *gin.Context) {
-	parts, _, allowed := h.authorizeInbox(c, c.Query("email"))
+	parts, d, allowed := h.authorizeInbox(c, c.Query("email"))
 	if !allowed {
 		return
 	}
 	if err := h.DB.Transaction(func(tx *gorm.DB) error {
-		messageQuery := tx.Model(&models.Message{}).Where("recipient = ?", parts.Recipient)
-		if err := deleteShareLinksForMessageQuery(tx, messageQuery); err != nil {
+		messageQuery, err := h.scopeInboxMessages(tx.Model(&models.Message{}), h.currentActor(c), parts.Recipient, d)
+		if err != nil {
 			return err
 		}
-		if err := deleteAttachmentsForMessageQuery(tx, messageQuery); err != nil {
+		if err := deleteMessageDependentsForQuery(tx, messageQuery); err != nil {
 			return err
 		}
-		return tx.Unscoped().Where("recipient = ?", parts.Recipient).Delete(&models.Message{}).Error
+		return messageQuery.Unscoped().Delete(&models.Message{}).Error
 	}); err != nil {
 		fail(c, http.StatusInternalServerError, err.Error())
 		return
@@ -957,10 +991,11 @@ func (h *Handler) checkMX(c *gin.Context) {
 }
 
 func (h *Handler) listDomains(c *gin.Context) {
-	actor, allowed := h.requireActor(c)
-	if !allowed {
+	user, loggedIn := h.requireLogin(c)
+	if !loggedIn {
 		return
 	}
+	actor := &requestActor{User: user}
 	var domains []models.Domain
 	query := h.scopeDomains(actor).Order("domain asc")
 	if err := query.Find(&domains).Error; err != nil {
@@ -1025,10 +1060,11 @@ func (h *Handler) getDomain(c *gin.Context) {
 		fail(c, http.StatusNotFound, "domain not found")
 		return
 	}
-	actor, allowed := h.requireActor(c)
-	if !allowed {
+	user, loggedIn := h.requireLogin(c)
+	if !loggedIn {
 		return
 	}
+	actor := &requestActor{User: user}
 	var d models.Domain
 	if err := h.DB.First(&d, "id = ?", id).Error; err != nil {
 		fail(c, http.StatusNotFound, "domain not found")
@@ -1180,7 +1216,42 @@ func (h *Handler) deleteDomain(c *gin.Context) {
 		fail(c, http.StatusForbidden, "domain access denied")
 		return
 	}
-	if err := h.DB.Delete(&d).Error; err != nil {
+	if err := h.DB.Transaction(func(tx *gorm.DB) error {
+		var mailboxIDs []uint
+		if err := tx.Model(&models.Mailbox{}).Where("domain_id = ?", d.ID).Pluck("id", &mailboxIDs).Error; err != nil {
+			return err
+		}
+		if len(mailboxIDs) > 0 {
+			mailboxShares := tx.Model(&models.ShareLink{}).Where("resource_type = ? AND mailbox_id IN ?", models.ShareResourceTypeMailbox, mailboxIDs)
+			if err := tx.Where("share_link_id IN (?)", mailboxShares.Select("id")).Delete(&models.ShareLinkAccessLog{}).Error; err != nil {
+				return err
+			}
+			if err := tx.Where("resource_type = ? AND mailbox_id IN ?", models.ShareResourceTypeMailbox, mailboxIDs).Delete(&models.ShareLink{}).Error; err != nil {
+				return err
+			}
+		}
+		messageQuery := tx.Model(&models.Message{}).Where("domain_id = ? OR (domain_id IS NULL AND root_domain = ?)", d.ID, d.Domain)
+		if err := deleteDomainMessageDependentsForQuery(tx, messageQuery); err != nil {
+			return err
+		}
+		if err := messageQuery.Unscoped().Delete(&models.Message{}).Error; err != nil {
+			return err
+		}
+		endpoints := tx.Model(&models.WebhookEndpoint{}).Where("domain_id = ?", d.ID)
+		if err := tx.Where("endpoint_id IN (?)", endpoints.Select("id")).Delete(&models.WebhookDelivery{}).Error; err != nil {
+			return err
+		}
+		if err := tx.Where("domain_id = ?", d.ID).Delete(&models.WebhookEndpoint{}).Error; err != nil {
+			return err
+		}
+		if err := tx.Where("domain_id = ?", d.ID).Delete(&models.Notification{}).Error; err != nil {
+			return err
+		}
+		if err := tx.Where("domain_id = ?", d.ID).Delete(&models.Mailbox{}).Error; err != nil {
+			return err
+		}
+		return tx.Delete(&d).Error
+	}); err != nil {
 		fail(c, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -1893,10 +1964,10 @@ func (h *Handler) listMailboxes(c *gin.Context) {
 	out := make([]mailboxWithCount, 0, len(mailboxes))
 	for _, m := range mailboxes {
 		var count int64
-		h.DB.Model(&models.Message{}).Where("recipient = ?", m.Email).Count(&count)
+		h.scopeInboxMessagesForMailbox(h.DB.Model(&models.Message{}), m).Count(&count)
 		var lastMsg models.Message
 		lastAt := new(time.Time)
-		if err := h.DB.Where("recipient = ?", m.Email).Order("created_at desc").First(&lastMsg).Error; err == nil {
+		if err := h.scopeInboxMessagesForMailbox(h.DB.Model(&models.Message{}), m).Order("created_at desc").First(&lastMsg).Error; err == nil {
 			*lastAt = lastMsg.CreatedAt
 		} else {
 			lastAt = nil
@@ -1940,14 +2011,11 @@ func (h *Handler) deleteMailbox(c *gin.Context) {
 		if err := deleteShareLinksForMailboxQuery(tx, mailbox.ID); err != nil {
 			return err
 		}
-		messageQuery := tx.Model(&models.Message{}).Where("recipient = ?", mailbox.Email)
-		if err := deleteShareLinksForMessageQuery(tx, messageQuery); err != nil {
+		messageQuery := tx.Model(&models.Message{}).Where("mailbox_id = ? OR (owner_id = ? AND recipient = ?) OR (owner_id IS NULL AND recipient = ?)", mailbox.ID, mailbox.OwnerID, mailbox.Email, mailbox.Email)
+		if err := deleteMailboxMessageDependentsForQuery(tx, messageQuery); err != nil {
 			return err
 		}
-		if err := deleteAttachmentsForMessageQuery(tx, messageQuery); err != nil {
-			return err
-		}
-		result := tx.Unscoped().Where("recipient = ?", mailbox.Email).Delete(&models.Message{})
+		result := messageQuery.Unscoped().Delete(&models.Message{})
 		if result.Error != nil {
 			return result.Error
 		}

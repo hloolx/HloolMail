@@ -1,10 +1,9 @@
-import { useEffect, useRef, useState } from 'react';
+import { useRef, useState } from 'react';
 import type { FormEvent } from 'react';
-import { createPortal } from 'react-dom';
 import { X } from 'lucide-react';
 import type { User } from '../api';
 import { useText } from '../locales';
-import { IconButton, InfoTip, LoadingIndicator } from '../components/shared';
+import { DialogShell, IconButton, InfoTip, LoadingIndicator } from '../components/shared';
 import { type UserForm, formFromUser, validateEmail } from './userFormHelpers';
 
 export function EditUserDialog({
@@ -23,16 +22,9 @@ export function EditUserDialog({
   const text = useText();
   const [form, setForm] = useState<UserForm>(() => formFromUser(user));
   const [emailError, setEmailError] = useState('');
+  const emailInputRef = useRef<HTMLInputElement | null>(null);
   const submitButtonRef = useRef<HTMLButtonElement | null>(null);
   const isSelf = currentUser.id === user.id;
-
-  useEffect(() => {
-    const handler = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') onClose();
-    };
-    window.addEventListener('keydown', handler);
-    return () => window.removeEventListener('keydown', handler);
-  }, [onClose]);
 
   const set = (key: keyof UserForm, value: string | boolean) => {
     setForm((current) => ({ ...current, [key]: value }));
@@ -45,13 +37,18 @@ export function EditUserDialog({
     if (!isPending) onSubmit(form, submitButtonRef.current);
   };
 
-  return createPortal(
-    <div className="modal-backdrop" role="presentation" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
-      <section className="modal-panel user-edit-modal" role="dialog" aria-modal="true" aria-labelledby="edit-user-title">
+  return (
+    <DialogShell
+      className="modal-panel user-edit-modal"
+      titleId="edit-user-title"
+      descriptionId="edit-user-desc"
+      onClose={onClose}
+      initialFocusRef={emailInputRef}
+    >
         <div className="modal-header">
           <div>
             <h2 id="edit-user-title">{text.users.editTitle}</h2>
-            <p>{user.email}</p>
+            <p id="edit-user-desc">{user.email}</p>
           </div>
           <IconButton title={text.common.close} onClick={onClose}>
             <X size={16} />
@@ -60,7 +57,7 @@ export function EditUserDialog({
         <form className="user-form" onSubmit={submit}>
           <label className="user-form-field">
             <span>{text.users.email}</span>
-            <input className="input" value={form.email} onChange={(event) => set('email', event.target.value)} />
+            <input ref={emailInputRef} className="input" value={form.email} onChange={(event) => set('email', event.target.value)} />
             {emailError && <span className="field-error">{emailError}</span>}
           </label>
           <label className="user-form-field">
@@ -106,8 +103,6 @@ export function EditUserDialog({
             </button>
           </div>
         </form>
-      </section>
-    </div>,
-    document.body
+    </DialogShell>
   );
 }

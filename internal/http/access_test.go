@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -18,7 +19,9 @@ import (
 	"gptmail/internal/config"
 	"gptmail/internal/domain"
 	"gptmail/internal/events"
+	"gptmail/internal/mailer"
 	"gptmail/internal/models"
+	"gptmail/internal/webhook"
 
 	"github.com/glebarez/sqlite"
 	"gorm.io/gorm"
@@ -458,6 +461,10 @@ func TestAPIKeyCanGenerateAndReadOwnedMailbox(t *testing.T) {
 	if generatedBody.Data.Email != "demo@public.test" {
 		t.Fatalf("generated email = %q", generatedBody.Data.Email)
 	}
+	var mailbox models.Mailbox
+	if err := db.First(&mailbox, "email = ?", generatedBody.Data.Email).Error; err != nil {
+		t.Fatal(err)
+	}
 
 	now := time.Now()
 	message := models.Message{
@@ -467,6 +474,8 @@ func TestAPIKeyCanGenerateAndReadOwnedMailbox(t *testing.T) {
 		RecipientDomain: "public.test",
 		RootDomain:      "public.test",
 		DomainID:        &publicDomain.ID,
+		OwnerID:         &owner.ID,
+		MailboxID:       &mailbox.ID,
 		FromAddress:     "sender@example.com",
 		Subject:         "hello",
 		TextContent:     "body",
@@ -657,6 +666,80 @@ func TestDeleteMailboxRemovesStoredMessagesBeforeAddressReuse(t *testing.T) {
 	oldDetail := perform(router, http.MethodGet, "/api/email/old-message-1", nil, map[string]string{"X-API-Key": otherPlain})
 	if oldDetail.Code != http.StatusNotFound {
 		t.Fatalf("old message detail should be gone, got %d: %s", oldDetail.Code, oldDetail.Body.String())
+	}
+}
+
+func TestRecreatedMailboxDoesNotSeeLegacyUnownedMessages(t *testing.T) {
+	db := httpTestDB(t)
+	hash, err := auth.HashSecret("password123")
+	if err != nil {
+		t.Fatal(err)
+	}
+	owner := models.User{
+		Email:        "legacy-owner@example.com",
+		PasswordHash: hash,
+		Role:         models.UserRoleUser,
+		Enabled:      true,
+		DailyLimit:   1000,
+	}
+	if err := db.Create(&owner).Error; err != nil {
+		t.Fatal(err)
+	}
+	publicDomain := models.Domain{
+		Domain:     "legacy-reuse.test",
+		Mode:       models.DomainModePublic,
+		Active:     true,
+		MXVerified: true,
+	}
+	if err := db.Create(&publicDomain).Error; err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	legacy := models.Message{
+		ID:              "legacy-unowned-message",
+		Recipient:       "victim@legacy-reuse.test",
+		RecipientLocal:  "victim",
+		RecipientDomain: "legacy-reuse.test",
+		RootDomain:      publicDomain.Domain,
+		DomainID:        &publicDomain.ID,
+		FromAddress:     "sender@example.com",
+		Subject:         "legacy",
+		TextContent:     "legacy body",
+		CreatedAt:       now,
+		ExpiresAt:       now.Add(time.Hour),
+	}
+	if err := db.Create(&legacy).Error; err != nil {
+		t.Fatal(err)
+	}
+	service := auth.APIKeyService{DB: db}
+	_, plain, err := service.CreateFor(&owner.ID, "owner-key", 20, 0, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	router := testRouter(t, db)
+	created := perform(router, http.MethodPost, "/api/generate-email", map[string]any{
+		"prefix": "victim",
+		"domain": "legacy-reuse.test",
+	}, map[string]string{"X-API-Key": plain})
+	if created.Code != http.StatusCreated {
+		t.Fatalf("create mailbox = %d: %s", created.Code, created.Body.String())
+	}
+	inbox := perform(router, http.MethodGet, "/api/emails?email=victim@legacy-reuse.test&limit=10", nil, map[string]string{"X-API-Key": plain})
+	if inbox.Code != http.StatusOK {
+		t.Fatalf("inbox = %d: %s", inbox.Code, inbox.Body.String())
+	}
+	var inboxBody struct {
+		Data []messageSummary `json:"data"`
+	}
+	if err := json.Unmarshal(inbox.Body.Bytes(), &inboxBody); err != nil {
+		t.Fatal(err)
+	}
+	if len(inboxBody.Data) != 0 {
+		t.Fatalf("recreated mailbox should not see legacy unowned messages: %s", inbox.Body.String())
+	}
+	detail := perform(router, http.MethodGet, "/api/email/legacy-unowned-message", nil, map[string]string{"X-API-Key": plain})
+	if detail.Code != http.StatusNotFound {
+		t.Fatalf("legacy detail should be hidden, got %d: %s", detail.Code, detail.Body.String())
 	}
 }
 
@@ -1193,6 +1276,7 @@ func TestInboxPaginationAndMailboxSearch(t *testing.T) {
 		t.Fatal(err)
 	}
 	now := time.Now()
+	alphaMailboxID := mailboxes[0].ID
 	for i := 0; i < 3; i++ {
 		message := models.Message{
 			ID:              "message-page-" + strconv.Itoa(i+1),
@@ -1201,6 +1285,8 @@ func TestInboxPaginationAndMailboxSearch(t *testing.T) {
 			RecipientDomain: "page.test",
 			RootDomain:      "page.test",
 			DomainID:        &domain.ID,
+			OwnerID:         &owner.ID,
+			MailboxID:       &alphaMailboxID,
 			FromAddress:     "sender@example.com",
 			Subject:         "subject " + strconv.Itoa(i+1),
 			TextContent:     "body " + strconv.Itoa(i+1),
@@ -1363,8 +1449,8 @@ func TestAvailableDomainsRequiresActorAndSeparatesModes(t *testing.T) {
 		t.Fatalf("api key private domains mismatch: %v", apiPrivateNames)
 	}
 	publicDetail := perform(router, http.MethodGet, "/api/domains/"+strconv.Itoa(int(domains[0].ID)), nil, headers)
-	if publicDetail.Code != http.StatusOK {
-		t.Fatalf("public domain detail with api key = %d: %s", publicDetail.Code, publicDetail.Body.String())
+	if publicDetail.Code != http.StatusUnauthorized {
+		t.Fatalf("public domain detail with api key = %d, want 401: %s", publicDetail.Code, publicDetail.Body.String())
 	}
 	adminResponse := perform(router, http.MethodGet, "/api/domains/available", nil, map[string]string{"X-API-Key": adminPlain})
 	if adminResponse.Code != http.StatusOK {
@@ -1429,13 +1515,14 @@ func TestMarkEmailReadSetsSeen(t *testing.T) {
 	if err := db.Create(&domain).Error; err != nil {
 		t.Fatal(err)
 	}
-	if err := db.Create(&models.Mailbox{
+	mailbox := models.Mailbox{
 		OwnerID:   owner.ID,
 		Email:     "demo@read.test",
 		LocalPart: "demo",
 		Host:      "read.test",
 		DomainID:  domain.ID,
-	}).Error; err != nil {
+	}
+	if err := db.Create(&mailbox).Error; err != nil {
 		t.Fatal(err)
 	}
 	now := time.Now()
@@ -1446,6 +1533,8 @@ func TestMarkEmailReadSetsSeen(t *testing.T) {
 		RecipientDomain: "read.test",
 		RootDomain:      "read.test",
 		DomainID:        &domain.ID,
+		OwnerID:         &owner.ID,
+		MailboxID:       &mailbox.ID,
 		FromAddress:     "sender@example.com",
 		Subject:         "code",
 		TextContent:     "123456",
@@ -1744,13 +1833,14 @@ func TestNextEmailReturnsUnreadMessageAndMarksRead(t *testing.T) {
 	if err := db.Create(&domain).Error; err != nil {
 		t.Fatal(err)
 	}
-	if err := db.Create(&models.Mailbox{
+	mailbox := models.Mailbox{
 		OwnerID:   owner.ID,
 		Email:     "demo@next.test",
 		LocalPart: "demo",
 		Host:      "next.test",
 		DomainID:  domain.ID,
-	}).Error; err != nil {
+	}
+	if err := db.Create(&mailbox).Error; err != nil {
 		t.Fatal(err)
 	}
 	now := time.Now()
@@ -1761,6 +1851,8 @@ func TestNextEmailReturnsUnreadMessageAndMarksRead(t *testing.T) {
 		RecipientDomain: "next.test",
 		RootDomain:      "next.test",
 		DomainID:        &domain.ID,
+		OwnerID:         &owner.ID,
+		MailboxID:       &mailbox.ID,
 		FromAddress:     "sender@example.com",
 		Subject:         "Your code",
 		TextContent:     "Code 654321",
@@ -1897,12 +1989,8 @@ func TestListDomainsHidesOtherUsersWaitingDomains(t *testing.T) {
 		t.Fatalf("owner domain visibility missing expected domains: %v", ownerDomains)
 	}
 	ownerAPIResponse := perform(router, http.MethodGet, "/api/domains", nil, map[string]string{"X-API-Key": ownerPlain})
-	if ownerAPIResponse.Code != http.StatusOK {
-		t.Fatalf("owner api key domains = %d: %s", ownerAPIResponse.Code, ownerAPIResponse.Body.String())
-	}
-	ownerAPIDomains := decodeDomainNames(t, ownerAPIResponse.Body.Bytes())
-	if ownerAPIDomains["other-pending.test"] || !ownerAPIDomains["other-ready.test"] || !ownerAPIDomains["other-wildcard-pending.test"] || !ownerAPIDomains["owner-pending.test"] {
-		t.Fatalf("owner api key domain visibility mismatch: %v", ownerAPIDomains)
+	if ownerAPIResponse.Code != http.StatusUnauthorized {
+		t.Fatalf("owner api key domains = %d, want 401: %s", ownerAPIResponse.Code, ownerAPIResponse.Body.String())
 	}
 	for _, forbidden := range []string{"mx_auto_retry_", "health_failure_count", "health_recovery_count", "last_health_", "last_mx_records", "last_check_message"} {
 		if strings.Contains(ownerResponse.Body.String(), forbidden) {
@@ -2024,6 +2112,49 @@ func TestDeleteDomainAllowsOwnerWaitingAndAdminAll(t *testing.T) {
 		t.Fatal(err)
 	}
 	ownerPending, ownerReady, otherPending := domains[0], domains[1], domains[2]
+	mailbox := models.Mailbox{OwnerID: owner.ID, Email: "cleanup@owner-pending.test", LocalPart: "cleanup", Host: "owner-pending.test", DomainID: ownerPending.ID}
+	if err := db.Create(&mailbox).Error; err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	message := models.Message{
+		ID:              "domain-cleanup-message",
+		Recipient:       mailbox.Email,
+		RecipientLocal:  mailbox.LocalPart,
+		RecipientDomain: mailbox.Host,
+		RootDomain:      ownerPending.Domain,
+		DomainID:        &ownerPending.ID,
+		OwnerID:         &owner.ID,
+		MailboxID:       &mailbox.ID,
+		FromAddress:     "sender@example.com",
+		Subject:         "cleanup",
+		CreatedAt:       now,
+		ExpiresAt:       now.Add(time.Hour),
+	}
+	if err := db.Create(&message).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&models.MessageAttachment{ID: "domain-cleanup-attachment", MessageID: message.ID, Sequence: 1, SizeBytes: 1, SHA256: strings.Repeat("a", 64)}).Error; err != nil {
+		t.Fatal(err)
+	}
+	share := models.ShareLink{OwnerID: owner.ID, TokenHash: "domain-cleanup-share-hash", TokenPrefix: "domain-cleanup", ResourceType: models.ShareResourceTypeMailbox, MailboxID: &mailbox.ID}
+	if err := db.Create(&share).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&models.ShareLinkAccessLog{ShareLinkID: share.ID, OwnerID: owner.ID, ResourceType: share.ResourceType, MailboxID: share.MailboxID, Success: true, IP: "127.0.0.1", UserAgent: "test"}).Error; err != nil {
+		t.Fatal(err)
+	}
+	eventsJSON, err := webhook.EventsJSON([]string{models.WebhookEventMessageReceived})
+	if err != nil {
+		t.Fatal(err)
+	}
+	endpoint := models.WebhookEndpoint{OwnerID: owner.ID, Name: "domain-hook", URL: "https://example.com/hook", Secret: "secret", SecretPreview: "preview", Enabled: true, EventsJSON: eventsJSON, Scope: models.WebhookScopeDomain, DomainID: &ownerPending.ID}
+	if err := db.Create(&endpoint).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&models.WebhookDelivery{ID: "domain-cleanup-delivery", EndpointID: endpoint.ID, OwnerID: owner.ID, EventType: models.WebhookEventMessageReceived, MessageID: message.ID, PayloadJSON: "{}", DedupKey: "domain-cleanup-delivery", Status: models.WebhookDeliveryStatusPending}).Error; err != nil {
+		t.Fatal(err)
+	}
 	router := testRouter(t, db)
 	ownerLogin := perform(router, http.MethodPost, "/api/auth/login", map[string]any{
 		"email":    "owner@example.com",
@@ -2050,6 +2181,17 @@ func TestDeleteDomainAllowsOwnerWaitingAndAdminAll(t *testing.T) {
 	db.Model(&models.Domain{}).Where("id = ?", ownerPending.ID).Count(&ownerPendingCount)
 	if ownerPendingCount != 0 {
 		t.Fatalf("owner pending domain was not deleted")
+	}
+	var mailboxCount, messageCount, attachmentCount, shareCount, shareLogCount, endpointCount, deliveryCount int64
+	db.Model(&models.Mailbox{}).Where("domain_id = ?", ownerPending.ID).Count(&mailboxCount)
+	db.Unscoped().Model(&models.Message{}).Where("domain_id = ?", ownerPending.ID).Count(&messageCount)
+	db.Model(&models.MessageAttachment{}).Where("message_id = ?", message.ID).Count(&attachmentCount)
+	db.Model(&models.ShareLink{}).Where("mailbox_id = ?", mailbox.ID).Count(&shareCount)
+	db.Model(&models.ShareLinkAccessLog{}).Where("share_link_id = ?", share.ID).Count(&shareLogCount)
+	db.Model(&models.WebhookEndpoint{}).Where("domain_id = ?", ownerPending.ID).Count(&endpointCount)
+	db.Model(&models.WebhookDelivery{}).Where("owner_id = ? AND message_id = ?", owner.ID, message.ID).Count(&deliveryCount)
+	if mailboxCount != 0 || messageCount != 0 || attachmentCount != 0 || shareCount != 0 || shareLogCount != 0 || endpointCount != 0 || deliveryCount != 0 {
+		t.Fatalf("domain delete did not clean related records: mailboxes=%d messages=%d attachments=%d shares=%d share_logs=%d endpoints=%d deliveries=%d", mailboxCount, messageCount, attachmentCount, shareCount, shareLogCount, endpointCount, deliveryCount)
 	}
 	adminDeleteOther := deleteDomainRequest(router, adminLogin, otherPending.ID)
 	if adminDeleteOther.Code != http.StatusOK {
@@ -2098,7 +2240,54 @@ func TestDeleteUserHardDeletesOwnedResources(t *testing.T) {
 	if _, _, err := (auth.APIKeyService{DB: db}).CreateFor(&victim.ID, "victim", 10, 0, nil); err != nil {
 		t.Fatal(err)
 	}
-	if err := db.Create(&models.Mailbox{OwnerID: victim.ID, Email: "demo@victim.test", LocalPart: "demo", Host: "victim.test", DomainID: domain.ID}).Error; err != nil {
+	mailbox := models.Mailbox{OwnerID: victim.ID, Email: "demo@victim.test", LocalPart: "demo", Host: "victim.test", DomainID: domain.ID}
+	if err := db.Create(&mailbox).Error; err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	message := models.Message{
+		ID:              "victim-message",
+		Recipient:       mailbox.Email,
+		RecipientLocal:  mailbox.LocalPart,
+		RecipientDomain: mailbox.Host,
+		RootDomain:      domain.Domain,
+		DomainID:        &domain.ID,
+		OwnerID:         &victim.ID,
+		MailboxID:       &mailbox.ID,
+		FromAddress:     "sender@example.com",
+		Subject:         "cleanup",
+		CreatedAt:       now,
+		ExpiresAt:       now.Add(time.Hour),
+	}
+	if err := db.Create(&message).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&models.MessageAttachment{ID: "victim-attachment", MessageID: message.ID, Sequence: 1, SizeBytes: 1, SHA256: strings.Repeat("a", 64)}).Error; err != nil {
+		t.Fatal(err)
+	}
+	messageShare := models.ShareLink{OwnerID: victim.ID, TokenHash: "message-share-hash", TokenPrefix: "message-share", ResourceType: models.ShareResourceTypeMessage, MessageID: &message.ID}
+	mailboxShare := models.ShareLink{OwnerID: victim.ID, TokenHash: "mailbox-share-hash", TokenPrefix: "mailbox-share", ResourceType: models.ShareResourceTypeMailbox, MailboxID: &mailbox.ID}
+	if err := db.Create(&[]models.ShareLink{messageShare, mailboxShare}).Error; err != nil {
+		t.Fatal(err)
+	}
+	var shares []models.ShareLink
+	if err := db.Where("owner_id = ?", victim.ID).Order("id asc").Find(&shares).Error; err != nil {
+		t.Fatal(err)
+	}
+	for _, share := range shares {
+		if err := db.Create(&models.ShareLinkAccessLog{ShareLinkID: share.ID, OwnerID: victim.ID, ResourceType: share.ResourceType, MessageID: share.MessageID, MailboxID: share.MailboxID, Success: true, IP: "127.0.0.1", UserAgent: "test"}).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+	eventsJSON, err := webhook.EventsJSON([]string{models.WebhookEventMessageReceived})
+	if err != nil {
+		t.Fatal(err)
+	}
+	endpoint := models.WebhookEndpoint{OwnerID: victim.ID, Name: "victim-hook", URL: "https://example.com/hook", Secret: "secret", SecretPreview: "preview", Enabled: true, EventsJSON: eventsJSON, Scope: models.WebhookScopeMailbox, MailboxID: &mailbox.ID}
+	if err := db.Create(&endpoint).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&models.WebhookDelivery{ID: "victim-delivery", EndpointID: endpoint.ID, OwnerID: victim.ID, EventType: models.WebhookEventMessageReceived, MessageID: message.ID, PayloadJSON: "{}", DedupKey: "victim-delivery", Status: models.WebhookDeliveryStatusPending}).Error; err != nil {
 		t.Fatal(err)
 	}
 	if err := db.Create(&models.Notification{UserID: &victim.ID, DomainID: &domain.ID, Type: "MX_FAILED", Message: "failed"}).Error; err != nil {
@@ -2122,14 +2311,20 @@ func TestDeleteUserHardDeletesOwnedResources(t *testing.T) {
 	if response.Code != http.StatusOK {
 		t.Fatalf("delete user = %d: %s", response.Code, response.Body.String())
 	}
-	var userCount, keyCount, mailboxCount, notificationCount, domainCount int64
+	var userCount, keyCount, mailboxCount, notificationCount, domainCount, messageCount, attachmentCount, shareCount, shareLogCount, endpointCount, deliveryCount int64
 	db.Model(&models.User{}).Where("id = ?", victim.ID).Count(&userCount)
 	db.Model(&models.APIKey{}).Where("owner_id = ?", victim.ID).Count(&keyCount)
 	db.Model(&models.Mailbox{}).Where("owner_id = ?", victim.ID).Count(&mailboxCount)
 	db.Model(&models.Notification{}).Where("user_id = ?", victim.ID).Count(&notificationCount)
 	db.Model(&models.Domain{}).Where("id = ?", domain.ID).Count(&domainCount)
-	if userCount != 0 || keyCount != 0 || mailboxCount != 0 || notificationCount != 0 || domainCount != 0 {
-		t.Fatalf("expected owned records to be deleted, got users=%d keys=%d mailboxes=%d notifications=%d domains=%d", userCount, keyCount, mailboxCount, notificationCount, domainCount)
+	db.Unscoped().Model(&models.Message{}).Where("owner_id = ?", victim.ID).Count(&messageCount)
+	db.Model(&models.MessageAttachment{}).Where("message_id = ?", message.ID).Count(&attachmentCount)
+	db.Model(&models.ShareLink{}).Where("owner_id = ?", victim.ID).Count(&shareCount)
+	db.Model(&models.ShareLinkAccessLog{}).Where("owner_id = ?", victim.ID).Count(&shareLogCount)
+	db.Model(&models.WebhookEndpoint{}).Where("owner_id = ?", victim.ID).Count(&endpointCount)
+	db.Model(&models.WebhookDelivery{}).Where("owner_id = ?", victim.ID).Count(&deliveryCount)
+	if userCount != 0 || keyCount != 0 || mailboxCount != 0 || notificationCount != 0 || domainCount != 0 || messageCount != 0 || attachmentCount != 0 || shareCount != 0 || shareLogCount != 0 || endpointCount != 0 || deliveryCount != 0 {
+		t.Fatalf("expected owned records to be deleted, got users=%d keys=%d mailboxes=%d notifications=%d domains=%d messages=%d attachments=%d shares=%d share_logs=%d endpoints=%d deliveries=%d", userCount, keyCount, mailboxCount, notificationCount, domainCount, messageCount, attachmentCount, shareCount, shareLogCount, endpointCount, deliveryCount)
 	}
 }
 
@@ -2199,9 +2394,13 @@ func TestInstallLoginAndAdminGate(t *testing.T) {
 	if createUserResponse.Code != http.StatusCreated {
 		t.Fatalf("create user = %d: %s", createUserResponse.Code, createUserResponse.Body.String())
 	}
+	enableEmailRegistration(t, db)
+	captcha := requestRegistrationCaptcha(t, router)
 	register := perform(router, http.MethodPost, "/api/auth/register", map[string]any{
-		"email":    "registered@example.com",
-		"password": "password123",
+		"email":          "registered@example.com",
+		"password":       "password123",
+		"captcha_id":     captcha.CaptchaID,
+		"captcha_answer": fmt.Sprintf("%d", solveCaptchaChallenge(t, captcha.Challenge)),
 	}, nil)
 	if register.Code != http.StatusOK {
 		t.Fatalf("register = %d: %s", register.Code, register.Body.String())
@@ -2212,7 +2411,7 @@ func TestInstallLoginAndAdminGate(t *testing.T) {
 	}
 	registeredMeResponse := httptest.NewRecorder()
 	router.ServeHTTP(registeredMeResponse, registeredMe)
-	if registeredMeResponse.Code != http.StatusOK {
+	if registeredMeResponse.Code != http.StatusUnauthorized {
 		t.Fatalf("registered me = %d: %s", registeredMeResponse.Code, registeredMeResponse.Body.String())
 	}
 	userLogin := perform(router, http.MethodPost, "/api/auth/login", map[string]any{
@@ -2616,9 +2815,20 @@ func testRouter(t *testing.T, db *gorm.DB) http.Handler {
 
 func testRouterWithConfig(t *testing.T, db *gorm.DB, configure func(*config.Config)) http.Handler {
 	t.Helper()
+	return testRouterWithConfigAndMailer(t, db, configure, noopMailer{})
+}
+
+func testRouterWithMailer(t *testing.T, db *gorm.DB, sender mailer.Sender) http.Handler {
+	t.Helper()
+	return testRouterWithConfigAndMailer(t, db, nil, sender)
+}
+
+func testRouterWithConfigAndMailer(t *testing.T, db *gorm.DB, configure func(*config.Config), sender mailer.Sender) http.Handler {
+	t.Helper()
 	cfg := config.Config{
 		DevMode:               true,
 		ExpectedMX:            "mail.example.com",
+		MailHostname:          "mail.example.com",
 		InboxTokenSecret:      "test-secret",
 		SessionSecret:         "test-session",
 		APIKeyDefaultDailyCap: 200000,
@@ -2630,6 +2840,9 @@ func testRouterWithConfig(t *testing.T, db *gorm.DB, configure func(*config.Conf
 	if configure != nil {
 		configure(&cfg)
 	}
+	if err := db.Model(&models.User{}).Where("email_verified = ?", false).Update("email_verified", true).Error; err != nil {
+		t.Fatal(err)
+	}
 	resolver := domain.Resolver{DB: db}
 	handler := &Handler{
 		Config:     cfg,
@@ -2639,8 +2852,15 @@ func testRouterWithConfig(t *testing.T, db *gorm.DB, configure func(*config.Conf
 		APIKeys:    auth.APIKeyService{DB: db},
 		Sessions:   auth.NewSessionService(cfg.SessionSecret, db),
 		Hub:        events.NewHub(),
+		Mailer:     sender,
 	}
 	return NewRouter(handler)
+}
+
+type noopMailer struct{}
+
+func (noopMailer) Send(context.Context, mailer.Settings, mailer.Message) error {
+	return nil
 }
 
 func httpTestDB(t *testing.T) *gorm.DB {
@@ -2654,7 +2874,7 @@ func httpTestDB(t *testing.T) *gorm.DB {
 		t.Fatal(err)
 	}
 	sqlDB.SetMaxOpenConns(1)
-	if err := db.AutoMigrate(&models.User{}, &models.OAuthIdentity{}, &models.OAuthProviderSetting{}, &models.Domain{}, &models.Mailbox{}, &models.Message{}, &models.MessageAttachment{}, &models.ShareLink{}, &models.ShareLinkAccessLog{}, &models.WebhookEndpoint{}, &models.WebhookDelivery{}, &models.APIKey{}, &models.SessionToken{}, &models.APIUsageLog{}, &models.Notification{}, &models.AuditLog{}, &models.SystemQuotaSettings{}); err != nil {
+	if err := db.AutoMigrate(&models.User{}, &models.PendingRegistration{}, &models.RegistrationCaptcha{}, &models.OAuthIdentity{}, &models.OAuthProviderSetting{}, &models.Domain{}, &models.Mailbox{}, &models.Message{}, &models.MessageAttachment{}, &models.ShareLink{}, &models.ShareLinkAccessLog{}, &models.WebhookEndpoint{}, &models.WebhookDelivery{}, &models.APIKey{}, &models.SessionToken{}, &models.APIUsageLog{}, &models.Notification{}, &models.Announcement{}, &models.AnnouncementRead{}, &models.AuditLog{}, &models.SystemQuotaSettings{}, &models.LoginSettings{}); err != nil {
 		t.Fatal(err)
 	}
 	return db

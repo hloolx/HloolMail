@@ -107,6 +107,8 @@ func TestAutoMigrateCreatesIntegrityConstraints(t *testing.T) {
 	assertForeignKey(t, database, "api_keys", "owner_id", "users")
 	assertForeignKey(t, database, "session_tokens", "user_id", "users")
 	assertForeignKey(t, database, "messages", "domain_id", "domains")
+	assertForeignKey(t, database, "messages", "owner_id", "users")
+	assertForeignKey(t, database, "messages", "mailbox_id", "mailboxes")
 	assertForeignKey(t, database, "message_attachments", "message_id", "messages")
 	assertForeignKey(t, database, "share_links", "owner_id", "users")
 	assertForeignKey(t, database, "share_links", "message_id", "messages")

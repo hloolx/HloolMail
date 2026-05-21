@@ -3,8 +3,11 @@ package httpapi
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"math/big"
 	"net"
 	"net/http"
 	"net/url"
@@ -17,12 +20,21 @@ import (
 	"gptmail/internal/config"
 	appdb "gptmail/internal/db"
 	appdomain "gptmail/internal/domain"
+	"gptmail/internal/mailer"
 	"gptmail/internal/models"
 
 	"github.com/gin-gonic/gin"
+	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 const sessionCookieName = "gptmail_session"
+
+const (
+	registrationVerificationCooldown    = time.Minute
+	maxRegistrationVerificationSends    = 5
+	maxRegistrationVerificationAttempts = 5
+)
 
 func (h *Handler) installStatus(c *gin.Context) {
 	installed := h.isInstalled()
@@ -117,11 +129,12 @@ func (h *Handler) install(c *gin.Context) {
 	targetDB.Model(&models.User{}).Where("role = ? AND enabled = ?", models.UserRoleAdmin, true).Count(&existing)
 	if existing == 0 {
 		admin := models.User{
-			Email:      strings.ToLower(strings.TrimSpace(input.AdminEmail)),
-			Role:       models.UserRoleAdmin,
-			Enabled:    true,
-			DailyLimit: 0,
-			TotalLimit: 0,
+			Email:         strings.ToLower(strings.TrimSpace(input.AdminEmail)),
+			EmailVerified: true,
+			Role:          models.UserRoleAdmin,
+			Enabled:       true,
+			DailyLimit:    0,
+			TotalLimit:    0,
 		}
 		admin.PasswordHash = hash
 		if err := targetDB.Create(&admin).Error; err != nil {
@@ -237,6 +250,10 @@ func (h *Handler) login(c *gin.Context) {
 		fail(c, http.StatusUnauthorized, "invalid email or password")
 		return
 	}
+	if !user.EmailVerified {
+		fail(c, http.StatusForbidden, "email verification required before login")
+		return
+	}
 	token, err := h.Sessions.Create(user.ID, user.Role, 7*24*time.Hour)
 	if err != nil {
 		fail(c, http.StatusInternalServerError, err.Error())
@@ -244,6 +261,62 @@ func (h *Handler) login(c *gin.Context) {
 	}
 	setSessionCookie(c, token, 7*24*time.Hour)
 	ok(c, user)
+}
+
+func (h *Handler) registrationCaptcha(c *gin.Context) {
+	if !h.isInstalled() {
+		fail(c, http.StatusPreconditionRequired, "install required")
+		return
+	}
+	settings, err := appdb.EnsureLoginSettings(h.DB)
+	if err != nil {
+		fail(c, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if !settings.RegistrationOpen || !settings.EmailRegistrationEnabled {
+		fail(c, http.StatusForbidden, "email registration is disabled")
+		return
+	}
+	left, err := randomCaptchaOperand()
+	if err != nil {
+		fail(c, http.StatusInternalServerError, err.Error())
+		return
+	}
+	right, err := randomCaptchaOperand()
+	if err != nil {
+		fail(c, http.StatusInternalServerError, err.Error())
+		return
+	}
+	answer := fmt.Sprintf("%d", left+right)
+	answerHash, err := auth.HashSecret(answer)
+	if err != nil {
+		fail(c, http.StatusInternalServerError, err.Error())
+		return
+	}
+	captchaID, err := randomURLToken(32)
+	if err != nil {
+		fail(c, http.StatusInternalServerError, err.Error())
+		return
+	}
+	expiresAt := time.Now().Add(10 * time.Minute)
+	captcha := models.RegistrationCaptcha{
+		CaptchaID:    captchaID,
+		AnswerHash:   answerHash,
+		Challenge:    fmt.Sprintf("%d + %d = ?", left, right),
+		ExpiresAt:    expiresAt,
+		AttemptCount: 0,
+		IP:           c.ClientIP(),
+		UserAgent:    c.Request.UserAgent(),
+	}
+	if err := h.DB.Create(&captcha).Error; err != nil {
+		fail(c, http.StatusInternalServerError, err.Error())
+		return
+	}
+	ok(c, gin.H{
+		"captcha_id": captchaID,
+		"challenge":  captcha.Challenge,
+		"expires_at": expiresAt,
+	})
 }
 
 func (h *Handler) register(c *gin.Context) {
@@ -255,27 +328,51 @@ func (h *Handler) register(c *gin.Context) {
 		Email          string `json:"email"`
 		Password       string `json:"password"`
 		TurnstileToken string `json:"turnstile_token"`
+		CaptchaID      string `json:"captcha_id"`
+		CaptchaAnswer  string `json:"captcha_answer"`
 	}
 	if err := c.ShouldBindJSON(&input); err != nil {
 		fail(c, http.StatusBadRequest, "invalid json")
 		return
 	}
-	if err := h.verifyTurnstileIfEnabled(input.TurnstileToken); err != nil {
-		fail(c, http.StatusBadRequest, err.Error())
+	settings, err := appdb.EnsureLoginSettings(h.DB)
+	if err != nil {
+		fail(c, http.StatusInternalServerError, err.Error())
 		return
+	}
+	if !settings.RegistrationOpen || !settings.EmailRegistrationEnabled {
+		fail(c, http.StatusForbidden, "email registration is disabled")
+		return
+	}
+	if settings.TurnstileEnabled {
+		if err := verifyTurnstileTokenString(input.TurnstileToken, settings.TurnstileSecretKey); err != nil {
+			fail(c, http.StatusBadRequest, err.Error())
+			return
+		}
+	} else {
+		if err := h.verifyRegistrationCaptcha(input.CaptchaID, input.CaptchaAnswer); err != nil {
+			var httpErr httpStatusError
+			if errors.As(err, &httpErr) {
+				fail(c, httpErr.Status, httpErr.Message)
+				return
+			}
+			fail(c, http.StatusInternalServerError, err.Error())
+			return
+		}
 	}
 	email := strings.ToLower(strings.TrimSpace(input.Email))
 	if !strings.Contains(email, "@") || len(input.Password) < 8 {
 		fail(c, http.StatusBadRequest, "valid email and 8+ character password required")
 		return
 	}
-	var existing int64
-	if err := h.DB.Model(&models.User{}).Where("email = ?", email).Count(&existing).Error; err != nil {
-		fail(c, http.StatusInternalServerError, err.Error())
+	var existing models.User
+	err = h.DB.Where("email = ?", email).First(&existing).Error
+	if err == nil && existing.EmailVerified {
+		fail(c, http.StatusConflict, "email already registered")
 		return
 	}
-	if existing > 0 {
-		fail(c, http.StatusConflict, "email already registered")
+	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+		fail(c, http.StatusInternalServerError, err.Error())
 		return
 	}
 	hash, err := auth.HashSecret(input.Password)
@@ -283,16 +380,159 @@ func (h *Handler) register(c *gin.Context) {
 		fail(c, http.StatusInternalServerError, err.Error())
 		return
 	}
-	user := models.User{
-		Email:        email,
-		PasswordHash: hash,
-		Role:         models.UserRoleUser,
-		Enabled:      true,
-		DailyLimit:   1000,
-		TotalLimit:   0,
+	code, err := randomVerificationCode()
+	if err != nil {
+		fail(c, http.StatusInternalServerError, err.Error())
+		return
 	}
-	if err := h.DB.Create(&user).Error; err != nil {
-		fail(c, http.StatusBadRequest, err.Error())
+	codeHash, err := auth.HashSecret(code)
+	if err != nil {
+		fail(c, http.StatusInternalServerError, err.Error())
+		return
+	}
+	verificationID, err := randomURLToken(32)
+	if err != nil {
+		fail(c, http.StatusInternalServerError, err.Error())
+		return
+	}
+	tokenHash, err := auth.HashSecret(verificationID)
+	if err != nil {
+		fail(c, http.StatusInternalServerError, err.Error())
+		return
+	}
+	now := time.Now()
+	expiresAt := now.Add(15 * time.Minute)
+	pending := models.PendingRegistration{
+		VerificationID: verificationID,
+		TokenHash:      tokenHash,
+		Email:          email,
+		PasswordHash:   hash,
+		CodeHash:       codeHash,
+		ExpiresAt:      expiresAt,
+		AttemptCount:   0,
+		SentCount:      1,
+		LastSentAt:     now,
+		IP:             c.ClientIP(),
+		UserAgent:      c.Request.UserAgent(),
+	}
+	if err := h.upsertPendingRegistration(pending); err != nil {
+		var httpErr httpStatusError
+		if errors.As(err, &httpErr) {
+			fail(c, httpErr.Status, httpErr.Message)
+			return
+		}
+		fail(c, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if err := h.sendRegistrationVerification(c.Request.Context(), settings, email, code); err != nil {
+		_ = h.DB.Delete(&models.PendingRegistration{}, "verification_id = ?", verificationID).Error
+		fail(c, http.StatusBadGateway, err.Error())
+		return
+	}
+	ok(c, gin.H{
+		"email_verification_required": true,
+		"verification_id":             verificationID,
+		"expires_at":                  expiresAt,
+	})
+}
+
+func (h *Handler) verifyRegistration(c *gin.Context) {
+	if !h.isInstalled() {
+		fail(c, http.StatusPreconditionRequired, "install required")
+		return
+	}
+	var input struct {
+		VerificationID string `json:"verification_id"`
+		Code           string `json:"code"`
+	}
+	if err := c.ShouldBindJSON(&input); err != nil {
+		fail(c, http.StatusBadRequest, "invalid json")
+		return
+	}
+	verificationID := strings.TrimSpace(input.VerificationID)
+	code := strings.TrimSpace(input.Code)
+	if verificationID == "" || len(code) != 6 {
+		fail(c, http.StatusBadRequest, "verification_id and 6-digit code are required")
+		return
+	}
+	var user models.User
+	var resultErr error
+	if err := h.DB.Transaction(func(tx *gorm.DB) error {
+		var locked models.PendingRegistration
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+			First(&locked, "verification_id = ?", verificationID).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				resultErr = httpStatusError{Status: http.StatusNotFound, Message: "verification not found"}
+				return nil
+			}
+			return err
+		}
+		if !locked.ExpiresAt.After(time.Now()) {
+			resultErr = httpStatusError{Status: http.StatusGone, Message: "verification expired"}
+			return nil
+		}
+		if locked.AttemptCount >= maxRegistrationVerificationAttempts {
+			resultErr = httpStatusError{Status: http.StatusTooManyRequests, Message: "too many verification attempts"}
+			return nil
+		}
+		if !auth.VerifySecret(locked.CodeHash, code) {
+			if err := tx.Model(&models.PendingRegistration{}).
+				Where("verification_id = ?", locked.VerificationID).
+				Update("attempt_count", locked.AttemptCount+1).Error; err != nil {
+				return err
+			}
+			resultErr = httpStatusError{Status: http.StatusBadRequest, Message: "invalid verification code"}
+			return nil
+		}
+		var existing models.User
+		err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("email = ?", locked.Email).First(&existing).Error
+		if err == nil {
+			if existing.EmailVerified {
+				return httpStatusError{Status: http.StatusConflict, Message: "email already registered"}
+			}
+			existing.PasswordHash = locked.PasswordHash
+			existing.EmailVerified = true
+			existing.Enabled = true
+			if existing.Role == "" {
+				existing.Role = models.UserRoleUser
+			}
+			if err := tx.Save(&existing).Error; err != nil {
+				return err
+			}
+			user = existing
+		} else if errors.Is(err, gorm.ErrRecordNotFound) {
+			user = models.User{
+				Email:         locked.Email,
+				PasswordHash:  locked.PasswordHash,
+				EmailVerified: true,
+				Role:          models.UserRoleUser,
+				Enabled:       true,
+				DailyLimit:    1000,
+				TotalLimit:    0,
+			}
+			if err := tx.Create(&user).Error; err != nil {
+				return err
+			}
+		} else {
+			return err
+		}
+		return tx.Delete(&models.PendingRegistration{}, "email = ?", locked.Email).Error
+	}); err != nil {
+		var httpErr httpStatusError
+		if errors.As(err, &httpErr) {
+			fail(c, httpErr.Status, httpErr.Message)
+			return
+		}
+		fail(c, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if resultErr != nil {
+		var httpErr httpStatusError
+		if errors.As(resultErr, &httpErr) {
+			fail(c, httpErr.Status, httpErr.Message)
+			return
+		}
+		fail(c, http.StatusInternalServerError, resultErr.Error())
 		return
 	}
 	token, err := h.Sessions.Create(user.ID, user.Role, 7*24*time.Hour)
@@ -302,6 +542,132 @@ func (h *Handler) register(c *gin.Context) {
 	}
 	setSessionCookie(c, token, 7*24*time.Hour)
 	ok(c, user)
+}
+
+func (h *Handler) verifyRegistrationCaptcha(captchaID, answer string) error {
+	captchaID = strings.TrimSpace(captchaID)
+	answer = strings.TrimSpace(answer)
+	if captchaID == "" || answer == "" {
+		return httpStatusError{Status: http.StatusBadRequest, Message: "captcha_id and captcha_answer are required"}
+	}
+	var resultErr error
+	err := h.DB.Transaction(func(tx *gorm.DB) error {
+		var captcha models.RegistrationCaptcha
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+			First(&captcha, "captcha_id = ?", captchaID).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				resultErr = httpStatusError{Status: http.StatusBadRequest, Message: "invalid captcha"}
+				return nil
+			}
+			return err
+		}
+		if !captcha.ExpiresAt.After(time.Now()) {
+			if err := tx.Delete(&models.RegistrationCaptcha{}, "captcha_id = ?", captcha.CaptchaID).Error; err != nil {
+				return err
+			}
+			resultErr = httpStatusError{Status: http.StatusGone, Message: "captcha expired"}
+			return nil
+		}
+		if captcha.AttemptCount >= 5 {
+			if err := tx.Delete(&models.RegistrationCaptcha{}, "captcha_id = ?", captcha.CaptchaID).Error; err != nil {
+				return err
+			}
+			resultErr = httpStatusError{Status: http.StatusTooManyRequests, Message: "too many captcha attempts"}
+			return nil
+		}
+		if auth.VerifySecret(captcha.AnswerHash, answer) {
+			return tx.Delete(&models.RegistrationCaptcha{}, "captcha_id = ?", captcha.CaptchaID).Error
+		}
+		nextAttempts := captcha.AttemptCount + 1
+		if nextAttempts >= 5 {
+			if err := tx.Delete(&models.RegistrationCaptcha{}, "captcha_id = ?", captcha.CaptchaID).Error; err != nil {
+				return err
+			}
+		} else if err := tx.Model(&models.RegistrationCaptcha{}).
+			Where("captcha_id = ?", captcha.CaptchaID).
+			Update("attempt_count", nextAttempts).Error; err != nil {
+			return err
+		}
+		resultErr = httpStatusError{Status: http.StatusBadRequest, Message: "invalid captcha"}
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+	return resultErr
+}
+
+func (h *Handler) upsertPendingRegistration(pending models.PendingRegistration) error {
+	return h.DB.Transaction(func(tx *gorm.DB) error {
+		var existing models.PendingRegistration
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("email = ?", pending.Email).First(&existing).Error; err == nil {
+			if existing.ExpiresAt.After(pending.LastSentAt) {
+				if pending.LastSentAt.Sub(existing.LastSentAt) < registrationVerificationCooldown {
+					return httpStatusError{Status: http.StatusTooManyRequests, Message: "verification email was sent recently; please wait before requesting another code"}
+				}
+				if existing.SentCount >= maxRegistrationVerificationSends {
+					return httpStatusError{Status: http.StatusTooManyRequests, Message: "too many verification emails requested; please try again later"}
+				}
+				pending.SentCount = existing.SentCount + 1
+			}
+			if err := tx.Delete(&models.PendingRegistration{}, "email = ?", pending.Email).Error; err != nil {
+				return err
+			}
+		} else if !errors.Is(err, gorm.ErrRecordNotFound) {
+			return err
+		}
+		return tx.Create(&pending).Error
+	})
+}
+
+func (h *Handler) sendRegistrationVerification(ctx context.Context, settings *models.LoginSettings, email, code string) error {
+	subject := "Verify your email address"
+	text := "Your verification code is " + code + ". It expires in 15 minutes."
+	html := "<p>Your verification code is <strong>" + code + "</strong>.</p><p>It expires in 15 minutes.</p>"
+	return h.mailSender().Send(ctx, mailerSettingsFromLoginSettings(h.Config, settings), mailer.Message{
+		To:      email,
+		Subject: subject,
+		Text:    text,
+		HTML:    html,
+	})
+}
+
+func (h *Handler) mailSender() mailer.Sender {
+	if h.Mailer != nil {
+		return h.Mailer
+	}
+	return mailer.DefaultSender{}
+}
+
+func mailerSettingsFromLoginSettings(cfg config.Config, settings *models.LoginSettings) mailer.Settings {
+	return mailer.Settings{
+		Mode:                 strings.ToLower(strings.TrimSpace(settings.EmailVerificationMode)),
+		MailHostname:         cfg.MailHostname,
+		InternalSenderPrefix: strings.TrimSpace(settings.InternalSenderPrefix),
+		SMTPHost:             strings.TrimSpace(settings.SMTPHost),
+		SMTPPort:             settings.SMTPPort,
+		SMTPSecurity:         strings.ToLower(strings.TrimSpace(settings.SMTPSecurity)),
+		SMTPUsername:         strings.TrimSpace(settings.SMTPUsername),
+		SMTPPassword:         settings.SMTPPassword,
+		SMTPFromName:         strings.TrimSpace(settings.SMTPFromName),
+		SMTPFromEmail:        strings.TrimSpace(settings.SMTPFromEmail),
+	}
+}
+
+func randomVerificationCode() (string, error) {
+	n, err := rand.Int(rand.Reader, big.NewInt(1000000))
+	if err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("%06d", n.Int64()), nil
+}
+
+func randomCaptchaOperand() (int64, error) {
+	n, err := rand.Int(rand.Reader, big.NewInt(20))
+	if err != nil {
+		return 0, err
+	}
+	return n.Int64() + 1, nil
 }
 
 func (h *Handler) logout(c *gin.Context) {
@@ -328,7 +694,9 @@ func (h *Handler) me(c *gin.Context) {
 func (h *Handler) loginSettings(c *gin.Context) {
 	installed := h.isInstalled()
 	response := gin.H{
-		"installed": installed,
+		"installed":                  installed,
+		"registration_open":          false,
+		"email_registration_enabled": false,
 	}
 	if !installed {
 		ok(c, response)
@@ -342,6 +710,8 @@ func (h *Handler) loginSettings(c *gin.Context) {
 	response["turnstile_enabled"] = settings.TurnstileEnabled
 	response["turnstile_site_key"] = settings.TurnstileSiteKey
 	response["passkey_enabled"] = settings.PasskeyEnabled
+	response["registration_open"] = settings.RegistrationOpen
+	response["email_registration_enabled"] = settings.EmailRegistrationEnabled
 
 	providers := make([]oauthProviderDTO, 0, len(oauthProviderMetas()))
 	for _, meta := range oauthProviderMetas() {
@@ -803,11 +1173,15 @@ func (h *Handler) verifyTurnstileIfEnabled(token string) error {
 	if settings == nil || !settings.TurnstileEnabled {
 		return nil
 	}
+	return verifyTurnstileTokenString(token, settings.TurnstileSecretKey)
+}
+
+func verifyTurnstileTokenString(token, secretKey string) error {
 	token = strings.TrimSpace(token)
 	if token == "" {
 		return fmt.Errorf("turnstile verification required")
 	}
-	if err := verifyTurnstileToken(token, settings.TurnstileSecretKey); err != nil {
+	if err := verifyTurnstileToken(token, secretKey); err != nil {
 		return fmt.Errorf("turnstile verification failed: %w", err)
 	}
 	return nil

@@ -21,16 +21,21 @@
 }
 
 .data-table-shell {
+  position: relative;
+  max-width: 100%;
   overflow: auto;
+  overscroll-behavior-x: contain;
   border: 1px solid var(--border);
   border-radius: 0.5rem;
   background: color-mix(in srgb, var(--panel) 96%, var(--soft));
   box-shadow:
     inset 0 1px 0 color-mix(in srgb, var(--background) 82%, transparent),
     0 1px 0 color-mix(in srgb, var(--border) 48%, transparent);
+  -webkit-overflow-scrolling: touch;
 }
 
 .data-table {
+  width: max-content;
   min-width: 100%;
   border-collapse: separate;
   border-spacing: 0;
@@ -44,6 +49,7 @@
   padding: 0.42rem 0.68rem;
   border: 0;
   border-bottom: 1px solid color-mix(in srgb, var(--border) 72%, transparent);
+  background-clip: padding-box;
 }
 
 .data-table th {
@@ -60,6 +66,30 @@
   position: sticky;
   top: 0;
   z-index: 2;
+}
+
+.data-table-sticky-last th:last-child,
+.data-table-sticky-last td:last-child {
+  position: sticky;
+  right: 0;
+  z-index: 3;
+  box-shadow:
+    -1px 0 0 color-mix(in srgb, var(--border) 70%, transparent),
+    -0.8rem 0 1.2rem -1rem rgba(0, 0, 0, 0.26);
+}
+
+.data-table-sticky-last th:last-child {
+  z-index: 5;
+}
+
+.data-table-sticky-last td.table-empty {
+  position: static;
+  box-shadow: none;
+}
+
+.data-table-sticky-last .table-actions {
+  min-width: max-content;
+  flex-wrap: nowrap;
 }
 
 .data-table td {
@@ -106,6 +136,37 @@
 .data-table .table-actions {
   width: 100%;
   justify-content: flex-end;
+}
+
+@media (max-width: 760px) {
+  .data-table th,
+  .data-table td {
+    padding-inline: 0.55rem;
+  }
+
+  .data-table-shell {
+    border-radius: 0.45rem;
+  }
+}
+
+@media (pointer: coarse), (max-width: 640px) {
+  .data-table th,
+  .data-table td {
+    padding-block: 0.55rem;
+  }
+
+  .data-table td,
+  .data-table-compact td {
+    height: 2.5rem;
+  }
+
+  .data-table .btn-ghost,
+  .data-table .btn-primary,
+  .data-table .btn-secondary,
+  .data-table .btn-danger,
+  .data-table .icon-btn {
+    min-height: 2.5rem;
+  }
 }
 
 .data-table-compact th,
@@ -490,6 +551,55 @@
 
 .toggle-switch-sm.on .toggle-switch-knob {
   transform: translateX(16px);
+}
+
+@media (pointer: coarse), (max-width: 640px) {
+  .pagination-btn,
+  .pagination-page,
+  .toggle-switch {
+    min-width: 2.5rem;
+    min-height: 2.5rem;
+  }
+
+  .pagination-btn,
+  .pagination-page {
+    width: 2.5rem;
+    height: 2.5rem;
+  }
+
+  .pagination-gap {
+    height: 2.5rem;
+  }
+
+  .toggle-switch {
+    width: 3rem;
+    height: 2.5rem;
+  }
+
+  .toggle-switch-knob {
+    top: calc(50% - 0.5rem);
+    left: 0.38rem;
+  }
+
+  .toggle-switch.on .toggle-switch-knob {
+    transform: translateX(1.35rem);
+  }
+
+  .toggle-switch-sm {
+    width: 2.75rem;
+    height: 2.5rem;
+  }
+
+  .toggle-switch-sm .toggle-switch-knob {
+    top: calc(50% - 0.4rem);
+    left: 0.4rem;
+    width: 0.8rem;
+    height: 0.8rem;
+  }
+
+  .toggle-switch-sm.on .toggle-switch-knob {
+    transform: translateX(1.25rem);
+  }
 }
 
 .admin-dns-runs {
@@ -1641,4 +1751,40 @@
 .login-config-fields {
   display: grid;
   gap: 0.75rem;
+}
+
+.admin-registration-panel {
+  display: grid;
+  gap: 0.95rem;
+}
+
+.admin-registration-grid {
+  display: grid;
+  gap: 0.75rem;
+}
+
+.admin-registration-hint {
+  align-self: end;
+  margin: 0;
+}
+
+.admin-registration-test {
+  display: grid;
+  gap: 0.5rem;
+}
+
+.admin-registration-test .btn-secondary {
+  align-self: end;
+  justify-self: start;
+}
+
+@media (min-width: 720px) {
+  .admin-registration-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .admin-registration-test {
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: end;
+  }
 }

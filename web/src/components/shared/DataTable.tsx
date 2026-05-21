@@ -33,6 +33,8 @@ type DataTableProps = {
   className?: string;
   density?: 'default' | 'compact';
   stickyHeader?: boolean;
+  stickyActions?: boolean;
+  stickyLastColumn?: boolean;
 };
 
 export function DataTable({
@@ -42,12 +44,17 @@ export function DataTable({
   ariaLabel,
   className,
   density = 'default',
-  stickyHeader = true
+  stickyHeader = true,
+  stickyActions = true,
+  stickyLastColumn = false
 }: DataTableProps) {
+  const lastColumn = columns[columns.length - 1];
+  const shouldStickLastColumn = stickyLastColumn || (stickyActions && lastColumn?.key === 'actions');
   const tableClassName = [
     'data-table',
     `data-table-${density}`,
     stickyHeader ? 'data-table-sticky' : '',
+    shouldStickLastColumn ? 'data-table-sticky-last' : '',
     className || ''
   ].filter(Boolean).join(' ');
 

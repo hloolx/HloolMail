@@ -41,6 +41,7 @@ type DNSState = {
 };
 
 const INSTALL_FORM_KEY = 'hlool:install-form';
+const DEV_SKIP_INSTALL_KEY = 'hlool_skip_install';
 
 export function InstallPage({ status, onDone }: { status?: InstallStatus; onDone: () => void }) {
   const text = useText();
@@ -52,21 +53,11 @@ export function InstallPage({ status, onDone }: { status?: InstallStatus; onDone
   const [dnsState, setDNSState] = useState<DNSState | null>(null);
   const [installResult, setInstallResult] = useState<InstallResult | null>(null);
   const [activeStep, setActiveStep] = useState(0);
-  const [form, setForm] = useState<InstallForm>(() => {
-    try {
-      const saved = sessionStorage.getItem(INSTALL_FORM_KEY);
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        const defaults = buildInitialForm(status);
-        return { ...defaults, ...parsed };
-      }
-    } catch { /* sessionStorage parse error — use defaults */ }
-    return buildInitialForm(status);
-  });
+  const [form, setForm] = useState<InstallForm>(() => loadInstallForm(status));
 
   // Persist form to sessionStorage on every change
   useEffect(() => {
-    try { sessionStorage.setItem(INSTALL_FORM_KEY, JSON.stringify(form)); } catch { /* quota exceeded */ }
+    try { sessionStorage.setItem(INSTALL_FORM_KEY, JSON.stringify(sanitizeInstallFormForStorage(form))); } catch { /* quota exceeded */ }
   }, [form]);
 
   const databaseURL = databaseURLFor(form);
@@ -136,7 +127,7 @@ export function InstallPage({ status, onDone }: { status?: InstallStatus; onDone
     },
     onSuccess: async (data) => {
       try { sessionStorage.removeItem(INSTALL_FORM_KEY); } catch { /* ignore */ }
-      const isDevSkip = typeof window !== 'undefined' && sessionStorage.getItem('hlool_skip_install') === '1';
+      const isDevSkip = import.meta.env.DEV && getDevSkipInstall();
       if (!isDevSkip) {
         setInstallResult(data);
       }
@@ -184,6 +175,7 @@ export function InstallPage({ status, onDone }: { status?: InstallStatus; onDone
   };
 
   const handleLogoTap = useCallback(() => {
+    if (!import.meta.env.DEV) return;
     const now = Date.now();
     const t = logoTapRef.current;
     if (now - t.since > 2000) { t.count = 0; }
@@ -191,7 +183,7 @@ export function InstallPage({ status, onDone }: { status?: InstallStatus; onDone
     t.count += 1;
     if (t.count >= 3) {
       t.count = 0;
-      sessionStorage.setItem('hlool_skip_install', '1');
+      setDevSkipInstall();
       const origin = typeof window !== 'undefined' ? window.location.origin : 'http://localhost:3000';
       const devForm: InstallForm = {
         admin_email: 'dev@localhost',
@@ -499,6 +491,92 @@ function InstallShell({
       {children}
     </div>
   );
+}
+
+type PersistedInstallForm = Omit<InstallForm, 'admin_password' | 'database_password'>;
+
+function clearInstallSecrets(form: InstallForm): InstallForm {
+  return { ...form, admin_password: '', database_password: '' };
+}
+
+function loadInstallForm(status?: InstallStatus): InstallForm {
+  const defaults = clearInstallSecrets(buildInitialForm(status));
+  if (typeof window === 'undefined') return defaults;
+  try {
+    const saved = sessionStorage.getItem(INSTALL_FORM_KEY);
+    if (!saved) return defaults;
+    return mergeSavedInstallForm(defaults, JSON.parse(saved));
+  } catch {
+    return defaults;
+  }
+}
+
+function sanitizeInstallFormForStorage(form: InstallForm): PersistedInstallForm {
+  const { admin_password: _adminPassword, database_password: _databasePassword, ...safeForm } = form;
+  return {
+    ...safeForm,
+    database_url: sanitizeDatabaseURLForStorage(safeForm.database_url),
+  };
+}
+
+function mergeSavedInstallForm(defaults: InstallForm, saved: unknown): InstallForm {
+  const next = clearInstallSecrets(defaults);
+  if (!saved || typeof saved !== 'object') return next;
+  const value = saved as Record<string, unknown>;
+
+  if (typeof value.admin_email === 'string') next.admin_email = value.admin_email;
+  if (typeof value.database_driver === 'string') next.database_driver = value.database_driver;
+  if (typeof value.database_url === 'string') next.database_url = sanitizeDatabaseURLForStorage(value.database_url);
+  if (typeof value.database_host === 'string') next.database_host = value.database_host;
+  if (typeof value.database_port === 'string') next.database_port = value.database_port;
+  if (typeof value.database_name === 'string') next.database_name = value.database_name;
+  if (typeof value.database_user === 'string') next.database_user = value.database_user;
+  if (typeof value.database_sslmode === 'string') next.database_sslmode = value.database_sslmode;
+  if (typeof value.public_base_url === 'string') next.public_base_url = value.public_base_url;
+  if (typeof value.mail_hostname === 'string') next.mail_hostname = value.mail_hostname;
+  if (typeof value.expected_mx === 'string') next.expected_mx = value.expected_mx;
+  if (typeof value.setup_domain === 'string') next.setup_domain = value.setup_domain;
+  if (typeof value.server_ip === 'string') next.server_ip = value.server_ip;
+  if (typeof value.check_wildcard === 'boolean') next.check_wildcard = value.check_wildcard;
+  if (typeof value.http_addr === 'string') next.http_addr = value.http_addr;
+  if (typeof value.smtp_addr === 'string') next.smtp_addr = value.smtp_addr;
+  if (typeof value.frontend_dist === 'string') next.frontend_dist = value.frontend_dist;
+  if (typeof value.dev_mode === 'boolean') next.dev_mode = value.dev_mode;
+
+  return clearInstallSecrets(next);
+}
+
+function sanitizeDatabaseURLForStorage(value: string) {
+  const trimmed = value.trim();
+  if (!trimmed) return '';
+  try {
+    const parsed = new URL(trimmed);
+    const sensitiveProtocol = parsed.protocol === 'postgres:' || parsed.protocol === 'postgresql:' || parsed.protocol === 'mysql:' || parsed.protocol === 'mariadb:';
+    const hasSecretParam = ['password', 'pass', 'pwd'].some((key) => parsed.searchParams.has(key));
+    if (sensitiveProtocol || parsed.username || parsed.password || hasSecretParam) return '';
+  } catch {
+    if (/^[a-z][a-z\d+.-]*:\/\//i.test(trimmed) && trimmed.includes('@')) return '';
+  }
+  if (/[?&](password|pass|pwd)=/i.test(trimmed)) return '';
+  return value;
+}
+
+function getDevSkipInstall() {
+  if (!import.meta.env.DEV || typeof window === 'undefined') return false;
+  try {
+    return sessionStorage.getItem(DEV_SKIP_INSTALL_KEY) === '1';
+  } catch {
+    return false;
+  }
+}
+
+function setDevSkipInstall() {
+  if (!import.meta.env.DEV || typeof window === 'undefined') return;
+  try {
+    sessionStorage.setItem(DEV_SKIP_INSTALL_KEY, '1');
+  } catch {
+    /* ignore */
+  }
 }
 
 function buildInitialForm(status?: InstallStatus): InstallForm {

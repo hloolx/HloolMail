@@ -41,7 +41,7 @@ function AppContent() {
     retry: false,
     enabled: !isSharedRoute
   });
-  const skipInstall = typeof window !== 'undefined' && sessionStorage.getItem('hlool_skip_install') === '1';
+  const skipInstall = import.meta.env.DEV && typeof window !== 'undefined' && sessionStorage.getItem('hlool_skip_install') === '1';
 
   useEffect(() => {
     const media = window.matchMedia('(prefers-color-scheme: dark)');
