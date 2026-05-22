@@ -246,6 +246,232 @@ func TestBackfillMailboxCountersUsesExistingMailboxes(t *testing.T) {
 	}
 }
 
+func TestAutoMigrateBackfillsExistingUsersEmailVerified(t *testing.T) {
+	database := openSQLiteTestDB(t)
+	if err := database.AutoMigrate(&models.User{}); err != nil {
+		t.Fatal(err)
+	}
+	user := models.User{
+		Email:         "legacy-admin@example.test",
+		PasswordHash:  "hash",
+		EmailVerified: false,
+		Role:          models.UserRoleAdmin,
+		Enabled:       true,
+	}
+	if err := database.Create(&user).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	if err := AutoMigrate(database); err != nil {
+		t.Fatal(err)
+	}
+
+	var reloaded models.User
+	if err := database.First(&reloaded, user.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if !reloaded.EmailVerified {
+		t.Fatal("legacy user email_verified was not backfilled")
+	}
+}
+
+func TestAutoMigrateDoesNotBackfillPendingUnverifiedUsersOnRestart(t *testing.T) {
+	database := openSQLiteTestDB(t)
+	if err := AutoMigrate(database); err != nil {
+		t.Fatal(err)
+	}
+	user := models.User{
+		Email:         "pending-user@example.test",
+		PasswordHash:  "hash",
+		EmailVerified: false,
+		Role:          models.UserRoleUser,
+		Enabled:       true,
+	}
+	if err := database.Create(&user).Error; err != nil {
+		t.Fatal(err)
+	}
+	pending := models.PendingRegistration{
+		VerificationID: "pending-verification-id",
+		TokenHash:      "token-hash",
+		Email:          user.Email,
+		PasswordHash:   "hash",
+		CodeHash:       "code-hash",
+		ExpiresAt:      time.Now().Add(time.Hour),
+		LastSentAt:     time.Now(),
+		IP:             "127.0.0.1",
+		UserAgent:      "db-test",
+	}
+	if err := database.Create(&pending).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	if err := AutoMigrate(database); err != nil {
+		t.Fatal(err)
+	}
+
+	var reloaded models.User
+	if err := database.First(&reloaded, user.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if reloaded.EmailVerified {
+		t.Fatal("pending unverified user was incorrectly marked verified on restart")
+	}
+}
+
+func TestAutoMigrateBackfillsLegacyUserWithoutPendingAfterBrokenVersion(t *testing.T) {
+	database := openSQLiteTestDB(t)
+	if err := AutoMigrate(database); err != nil {
+		t.Fatal(err)
+	}
+	user := models.User{
+		Email:         "broken-version-legacy@example.test",
+		PasswordHash:  "hash",
+		EmailVerified: false,
+		Role:          models.UserRoleUser,
+		Enabled:       true,
+	}
+	if err := database.Create(&user).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	if err := AutoMigrate(database); err != nil {
+		t.Fatal(err)
+	}
+
+	var reloaded models.User
+	if err := database.First(&reloaded, user.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if !reloaded.EmailVerified {
+		t.Fatal("legacy user without pending registration was not recovered after broken migration")
+	}
+}
+
+func TestAutoMigrateBackfillsMessageOwnershipFromMailbox(t *testing.T) {
+	database := openSQLiteTestDB(t)
+	if err := database.AutoMigrate(&models.User{}, &models.Domain{}, &models.Mailbox{}, &models.Message{}); err != nil {
+		t.Fatal(err)
+	}
+	owner := models.User{Email: "mailbox-owner@example.test", PasswordHash: "hash", Role: models.UserRoleUser, Enabled: true}
+	if err := database.Create(&owner).Error; err != nil {
+		t.Fatal(err)
+	}
+	domain := models.Domain{
+		Domain:            "mailbox.test",
+		Mode:              models.DomainModePublic,
+		Active:            true,
+		MXVerified:        true,
+		VerificationToken: "mailbox-token",
+	}
+	if err := database.Create(&domain).Error; err != nil {
+		t.Fatal(err)
+	}
+	mailbox := models.Mailbox{
+		OwnerID:   owner.ID,
+		Email:     "legacy@mailbox.test",
+		LocalPart: "legacy",
+		Host:      "mailbox.test",
+		DomainID:  domain.ID,
+	}
+	if err := database.Create(&mailbox).Error; err != nil {
+		t.Fatal(err)
+	}
+	message := legacyMessage("mailbox-message", "legacy@mailbox.test", "mailbox.test", "mailbox.test")
+	if err := database.Create(&message).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	if err := AutoMigrate(database); err != nil {
+		t.Fatal(err)
+	}
+
+	var reloaded models.Message
+	if err := database.First(&reloaded, "id = ?", message.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	assertUintPtr(t, reloaded.OwnerID, owner.ID, "owner_id")
+	assertUintPtr(t, reloaded.MailboxID, mailbox.ID, "mailbox_id")
+	assertUintPtr(t, reloaded.DomainID, domain.ID, "domain_id")
+}
+
+func TestAutoMigrateBackfillsMessageOwnershipFromPrivateDomain(t *testing.T) {
+	database := openSQLiteTestDB(t)
+	if err := database.AutoMigrate(&models.User{}, &models.Domain{}, &models.Message{}); err != nil {
+		t.Fatal(err)
+	}
+	owner := models.User{Email: "private-owner@example.test", PasswordHash: "hash", Role: models.UserRoleUser, Enabled: true}
+	if err := database.Create(&owner).Error; err != nil {
+		t.Fatal(err)
+	}
+	domain := models.Domain{
+		Domain:            "private.test",
+		Mode:              models.DomainModePrivate,
+		OwnerID:           &owner.ID,
+		Active:            true,
+		MXVerified:        true,
+		VerificationToken: "private-token",
+	}
+	if err := database.Create(&domain).Error; err != nil {
+		t.Fatal(err)
+	}
+	message := legacyMessage("private-domain-message", "anything@private.test", "private.test", "private.test")
+	if err := database.Create(&message).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	if err := AutoMigrate(database); err != nil {
+		t.Fatal(err)
+	}
+
+	var reloaded models.Message
+	if err := database.First(&reloaded, "id = ?", message.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	assertUintPtr(t, reloaded.OwnerID, owner.ID, "owner_id")
+	assertUintPtr(t, reloaded.DomainID, domain.ID, "domain_id")
+	if reloaded.MailboxID != nil {
+		t.Fatalf("mailbox_id = %d, want nil", *reloaded.MailboxID)
+	}
+}
+
+func TestAutoMigrateKeepsPublicDomainOrphanMessageUnowned(t *testing.T) {
+	database := openSQLiteTestDB(t)
+	if err := database.AutoMigrate(&models.User{}, &models.Domain{}, &models.Message{}); err != nil {
+		t.Fatal(err)
+	}
+	owner := models.User{Email: "public-owner@example.test", PasswordHash: "hash", Role: models.UserRoleUser, Enabled: true}
+	if err := database.Create(&owner).Error; err != nil {
+		t.Fatal(err)
+	}
+	domain := models.Domain{
+		Domain:            "public.test",
+		Mode:              models.DomainModePublic,
+		OwnerID:           &owner.ID,
+		Active:            true,
+		MXVerified:        true,
+		VerificationToken: "public-token",
+	}
+	if err := database.Create(&domain).Error; err != nil {
+		t.Fatal(err)
+	}
+	message := legacyMessage("public-domain-message", "orphan@public.test", "public.test", "public.test")
+	if err := database.Create(&message).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	if err := AutoMigrate(database); err != nil {
+		t.Fatal(err)
+	}
+
+	var reloaded models.Message
+	if err := database.First(&reloaded, "id = ?", message.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if reloaded.OwnerID != nil || reloaded.MailboxID != nil || reloaded.DomainID != nil {
+		t.Fatalf("public orphan got ownership owner=%v mailbox=%v domain=%v", reloaded.OwnerID, reloaded.MailboxID, reloaded.DomainID)
+	}
+}
+
 type legacyShareLink struct {
 	ID           uint   `gorm:"primaryKey"`
 	OwnerID      uint   `gorm:"index;not null"`
@@ -258,6 +484,47 @@ type legacyShareLink struct {
 
 func (legacyShareLink) TableName() string {
 	return "share_links"
+}
+
+func openSQLiteTestDB(t *testing.T) *gorm.DB {
+	t.Helper()
+	database, err := Open(config.Config{
+		DatabaseDriver: "sqlite",
+		DatabaseURL:    filepath.Join(t.TempDir(), "mail.db"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sqlDB, err := database.DB()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := sqlDB.Close(); err != nil {
+			t.Fatal(err)
+		}
+	})
+	return database
+}
+
+func legacyMessage(id, recipient, recipientDomain, rootDomain string) models.Message {
+	return models.Message{
+		ID:              id,
+		Recipient:       recipient,
+		RecipientLocal:  strings.SplitN(recipient, "@", 2)[0],
+		RecipientDomain: recipientDomain,
+		RootDomain:      rootDomain,
+		FromAddress:     "sender@example.test",
+		Subject:         "legacy message",
+		ExpiresAt:       time.Now().Add(24 * time.Hour),
+	}
+}
+
+func assertUintPtr(t *testing.T, got *uint, want uint, name string) {
+	t.Helper()
+	if got == nil || *got != want {
+		t.Fatalf("%s = %v, want %d", name, got, want)
+	}
 }
 
 func columnNullable(t *testing.T, database *gorm.DB, table, column string) bool {

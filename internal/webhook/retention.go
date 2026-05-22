@@ -31,15 +31,11 @@ func RedactMessageDeliveriesForQuery(tx *gorm.DB, messageQuery *gorm.DB, now tim
 	if tx == nil || messageQuery == nil || !tx.Migrator().HasTable(&models.WebhookDelivery{}) {
 		return nil
 	}
-	var messageIDs []string
-	if err := messageQuery.Session(&gorm.Session{}).Pluck("id", &messageIDs).Error; err != nil {
-		return err
-	}
-	if len(messageIDs) == 0 {
-		return nil
+	messageSubquery := func() *gorm.DB {
+		return messageQuery.Session(&gorm.Session{}).Select("id")
 	}
 	return redactDeliveries(tx, func(query *gorm.DB) *gorm.DB {
-		return query.Where("message_id IN (?)", messageIDs)
+		return query.Where("message_id IN (?)", messageSubquery())
 	}, now, reason)
 }
 

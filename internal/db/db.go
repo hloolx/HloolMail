@@ -96,6 +96,7 @@ func configureSQLite(db *gorm.DB) error {
 }
 
 func AutoMigrate(db *gorm.DB) error {
+	hadPendingRegistrationTable := db.Migrator().HasTable(&models.PendingRegistration{})
 	if err := db.AutoMigrate(
 		&models.User{},
 		&models.PendingRegistration{},
@@ -130,7 +131,13 @@ func AutoMigrate(db *gorm.DB) error {
 	if err := EnsureShareLinkMailboxShareSchema(db); err != nil {
 		return err
 	}
+	if err := BackfillExistingUsersEmailVerified(db, hadPendingRegistrationTable); err != nil {
+		return err
+	}
 	if err := BackfillDomainBoolDefaults(db); err != nil {
+		return err
+	}
+	if err := BackfillMessageOwnership(db); err != nil {
 		return err
 	}
 	if err := BackfillMailboxCounters(db); err != nil {
@@ -184,6 +191,102 @@ func BackfillDomainBoolDefaults(db *gorm.DB) error {
 		}
 	}
 	return nil
+}
+
+func BackfillExistingUsersEmailVerified(db *gorm.DB, hadPendingRegistrationTable bool) error {
+	ok, err := hasTableColumns(db, "users", "email_verified")
+	if err != nil || !ok {
+		return err
+	}
+	query := db.Model(&models.User{}).Where("email_verified IS NULL OR email_verified = ?", false)
+	if !hadPendingRegistrationTable {
+		return query.Update("email_verified", true).Error
+	}
+	ok, err = hasTableColumns(db, "users", "email")
+	if err != nil || !ok {
+		return err
+	}
+	ok, err = hasTableColumns(db, "pending_registrations", "email")
+	if err != nil || !ok {
+		return nil
+	}
+	return query.
+		Where("NOT EXISTS (SELECT 1 FROM pending_registrations WHERE pending_registrations.email = users.email)").
+		Update("email_verified", true).Error
+}
+
+func BackfillMessageOwnership(db *gorm.DB) error {
+	ok, err := hasTableColumns(db, "messages", "recipient", "recipient_domain", "root_domain", "owner_id", "mailbox_id", "domain_id")
+	if err != nil || !ok {
+		return err
+	}
+	return db.Transaction(func(tx *gorm.DB) error {
+		ok, err := hasTableColumns(tx, "mailboxes", "id", "email", "owner_id", "domain_id")
+		if err != nil {
+			return err
+		}
+		if ok {
+			if err := backfillMessageMailboxOwnership(tx); err != nil {
+				return err
+			}
+		}
+
+		ok, err = hasTableColumns(tx, "domains", "id", "domain", "mode", "owner_id")
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return nil
+		}
+		if err := backfillMessagePrivateDomainOwnership(tx, "root_domain"); err != nil {
+			return err
+		}
+		return backfillMessagePrivateDomainOwnership(tx, "recipient_domain")
+	})
+}
+
+func backfillMessageMailboxOwnership(db *gorm.DB) error {
+	mailboxMatch := "mailboxes.email = messages.recipient"
+	return db.Unscoped().Model(&models.Message{}).
+		Where("owner_id IS NULL").
+		Where("EXISTS (SELECT 1 FROM mailboxes WHERE " + mailboxMatch + ")").
+		Updates(map[string]interface{}{
+			"owner_id":   gorm.Expr("(SELECT mailboxes.owner_id FROM mailboxes WHERE " + mailboxMatch + " LIMIT 1)"),
+			"mailbox_id": gorm.Expr("(SELECT mailboxes.id FROM mailboxes WHERE " + mailboxMatch + " LIMIT 1)"),
+			"domain_id":  gorm.Expr("(SELECT mailboxes.domain_id FROM mailboxes WHERE " + mailboxMatch + " LIMIT 1)"),
+		}).Error
+}
+
+func backfillMessagePrivateDomainOwnership(db *gorm.DB, messageDomainColumn string) error {
+	domainMatch := "domains.domain = messages." + messageDomainColumn
+	privateDomainMatch := domainMatch + " AND domains.mode = ? AND domains.owner_id IS NOT NULL"
+	return db.Unscoped().Model(&models.Message{}).
+		Where("owner_id IS NULL").
+		Where("EXISTS (SELECT 1 FROM domains WHERE "+privateDomainMatch+")", models.DomainModePrivate).
+		Updates(map[string]interface{}{
+			"owner_id":  gorm.Expr("(SELECT domains.owner_id FROM domains WHERE "+privateDomainMatch+" LIMIT 1)", models.DomainModePrivate),
+			"domain_id": gorm.Expr("(SELECT domains.id FROM domains WHERE "+privateDomainMatch+" LIMIT 1)", models.DomainModePrivate),
+		}).Error
+}
+
+func hasTableColumns(db *gorm.DB, table string, columns ...string) (bool, error) {
+	if !db.Migrator().HasTable(table) {
+		return false, nil
+	}
+	columnTypes, err := db.Migrator().ColumnTypes(table)
+	if err != nil {
+		return false, err
+	}
+	available := make(map[string]struct{}, len(columnTypes))
+	for _, column := range columnTypes {
+		available[strings.ToLower(column.Name())] = struct{}{}
+	}
+	for _, column := range columns {
+		if _, ok := available[strings.ToLower(column)]; !ok {
+			return false, nil
+		}
+	}
+	return true, nil
 }
 
 func BackfillDomainFirstVerifiedAt(db *gorm.DB) error {
