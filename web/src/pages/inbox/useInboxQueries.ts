@@ -21,8 +21,8 @@ export function useInboxQueries({
   emailPage,
   selectedID
 }: InboxQueriesOptions) {
-  const mailboxesInterval = useVisibleRefetchInterval(10000);
-  const emailsInterval = useVisibleRefetchInterval(5000);
+  const mailboxesInterval = useVisibleRefetchInterval(30000);
+  const emailsInterval = useVisibleRefetchInterval(30000);
 
   const domains = useQuery({
     queryKey: ['domains-available', apiKey],

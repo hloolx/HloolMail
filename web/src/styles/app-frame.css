@@ -1,0 +1,59 @@
+:root {
+  --app-inset-gap: 0.45rem;
+  --app-inset-radius: 1rem;
+  --sidebar-drawer-width: min(18rem, calc(100vw - 1.25rem));
+}
+
+.app-frame {
+  min-height: 100vh;
+  background: var(--shell);
+  color: var(--foreground);
+  transition: background-color 220ms ease, color 220ms ease;
+}
+
+.app-frame-collapsed {
+  --sidebar-width: var(--sidebar-width-icon);
+}
+
+.app-main {
+  min-height: 100vh;
+  padding-top: var(--app-header-height);
+  transition: padding-left 260ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.app-inset {
+  min-height: calc(100vh - var(--app-header-height) - var(--app-inset-gap));
+  margin: 0 var(--app-inset-gap) var(--app-inset-gap);
+  overflow: hidden;
+  border-radius: var(--app-inset-radius);
+  background: var(--background);
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, var(--border) 66%, transparent),
+    0 18px 45px rgba(15, 15, 15, 0.03);
+}
+
+.app-inset-content {
+  min-height: calc(100vh - var(--app-header-height) - var(--app-inset-gap));
+}
+
+@media (max-width: 1023px) {
+  .app-frame,
+  .app-frame-collapsed {
+    --sidebar-width: var(--sidebar-drawer-width);
+  }
+
+  .app-main {
+    width: 100%;
+    padding-left: 0;
+  }
+}
+
+@media (min-width: 1024px) {
+  .app-main {
+    padding-left: var(--sidebar-width);
+  }
+
+  .app-inset {
+    margin-left: 0;
+  }
+}

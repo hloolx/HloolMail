@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { Github, PanelLeftClose, PanelLeftOpen } from 'lucide-react';
 import { toast } from 'sonner';
@@ -14,15 +14,34 @@ import { HeaderSettings } from './HeaderSettings';
 import { NotificationBell } from './NotificationBell';
 
 export function Topbar({ user }: { user: User }) {
-  const { page, sidebarCollapsed, toggleSidebar, email, addMailNotification, awayMailCount, awayAnnouncementCount, resetAwayCounts } = useAppStore();
+  const { page, sidebarCollapsed, mobileSidebarOpen, toggleSidebar, toggleMobileSidebar, email, addMailNotification, awayMailCount, awayAnnouncementCount, resetAwayCounts } = useAppStore();
   const queryClient = useQueryClient();
   const text = useText();
-  const sidebarTitle = sidebarCollapsed ? text.nav.expandSidebar : text.nav.collapseSidebar;
+  const [isMobileNavigation, setIsMobileNavigation] = useState(() => (
+    typeof window !== 'undefined' ? window.innerWidth < 1024 : false
+  ));
+  const navigationClosed = isMobileNavigation ? !mobileSidebarOpen : sidebarCollapsed;
+  const sidebarTitle = navigationClosed ? text.nav.expandSidebar : text.nav.collapseSidebar;
+  const toggleNavigation = () => {
+    if (isMobileNavigation) {
+      toggleMobileSidebar();
+      return;
+    }
+    toggleSidebar();
+  };
   const { notify } = useBrowserNotification();
   const awayMailRef = useRef(awayMailCount);
   const awayAnnRef = useRef(awayAnnouncementCount);
   awayMailRef.current = awayMailCount;
   awayAnnRef.current = awayAnnouncementCount;
+
+  useEffect(() => {
+    const media = window.matchMedia('(max-width: 1023px)');
+    const syncNavigationMode = () => setIsMobileNavigation(media.matches);
+    syncNavigationMode();
+    media.addEventListener('change', syncNavigationMode);
+    return () => media.removeEventListener('change', syncNavigationMode);
+  }, []);
 
   // When user returns to the tab, show summary and refetch
   useVisibilityChange(() => {
@@ -85,8 +104,8 @@ export function Topbar({ user }: { user: User }) {
     <header className="topbar">
       <div className="app-header-inner">
         <div className="app-header-left">
-          <button className="app-header-trigger" title={sidebarTitle} aria-label={sidebarTitle} onClick={toggleSidebar}>
-            {sidebarCollapsed ? <PanelLeftOpen size={16} /> : <PanelLeftClose size={16} />}
+          <button className="app-header-trigger" title={sidebarTitle} aria-label={sidebarTitle} onClick={toggleNavigation}>
+            {navigationClosed ? <PanelLeftOpen size={16} /> : <PanelLeftClose size={16} />}
           </button>
           <div className="app-header-brand" aria-label="HLOOL Mail">
             <span className="app-header-brand-mark">

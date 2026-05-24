@@ -21,10 +21,30 @@ import (
 	"golang.org/x/text/transform"
 )
 
-var ErrAttachmentTooLarge = errors.New("attachment exceeds size limit")
+var (
+	ErrAttachmentTooLarge = errors.New("attachment exceeds size limit")
+	ErrBodyTooLarge       = errors.New("message body exceeds size limit")
+	ErrTooManyAttachments = errors.New("message has too many attachments")
+	ErrTooManyMIMEParts   = errors.New("message has too many MIME parts")
+)
+
+const (
+	defaultMaxAttachmentCount = 100
+	defaultMaxMIMEPartCount   = 200
+	defaultMaxBodyBytes       = 2 * 1024 * 1024
+
+	maxAttachmentFilenameLength         = 500
+	maxAttachmentContentTypeLength      = 255
+	maxAttachmentDispositionLength      = 40
+	maxAttachmentContentIDLength        = 255
+	maxAttachmentTransferEncodingLength = 40
+)
 
 type ParseOptions struct {
 	MaxAttachmentBytes int64
+	MaxAttachments     int
+	MaxMIMEParts       int
+	MaxBodyBytes       int64
 }
 
 type ParsedMessage struct {
@@ -73,13 +93,49 @@ func ParseWithOptions(raw []byte, options ParseOptions) (ParsedMessage, error) {
 	if payload, err := json.Marshal(headers); err == nil {
 		parsed.HeadersJSON = string(payload)
 	}
-	if err := parseEntity(msg.Header, msg.Body, &parsed, options, 0); err != nil {
+	state := newParseState(options)
+	if err := parseEntity(msg.Header, msg.Body, &parsed, state, 0); err != nil {
 		return parsed, err
 	}
 	return parsed, nil
 }
 
-func parseEntity(header mail.Header, body io.Reader, parsed *ParsedMessage, options ParseOptions, depth int) error {
+type parseState struct {
+	options         ParseOptions
+	partCount       int
+	attachmentCount int
+}
+
+func newParseState(options ParseOptions) *parseState {
+	if options.MaxAttachments <= 0 {
+		options.MaxAttachments = defaultMaxAttachmentCount
+	}
+	if options.MaxMIMEParts <= 0 {
+		options.MaxMIMEParts = defaultMaxMIMEPartCount
+	}
+	if options.MaxBodyBytes <= 0 {
+		options.MaxBodyBytes = defaultMaxBodyBytes
+	}
+	return &parseState{options: options}
+}
+
+func (s *parseState) countPart() error {
+	s.partCount++
+	if s.partCount > s.options.MaxMIMEParts {
+		return fmt.Errorf("%w: maximum %d parts", ErrTooManyMIMEParts, s.options.MaxMIMEParts)
+	}
+	return nil
+}
+
+func (s *parseState) countAttachment() error {
+	s.attachmentCount++
+	if s.attachmentCount > s.options.MaxAttachments {
+		return fmt.Errorf("%w: maximum %d attachments", ErrTooManyAttachments, s.options.MaxAttachments)
+	}
+	return nil
+}
+
+func parseEntity(header mail.Header, body io.Reader, parsed *ParsedMessage, state *parseState, depth int) error {
 	if depth > 32 {
 		return fmt.Errorf("mime recursion depth exceeded")
 	}
@@ -102,24 +158,31 @@ func parseEntity(header mail.Header, body io.Reader, parsed *ParsedMessage, opti
 			if err != nil {
 				return err
 			}
+			if err := state.countPart(); err != nil {
+				return err
+			}
 			partHeader := mail.Header(part.Header)
-			if err := parseEntity(partHeader, part, parsed, options, depth+1); err != nil {
+			if err := parseEntity(partHeader, part, parsed, state, depth+1); err != nil {
 				return err
 			}
 		}
 	}
 
 	disposition, dispositionParams, _ := mime.ParseMediaType(header.Get("Content-Disposition"))
-	filename := decodeHeader(dispositionParams["filename"])
+	disposition = truncateString(strings.ToLower(strings.TrimSpace(disposition)), maxAttachmentDispositionLength)
+	filename := truncateString(decodeHeader(dispositionParams["filename"]), maxAttachmentFilenameLength)
 	if filename == "" {
 		_, params, _ := mime.ParseMediaType(header.Get("Content-Type"))
-		filename = decodeHeader(params["name"])
+		filename = truncateString(decodeHeader(params["name"]), maxAttachmentFilenameLength)
 	}
-	lowerMediaType := strings.ToLower(mediaType)
+	lowerMediaType := truncateString(strings.ToLower(mediaType), maxAttachmentContentTypeLength)
 	isAttachment := strings.EqualFold(disposition, "attachment") || filename != ""
 	isTextPart := lowerMediaType == "text/plain" || lowerMediaType == "text/html"
 	if isAttachment || !isTextPart {
-		stats, err := discardAttachment(header, body, options.MaxAttachmentBytes)
+		if err := state.countAttachment(); err != nil {
+			return err
+		}
+		stats, err := discardAttachment(header, body, state.options.MaxAttachmentBytes)
 		if err != nil {
 			return err
 		}
@@ -127,9 +190,9 @@ func parseEntity(header mail.Header, body io.Reader, parsed *ParsedMessage, opti
 			Sequence:         len(parsed.Attachments) + 1,
 			Filename:         filename,
 			ContentType:      lowerMediaType,
-			Disposition:      strings.ToLower(strings.TrimSpace(disposition)),
-			ContentID:        contentID(header),
-			TransferEncoding: transferEncoding(header),
+			Disposition:      disposition,
+			ContentID:        truncateString(contentID(header), maxAttachmentContentIDLength),
+			TransferEncoding: truncateString(transferEncoding(header), maxAttachmentTransferEncodingLength),
 			SizeBytes:        stats.SizeBytes,
 			SHA256:           stats.SHA256,
 			Inline:           strings.EqualFold(disposition, "inline"),
@@ -137,7 +200,7 @@ func parseEntity(header mail.Header, body io.Reader, parsed *ParsedMessage, opti
 		return nil
 	}
 
-	data, err := readDecoded(header, body)
+	data, err := readDecoded(header, body, state.options.MaxBodyBytes)
 	if err != nil {
 		return err
 	}
@@ -181,8 +244,19 @@ func discardAttachment(header mail.Header, body io.Reader, max int64) (attachmen
 	return attachmentStats{SizeBytes: n, SHA256: hex.EncodeToString(hasher.Sum(nil))}, nil
 }
 
-func readDecoded(header mail.Header, body io.Reader) ([]byte, error) {
-	return io.ReadAll(transferDecoder(header, body))
+func readDecoded(header mail.Header, body io.Reader, max int64) ([]byte, error) {
+	reader := transferDecoder(header, body)
+	if max <= 0 {
+		return io.ReadAll(reader)
+	}
+	data, err := io.ReadAll(io.LimitReader(reader, max+1))
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(data)) > max {
+		return nil, fmt.Errorf("%w: maximum %d bytes", ErrBodyTooLarge, max)
+	}
+	return data, nil
 }
 
 func transferDecoder(header mail.Header, body io.Reader) io.Reader {
@@ -237,4 +311,18 @@ func decodeHeader(value string) string {
 		return value
 	}
 	return decoded
+}
+
+func truncateString(value string, maxRunes int) string {
+	if maxRunes <= 0 || value == "" {
+		return value
+	}
+	if len(value) <= maxRunes {
+		return value
+	}
+	runes := []rune(value)
+	if len(runes) <= maxRunes {
+		return value
+	}
+	return string(runes[:maxRunes])
 }

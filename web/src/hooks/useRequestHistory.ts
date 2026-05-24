@@ -14,7 +14,8 @@ export type HistoryEntry = {
   duration?: number;
 };
 
-const STORAGE_KEY = "hlool_api_explorer_history";
+const STORAGE_KEY = "hlool-mail.apiExplorerHistory";
+const LEGACY_STORAGE_KEY = "hlool_api_explorer_history";
 const MAX_ENTRIES = 30;
 
 function generateId(): string {
@@ -62,7 +63,23 @@ function sanitizeHistory(entries: unknown[]): HistoryEntry[] {
     .filter((entry): entry is HistoryEntry => Boolean(entry));
 }
 
+function migrateFromLegacy(): void {
+  try {
+    const legacyData = localStorage.getItem(LEGACY_STORAGE_KEY);
+    if (!legacyData) return;
+    if (localStorage.getItem(STORAGE_KEY)) {
+      localStorage.removeItem(LEGACY_STORAGE_KEY);
+      return;
+    }
+    localStorage.setItem(STORAGE_KEY, legacyData);
+    localStorage.removeItem(LEGACY_STORAGE_KEY);
+  } catch {
+    // 迁移失败静默忽略，旧数据保留
+  }
+}
+
 function loadHistory(): HistoryEntry[] {
+  migrateFromLegacy();
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return [];

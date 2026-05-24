@@ -16,6 +16,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 type adminDomainHealthItem struct {
@@ -63,51 +64,78 @@ func (h *Handler) adminDomainHealth(c *gin.Context) {
 	}
 	page := parsePage(c.Query("page"))
 	perPage := parseLimit(c.Query("per_page"), 10, 100)
+	now := time.Now()
 
-	var domains []models.Domain
-	if err := h.DB.Order("domain asc").Find(&domains).Error; err != nil {
+	query := h.DB.Model(&models.Domain{})
+	var total int64
+	if err := query.Count(&total).Error; err != nil {
 		fail(c, http.StatusInternalServerError, err.Error())
 		return
 	}
-	now := time.Now()
+	totalPages := pageCount(total, perPage)
+	if page > totalPages {
+		page = totalPages
+	}
+
+	var domains []models.Domain
+	if err := query.Session(&gorm.Session{}).
+		Order(domainHealthOrder(now)).
+		Offset((page - 1) * perPage).
+		Limit(perPage).
+		Find(&domains).Error; err != nil {
+		fail(c, http.StatusInternalServerError, err.Error())
+		return
+	}
+	messageCounts := messageCountsByDomain(h.DB, domains)
+	ownerEmails, err := domainOwnerEmails(h.DB, domains)
+	if err != nil {
+		fail(c, http.StatusInternalServerError, err.Error())
+		return
+	}
 	items := make([]adminDomainHealthItem, 0, len(domains))
 	for _, d := range domains {
-		dto := domainWithCount(h.DB, d)
 		severity, issue := classifyDomainHealth(d, now)
 		items = append(items, adminDomainHealthItem{
-			Domain:       dto.Domain,
-			MessageCount: dto.MessageCount,
+			Domain:       d,
+			MessageCount: messageCounts[d.Domain],
 			Severity:     severity,
 			Issue:        issue,
-			OwnerEmail:   domainOwnerEmail(h.DB, d.OwnerID),
+			OwnerEmail:   ownerEmails[domainOwnerID(d.OwnerID)],
 		})
-	}
-	sort.SliceStable(items, func(i, j int) bool {
-		left := severityRank(items[i].Severity)
-		right := severityRank(items[j].Severity)
-		if left != right {
-			return left > right
-		}
-		return items[i].Domain.Domain < items[j].Domain.Domain
-	})
-
-	total := int64(len(items))
-	start := (page - 1) * perPage
-	if start >= len(items) {
-		start = 0
-	}
-	end := start + perPage
-	if end > len(items) {
-		end = len(items)
 	}
 
 	ok(c, domainHealthListResponse{
-		Items:      items[start:end],
+		Items:      items,
 		Total:      total,
 		Page:       page,
 		PerPage:    perPage,
-		TotalPages: pageCount(total, perPage),
+		TotalPages: totalPages,
 	})
+}
+
+func domainHealthOrder(now time.Time) clause.OrderBy {
+	return clause.OrderBy{
+		Expression: clause.Expr{
+			SQL: `CASE
+				WHEN active = ? THEN ?
+				WHEN mx_verified = ? THEN ?
+				WHEN domain_expires_at IS NOT NULL AND domain_expires_at < ? THEN ?
+				WHEN domain_expires_at IS NOT NULL AND domain_expires_at < ? THEN ?
+				WHEN last_mx_check_at IS NULL THEN ?
+				WHEN last_mx_check_at < ? THEN ?
+				ELSE ?
+			END DESC, domain ASC`,
+			Vars: []interface{}{
+				false, severityRank("warning"),
+				false, severityRank("critical"),
+				now, severityRank("critical"),
+				now.AddDate(0, 0, 30), severityRank("warning"),
+				severityRank("warning"),
+				now.Add(-24 * time.Hour), severityRank("warning"),
+				severityRank("ok"),
+			},
+		},
+	}
 }
 
 type domainCheckSettingsDTO struct {
@@ -434,6 +462,38 @@ func domainOwnerEmail(db *gorm.DB, ownerID *uint) string {
 		return ""
 	}
 	return user.Email
+}
+
+func domainOwnerEmails(db *gorm.DB, domains []models.Domain) (map[uint]string, error) {
+	ids := make([]uint, 0, len(domains))
+	seen := map[uint]bool{}
+	for _, d := range domains {
+		id := domainOwnerID(d.OwnerID)
+		if id == 0 || seen[id] {
+			continue
+		}
+		seen[id] = true
+		ids = append(ids, id)
+	}
+	out := make(map[uint]string, len(ids))
+	if len(ids) == 0 {
+		return out, nil
+	}
+	var users []models.User
+	if err := db.Select("id", "email").Where("id IN ?", ids).Find(&users).Error; err != nil {
+		return nil, err
+	}
+	for _, user := range users {
+		out[user.ID] = user.Email
+	}
+	return out, nil
+}
+
+func domainOwnerID(ownerID *uint) uint {
+	if ownerID == nil {
+		return 0
+	}
+	return *ownerID
 }
 
 func (h *Handler) adminAuditLogs(c *gin.Context) {

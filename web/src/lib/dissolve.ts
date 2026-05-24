@@ -85,7 +85,8 @@ export async function dissolveElement(
 
       if (a < 30) continue;
 
-      let vx = 0, vy = 0;
+      let vx: number;
+      let vy: number;
       if (direction === 'up') {
         vx = (Math.random() - 0.5) * 3;
         vy = -(Math.random() * 3 + 1);

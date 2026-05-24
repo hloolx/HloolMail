@@ -296,6 +296,76 @@ func TestValidateEndpointURLRejectsUnsafeTargets(t *testing.T) {
 	}
 }
 
+func TestValidateDeliveryURLRejectsSpecialAddressRanges(t *testing.T) {
+	tests := []struct {
+		name string
+		ip   string
+	}{
+		{name: "unspecified", ip: "0.0.0.0"},
+		{name: "loopback", ip: "127.0.0.1"},
+		{name: "private 10", ip: "10.0.0.1"},
+		{name: "private 172", ip: "172.16.0.1"},
+		{name: "private 192", ip: "192.168.0.1"},
+		{name: "link local", ip: "169.254.169.254"},
+		{name: "cgnat", ip: "100.64.0.1"},
+		{name: "benchmark", ip: "198.18.0.1"},
+		{name: "multicast", ip: "224.0.0.1"},
+		{name: "ipv6 unspecified", ip: "::"},
+		{name: "ipv6 loopback", ip: "::1"},
+		{name: "ipv6 ula", ip: "fc00::1"},
+		{name: "ipv6 link local", ip: "fe80::1"},
+		{name: "ipv6 multicast", ip: "ff02::1"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := ValidateDeliveryURL(context.Background(), "https://webhook.example/hook", func(context.Context, string) ([]net.IP, error) {
+				return []net.IP{net.ParseIP(tt.ip)}, nil
+			})
+			if err == nil {
+				t.Fatalf("expected %s to be rejected", tt.ip)
+			}
+		})
+	}
+}
+
+func TestWorkerRejectsDNSRebindingAtDial(t *testing.T) {
+	db := webhookTestDB(t)
+	endpoint := createWebhookTestEndpoint(t, db, 1, "https://rebind.example/hook", "secret")
+	delivery := createWebhookTestDelivery(t, db, endpoint, `{"ok":true}`)
+	now := time.Date(2026, 5, 20, 11, 0, 0, 0, time.UTC)
+	resolveCalls := 0
+	worker := NewWorker(db)
+	worker.Now = func() time.Time { return now }
+	worker.Jitter = func(time.Duration) time.Duration { return 0 }
+	worker.Resolve = func(context.Context, string) ([]net.IP, error) {
+		resolveCalls++
+		if resolveCalls == 1 {
+			return []net.IP{net.ParseIP("93.184.216.34")}, nil
+		}
+		return []net.IP{net.ParseIP("127.0.0.1")}, nil
+	}
+
+	if err := worker.RunOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	var refreshed models.WebhookDelivery
+	if err := db.First(&refreshed, "id = ?", delivery.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if resolveCalls < 2 {
+		t.Fatalf("resolver called %d times, want dial-time validation after initial validation", resolveCalls)
+	}
+	if refreshed.Status != models.WebhookDeliveryStatusFailed {
+		t.Fatalf("status = %q, want failed; delivery=%+v", refreshed.Status, refreshed)
+	}
+	if refreshed.AttemptCount != 1 {
+		t.Fatalf("attempt count = %d, want 1", refreshed.AttemptCount)
+	}
+	if !strings.Contains(refreshed.Error, "webhook host address is not allowed") {
+		t.Fatalf("error = %q, want forbidden address error", refreshed.Error)
+	}
+}
+
 func publicExampleResolver(context.Context, string) ([]net.IP, error) {
 	return []net.IP{net.ParseIP("93.184.216.34")}, nil
 }

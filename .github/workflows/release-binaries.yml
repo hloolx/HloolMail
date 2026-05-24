@@ -65,7 +65,7 @@ jobs:
       - name: Build web console
         working-directory: web
         run: |
-          npm install
+          npm ci
           node scripts/install-native-build-deps.cjs
           npm run build
 

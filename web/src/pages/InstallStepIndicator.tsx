@@ -3,7 +3,7 @@ import { useText } from '../locales';
 
 export const STEPS = ['stepAdmin', 'stepDNS', 'stepInstall'] as const;
 
-export function StepIndicator({ current, text, onStep }: { current: number; text: ReturnType<typeof useText>; onStep: (step: number) => void }) {
+export function StepIndicator({ current, text }: { current: number; text: ReturnType<typeof useText> }) {
   const steps = [
     { key: STEPS[0], number: 1 },
     { key: STEPS[1], number: 2 },
@@ -11,18 +11,18 @@ export function StepIndicator({ current, text, onStep }: { current: number; text
   ];
 
   return (
-    <div className="install-steps mx-auto max-w-6xl">
+    <ol className="install-steps mx-auto max-w-6xl" aria-label={text.install.stepProgressLabel}>
       {steps.map((step, i) => {
         let cls = 'install-step';
         if (i === current) cls += ' install-step-active';
         else if (i < current) cls += ' install-step-done';
         return (
-          <button key={step.key} type="button" className={cls} onClick={() => onStep(i)}>
+          <li key={step.key} className={cls} aria-current={i === current ? 'step' : undefined}>
             <span className="install-step-num">{i < current ? <Check size={12} /> : step.number}</span>
             <span className="install-step-label">{(text.install as Record<string, string>)[step.key]}</span>
-          </button>
+          </li>
         );
       })}
-    </div>
+    </ol>
   );
 }

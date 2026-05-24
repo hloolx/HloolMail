@@ -60,6 +60,93 @@
   font-weight: 780;
 }
 
+.landing-nav {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.65rem;
+}
+
+.landing-nav-link {
+  display: inline-flex;
+  height: 2.15rem;
+  align-items: center;
+  justify-content: center;
+  gap: 0.35rem;
+  border: 1px solid var(--border);
+  border-radius: 0.55rem;
+  background: color-mix(in srgb, var(--background) 84%, transparent);
+  color: var(--foreground);
+  padding: 0 0.65rem;
+  font-size: 0.82rem;
+  font-weight: 700;
+  text-decoration: none;
+  transition: background-color 180ms ease, border-color 180ms ease;
+}
+
+.landing-nav-link:hover {
+  border-color: color-mix(in srgb, var(--foreground) 18%, var(--border));
+  background: var(--background);
+}
+
+.landing-nav-icon {
+  width: 2.15rem;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--foreground);
+}
+
+.landing-nav-icon:hover {
+  background: color-mix(in srgb, var(--foreground) 8%, transparent);
+  border: none;
+}
+
+.landing-nav-icon:focus {
+  outline: none;
+}
+
+.landing-nav-icon:focus-visible {
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--focus) 35%, transparent);
+}
+
+.login-page {
+  display: grid;
+  align-content: start;
+}
+
+.login-main {
+  display: grid;
+  width: min(100% - 2rem, 30rem);
+  margin: 0 auto;
+  padding: clamp(3rem, 10vh, 6rem) 0 2rem;
+}
+
+.login-main .auth-panel {
+  width: 100%;
+  animation: landing-rise 560ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.auth-page-terms {
+  margin: 0.85rem 0 0;
+  color: var(--muted);
+  font-size: 0.78rem;
+  line-height: 1.55;
+  text-align: center;
+}
+
+.auth-page-terms a {
+  color: inherit;
+  text-decoration: underline;
+  text-underline-offset: 0.18rem;
+}
+
+@media (max-width: 460px) {
+  .login-main {
+    width: min(100% - 1rem, 30rem);
+    padding-top: 1.6rem;
+  }
+}
+
 /* Hide brand name text on very narrow screens, keep logo */
 @media (max-width: 380px) {
   .landing-brand > span:last-child {
@@ -84,6 +171,10 @@
   .landing-main {
     grid-template-columns: minmax(0, 1fr) 26rem;
     padding-top: 5rem;
+  }
+
+  .landing-main-public {
+    grid-template-columns: minmax(0, 1fr);
   }
 }
 
@@ -111,9 +202,9 @@
 .landing-hero h1 {
   max-width: 44rem;
   margin: 1.25rem 0 0;
-  font-size: clamp(2.4rem, 5vw, 3.8rem);
+  font-size: 3.4rem;
   font-weight: 800;
-  letter-spacing: -0.02em;
+  letter-spacing: 0;
   line-height: 1.1;
   animation: landing-rise 520ms cubic-bezier(0.22, 1, 0.36, 1) 110ms both;
 }
@@ -253,6 +344,11 @@
   padding: 0.75rem;
 }
 
+.landing-hero-preview {
+  max-width: 43rem;
+  margin-top: 1rem;
+}
+
 .landing-preview-top {
   display: flex;
   align-items: center;
@@ -353,7 +449,7 @@
 .landing-stat b {
   font-size: 2.4rem;
   font-weight: 800;
-  letter-spacing: -0.02em;
+  letter-spacing: 0;
   line-height: 1;
 }
 
@@ -379,9 +475,9 @@
 
 .landing-section-head h2 {
   margin: 0;
-  font-size: clamp(1.6rem, 3.5vw, 2.2rem);
+  font-size: 2rem;
   font-weight: 780;
-  letter-spacing: -0.015em;
+  letter-spacing: 0;
 }
 
 .landing-section-head p {
@@ -436,7 +532,7 @@
   color: var(--muted);
   font-size: 1.5rem;
   font-weight: 800;
-  letter-spacing: -0.03em;
+  letter-spacing: 0;
   line-height: 1;
   opacity: 0.35;
 }
@@ -632,9 +728,9 @@
 .landing-overview-copy h2 {
   max-width: 32rem;
   margin: 0.75rem 0 0;
-  font-size: clamp(1.5rem, 3vw, 2rem);
+  font-size: 1.9rem;
   font-weight: 780;
-  letter-spacing: -0.015em;
+  letter-spacing: 0;
   line-height: 1.2;
 }
 

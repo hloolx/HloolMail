@@ -64,7 +64,7 @@ func NewRouter(h *Handler) *gin.Engine {
 		gin.SetMode(gin.ReleaseMode)
 	}
 	router := gin.New()
-	router.Use(gin.Recovery(), h.securityHeaders(), h.cors(), h.loadSession(), h.optionalAPIKey())
+	router.Use(gin.Recovery(), h.securityHeaders(), h.cors(), h.loadSession(), h.optionalAPIKey(), h.requireSameOriginSessionWrite())
 
 	api := router.Group("/api")
 	api.GET("/health", h.perIPRateLimit(2, 5), h.health)
@@ -158,6 +158,8 @@ func NewRouter(h *Handler) *gin.Engine {
 	userGroup := api.Group("", h.perAPIRateLimit(0.5, 5))
 	userGroup.GET("/users", h.listUsers)
 	userGroup.POST("/users", h.createUser)
+	userGroup.GET("/users/:id/api-keys", h.listUserAPIKeys)
+	userGroup.POST("/users/:id/api-keys/:key_id/reveal", h.revealUserAPIKey)
 	userGroup.PATCH("/users/:id", h.patchUser)
 	userGroup.DELETE("/users/:id", h.deleteUser)
 

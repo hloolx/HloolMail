@@ -5,12 +5,20 @@ import { roleText, useText } from '../../locales';
 import type { User } from '../../api';
 import { postJSON } from '../../api';
 import { useAppStore } from '../../store';
+import { clearUserSession } from '../../lib/queryClient';
 import { UserProfileDialog } from '../../pages/UserProfileDialog';
 import { navGroups } from './navGroups';
 
 export function Sidebar({ user }: { user: User }) {
   const queryClient = useQueryClient();
-  const { page, setPage, sidebarCollapsed, toggleSidebar } = useAppStore();
+  const {
+    page,
+    setPage,
+    sidebarCollapsed,
+    mobileSidebarOpen,
+    closeMobileSidebar,
+    toggleSidebar
+  } = useAppStore();
   const text = useText();
   const sidebarTitle = sidebarCollapsed ? text.nav.expandSidebar : text.nav.collapseSidebar;
   const [profileOpen, setProfileOpen] = useState(false);
@@ -18,13 +26,21 @@ export function Sidebar({ user }: { user: User }) {
   const logout = useMutation({
     mutationFn: () => postJSON('/api/auth/logout', {}),
     onSuccess: () => {
-      try { localStorage.removeItem('hlool-mail.email'); } catch { /* ignore */ }
+      clearUserSession(queryClient);
       if (window.location.hash) window.location.hash = '';
-      queryClient.invalidateQueries({ queryKey: ['me'] });
     }
   });
   return (
-    <aside className={`sidebar fixed inset-y-0 left-0 z-30 border-r border-[var(--border)] bg-[var(--sidebar)] transition-transform duration-300 lg:block ${sidebarCollapsed ? 'sidebar-collapsed' : ''} ${sidebarCollapsed ? '-translate-x-full lg:translate-x-0' : 'translate-x-0'}`}>
+    <>
+      {mobileSidebarOpen && (
+        <button
+          className="sidebar-overlay"
+          type="button"
+          aria-label={text.nav.collapseSidebar}
+          onClick={closeMobileSidebar}
+        />
+      )}
+      <aside className={`sidebar ${sidebarCollapsed && !mobileSidebarOpen ? 'sidebar-collapsed' : ''} ${mobileSidebarOpen ? 'sidebar-mobile-open' : 'sidebar-mobile-closed'}`}>
       <div className="sidebar-inner">
         <nav className="sidebar-nav">
           {navGroups(user, text).map((group) => (
@@ -38,9 +54,10 @@ export function Sidebar({ user }: { user: User }) {
                     <button
                       key={item.page}
                       className={`nav-item ${active ? 'nav-item-active' : ''}`}
+                      type="button"
                       onClick={() => {
                         setPage(item.page);
-                        if (window.innerWidth < 1024 && !sidebarCollapsed) toggleSidebar();
+                        if (window.innerWidth < 1024) closeMobileSidebar();
                       }}
                       title={sidebarCollapsed ? item.label : undefined}
                       aria-current={active ? 'page' : undefined}
@@ -81,8 +98,9 @@ export function Sidebar({ user }: { user: User }) {
           </button>
         </div>
       </div>
-      <button className="sidebar-rail" title={sidebarTitle} aria-label={sidebarTitle} onClick={toggleSidebar} />
+      <button className="sidebar-rail" type="button" title={sidebarTitle} aria-label={sidebarTitle} onClick={toggleSidebar} />
       <UserProfileDialog open={profileOpen} onClose={() => setProfileOpen(false)} user={user} />
-    </aside>
+      </aside>
+    </>
   );
 }

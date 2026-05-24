@@ -16,8 +16,8 @@ export type MailNotification = {
 };
 
 export type AwaySummary = {
-  newMail: number;
-  newAnnouncements: number;
+  newMail?: number | null;
+  newAnnouncements?: number | null;
 };
 
 const MAX_MAIL_NOTIFICATIONS = 20;
@@ -29,6 +29,7 @@ type AppState = {
   theme: ThemeMode;
   language: Language;
   sidebarCollapsed: boolean;
+  mobileSidebarOpen: boolean;
   mailNotifications: MailNotification[];
   awayMailCount: number;
   awayAnnouncementCount: number;
@@ -38,10 +39,14 @@ type AppState = {
   setTheme: (theme: ThemeMode) => void;
   setLanguage: (language: Language) => void;
   toggleSidebar: () => void;
+  openMobileSidebar: () => void;
+  closeMobileSidebar: () => void;
+  toggleMobileSidebar: () => void;
   addMailNotification: (notification: MailNotification) => void;
   clearMailNotifications: () => void;
-  incrementAwayCounts: (summary: AwaySummary) => void;
+  incrementAwayCounts: (summary?: AwaySummary | null) => void;
   resetAwayCounts: () => void;
+  logout: () => void;
 };
 
 const storageKey = (key: string) => `hlool-mail.${key}`;
@@ -121,7 +126,12 @@ const storedLanguage = (): Language => {
 const storedSidebarCollapsed = () => {
   const value = readStorage('sidebarCollapsed');
   if (value === 'true' || value === 'false') return value === 'true';
-  return typeof window !== 'undefined' ? window.innerWidth < 1024 : false;
+  return false;
+};
+
+const safeAwayIncrement = (value: number | null | undefined) => {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) return 0;
+  return Math.floor(value);
 };
 
 export const useAppStore = create<AppState>((set, get) => ({
@@ -131,6 +141,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   theme: storedTheme(),
   language: storedLanguage(),
   sidebarCollapsed: storedSidebarCollapsed(),
+  mobileSidebarOpen: false,
   mailNotifications: [],
   awayMailCount: 0,
   awayAnnouncementCount: 0,
@@ -161,6 +172,15 @@ export const useAppStore = create<AppState>((set, get) => ({
     writeStorage('sidebarCollapsed', String(next));
     set({ sidebarCollapsed: next });
   },
+  openMobileSidebar: () => {
+    set({ mobileSidebarOpen: true });
+  },
+  closeMobileSidebar: () => {
+    set({ mobileSidebarOpen: false });
+  },
+  toggleMobileSidebar: () => {
+    set({ mobileSidebarOpen: !get().mobileSidebarOpen });
+  },
   addMailNotification: (notification) => {
     const current = get().mailNotifications;
     const exists = current.some((n) => n.id === notification.id);
@@ -173,12 +193,23 @@ export const useAppStore = create<AppState>((set, get) => ({
     set({ mailNotifications: [] });
   },
   incrementAwayCounts: (summary) => {
-    set({
-      awayAnnouncementCount: get().awayAnnouncementCount + summary.newAnnouncements
+    const newMail = safeAwayIncrement(summary?.newMail);
+    const newAnnouncements = safeAwayIncrement(summary?.newAnnouncements);
+    if (newMail === 0 && newAnnouncements === 0) return;
+    set((state) => {
+      return {
+        awayMailCount: state.awayMailCount + newMail,
+        awayAnnouncementCount: state.awayAnnouncementCount + newAnnouncements
+      };
     });
   },
   resetAwayCounts: () => {
     set({ awayMailCount: 0, awayAnnouncementCount: 0 });
+  },
+  logout: () => {
+    removeStorage('email');
+    clearStoredAPIKeys();
+    set({ email: '', apiKey: '' });
   }
 }));
 

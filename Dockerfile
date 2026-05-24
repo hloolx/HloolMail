@@ -4,7 +4,7 @@ ARG NPM_CONFIG_REGISTRY=https://registry.npmjs.org/
 ENV NPM_CONFIG_REGISTRY=$NPM_CONFIG_REGISTRY
 COPY web/package.json web/package-lock.json ./
 COPY web/scripts ./scripts
-RUN npm install
+RUN npm ci
 RUN node scripts/install-native-build-deps.cjs
 COPY web ./
 RUN npm run build

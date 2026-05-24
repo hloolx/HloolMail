@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -240,6 +241,73 @@ func (h *Handler) cors() gin.HandlerFunc {
 	}
 }
 
+func (h *Handler) requireSameOriginSessionWrite() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		if !isUnsafeMethod(c.Request.Method) || currentUser(c) == nil || currentAPIKey(c) != nil || h.isAdminTokenRequest(c) {
+			c.Next()
+			return
+		}
+		if h.requestHasSameOrigin(c) {
+			c.Next()
+			return
+		}
+		fail(c, http.StatusForbidden, "same-origin request required")
+		c.Abort()
+	}
+}
+
+func isUnsafeMethod(method string) bool {
+	switch method {
+	case http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete:
+		return true
+	default:
+		return false
+	}
+}
+
+func (h *Handler) requestHasSameOrigin(c *gin.Context) bool {
+	if origin := strings.TrimSpace(c.GetHeader("Origin")); origin != "" {
+		return h.sameOriginAllowed(c, origin)
+	}
+	if referer := strings.TrimSpace(c.GetHeader("Referer")); referer != "" {
+		return h.sameOriginAllowed(c, referer)
+	}
+	return true
+}
+
+func (h *Handler) sameOriginAllowed(c *gin.Context, raw string) bool {
+	candidate, err := url.Parse(raw)
+	if err != nil || candidate.Scheme == "" || candidate.Host == "" {
+		return false
+	}
+	if base := strings.TrimSpace(h.Config.PublicBaseURL); base != "" {
+		if publicURL, err := url.Parse(base); err == nil && publicURL.Scheme != "" && publicURL.Host != "" && sameOrigin(candidate, publicURL) {
+			return true
+		}
+	}
+	return sameRequestOrigin(candidate, requestOrigin(c))
+}
+
+func sameOrigin(a, b *url.URL) bool {
+	return strings.EqualFold(a.Scheme, b.Scheme) && strings.EqualFold(a.Host, b.Host)
+}
+
+func sameRequestOrigin(candidate *url.URL, requestURL *url.URL) bool {
+	return requestURL != nil && sameOrigin(candidate, requestURL)
+}
+
+func requestOrigin(c *gin.Context) *url.URL {
+	scheme := "http"
+	if c.Request.TLS != nil || strings.EqualFold(c.GetHeader("X-Forwarded-Proto"), "https") {
+		scheme = "https"
+	}
+	host := strings.TrimSpace(c.Request.Host)
+	if host == "" {
+		return nil
+	}
+	return &url.URL{Scheme: scheme, Host: host}
+}
+
 func (h *Handler) perAPIRateLimit(limit rate.Limit, burst int) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		identifier := h.rateLimitSubject(c)
@@ -298,11 +366,24 @@ func (h *Handler) requireAdmin(c *gin.Context) bool {
 	if user := currentUser(c); user != nil && user.Role == models.UserRoleAdmin {
 		return true
 	}
-	if h.Config.AdminToken != "" && c.GetHeader("X-Admin-Token") == h.Config.AdminToken {
+	if h.isAdminTokenRequest(c) {
 		return true
 	}
 	fail(c, http.StatusForbidden, "admin token required")
 	return false
+}
+
+func (h *Handler) isAdminTokenRequest(c *gin.Context) bool {
+	return h.Config.AdminToken != "" && c.GetHeader("X-Admin-Token") == h.Config.AdminToken
+}
+
+func (h *Handler) requireAdminSession(c *gin.Context) (*models.User, bool) {
+	user := currentUser(c)
+	if user != nil && user.Role == models.UserRoleAdmin {
+		return user, true
+	}
+	fail(c, http.StatusForbidden, "admin login required")
+	return nil, false
 }
 
 func (h *Handler) requireLogin(c *gin.Context) (*models.User, bool) {

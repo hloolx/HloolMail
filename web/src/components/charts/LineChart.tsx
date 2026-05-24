@@ -71,7 +71,9 @@ export function LineChart({
     const pt = svg.createSVGPoint();
     pt.x = event.clientX;
     pt.y = event.clientY;
-    const svgP = pt.matrixTransform(svg.getScreenCTM()?.inverse());
+    const screenMatrix = svg.getScreenCTM();
+    if (!screenMatrix) return;
+    const svgP = pt.matrixTransform(screenMatrix.inverse());
     const relX = (svgP.x - padding.left) / chartW;
     const idx = Math.round(relX * steps);
     if (idx < 0 || idx >= data.length) {

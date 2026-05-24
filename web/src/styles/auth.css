@@ -9,7 +9,7 @@
 
 .auth-tabs {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(0, 1fr));
   border: 1px solid var(--border);
   border-radius: 0.7rem;
   background: color-mix(in srgb, var(--soft) 72%, transparent);
@@ -220,4 +220,150 @@
   color: var(--destructive, #e65054);
   font-size: 0.78rem;
   font-weight: 600;
+}
+
+/* ── Page terms footer ── */
+
+.auth-page-terms {
+  margin-top: 1rem;
+  padding-top: 0.8rem;
+  border-top: 1px solid var(--border);
+  color: var(--muted);
+  font-size: 0.78rem;
+  line-height: 1.55;
+  text-align: center;
+}
+
+.auth-page-terms a {
+  color: var(--focus);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.auth-page-terms a:hover {
+  color: var(--foreground);
+}
+
+/* ── Legal page ── */
+
+.legal-page {
+  min-height: 100vh;
+  background: var(--background);
+  color: var(--foreground);
+}
+
+.legal-page-header {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  padding: 1rem 1.5rem;
+  border-bottom: 1px solid var(--border);
+  background: color-mix(in srgb, var(--background) 92%, transparent);
+  backdrop-filter: blur(12px);
+}
+
+.legal-page-header h1 {
+  margin: 0;
+  font-size: 1.2rem;
+  font-weight: 700;
+}
+
+.legal-back-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: 0.5rem;
+  background: var(--background);
+  color: var(--foreground);
+  font-size: 0.85rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background-color 150ms ease, border-color 150ms ease;
+}
+
+.legal-back-button:hover {
+  background: var(--soft);
+  border-color: color-mix(in srgb, var(--foreground) 20%, var(--border));
+}
+
+.legal-page-content {
+  max-width: 48rem;
+  margin: 0 auto;
+  padding: 2rem 1.5rem 4rem;
+}
+
+.legal-page-content h1 {
+  margin: 2rem 0 1rem;
+  font-size: 1.6rem;
+  font-weight: 800;
+}
+
+.legal-page-content h2 {
+  margin: 2rem 0 0.75rem;
+  font-size: 1.25rem;
+  font-weight: 700;
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 0.5rem;
+}
+
+.legal-page-content h3 {
+  margin: 1.5rem 0 0.5rem;
+  font-size: 1.1rem;
+  font-weight: 650;
+}
+
+.legal-page-content p {
+  margin: 0.75rem 0;
+  line-height: 1.75;
+}
+
+.legal-page-content ul {
+  margin: 0.75rem 0;
+  padding-left: 1.5rem;
+}
+
+.legal-page-content li {
+  margin: 0.35rem 0;
+  line-height: 1.65;
+}
+
+.legal-page-content strong {
+  font-weight: 650;
+}
+
+.legal-page-content code {
+  padding: 0.15rem 0.4rem;
+  border-radius: 0.3rem;
+  background: var(--soft);
+  font-size: 0.88em;
+}
+
+.legal-page-content hr {
+  margin: 2rem 0;
+  border: 0;
+  border-top: 1px solid var(--border);
+}
+
+.legal-page-content table {
+  width: 100%;
+  margin: 1rem 0;
+  border-collapse: collapse;
+}
+
+.legal-page-content th,
+.legal-page-content td {
+  padding: 0.6rem 0.8rem;
+  border: 1px solid var(--border);
+  text-align: left;
+  font-size: 0.9rem;
+}
+
+.legal-page-content th {
+  background: var(--soft);
+  font-weight: 650;
 }

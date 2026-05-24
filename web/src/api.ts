@@ -8,6 +8,8 @@ export type ApiEnvelope<T> = {
   usage?: Record<string, UsageValue>;
 };
 
+type OpenString = string & {};
+
 export type PaginatedResponse<T> = {
   items: T[];
   page: number;
@@ -210,7 +212,7 @@ export type WebhookEndpointDTO = {
   secret_preview?: string;
   enabled: boolean;
   events: string[];
-  scope: 'all' | 'domain' | 'mailbox' | string;
+  scope: 'all' | 'domain' | 'mailbox' | OpenString;
   domain_id?: number;
   mailbox_id?: number;
   last_success_at?: string;
@@ -226,7 +228,7 @@ export type WebhookDeliveryDTO = {
   endpoint_id: number;
   event_type: string;
   message_id?: string;
-  status: 'pending' | 'delivering' | 'retry' | 'succeeded' | 'failed' | string;
+  status: 'pending' | 'delivering' | 'retry' | 'succeeded' | 'failed' | OpenString;
   attempt_count: number;
   max_attempts: number;
   next_attempt_at?: string;
@@ -306,7 +308,7 @@ export type AppNotification = {
   id: number;
   user_id?: number;
   domain_id?: number;
-  type: 'MX_FAILED' | 'MX_RECOVERED' | 'DOMAIN_EXPIRING' | 'DOMAIN_EXPIRED' | string;
+  type: 'MX_FAILED' | 'MX_RECOVERED' | 'DOMAIN_EXPIRING' | 'DOMAIN_EXPIRED' | OpenString;
   message: string;
   read: boolean;
   created_at: string;
@@ -405,17 +407,33 @@ type RequestOptions = RequestInit & {
   retryDelay?: number;
 };
 
+export type ApiErrorKind = 'http' | 'business' | 'parse';
+
+type ApiErrorOptions = {
+  httpStatus?: number;
+  kind?: ApiErrorKind;
+  error?: unknown;
+};
+
 export class ApiError extends Error {
   status: number;
+  httpStatus: number;
+  kind: ApiErrorKind;
+  error?: unknown;
 
-  constructor(message: string, status: number) {
+  constructor(message: string, status: number, options: ApiErrorOptions = {}) {
     super(message);
     this.name = 'ApiError';
     this.status = status;
+    this.httpStatus = options.httpStatus ?? status;
+    this.kind = options.kind ?? 'http';
+    this.error = options.error;
   }
 }
 
 const DEFAULT_TIMEOUT = 30000;
+const BUSINESS_ERROR_STATUS = 422;
+const pendingGetRequests = new Map<string, Promise<unknown>>();
 
 export async function api<T>(path: string, options: RequestOptions = {}): Promise<T> {
   const {
@@ -425,14 +443,39 @@ export async function api<T>(path: string, options: RequestOptions = {}): Promis
     retryDelay = 1000,
     ...fetchOptions
   } = options;
+
+  if (isDedupableDefaultGet(fetchOptions)) {
+    const dedupeHeaders = buildRequestHeaders(fetchOptions.headers, fetchOptions.body, apiKey);
+    const dedupeKey = getDedupeKey(path, dedupeHeaders, apiKey);
+    const pending = pendingGetRequests.get(dedupeKey);
+    if (pending) return pending as Promise<T>;
+
+    const request = runApiRequest<T>(path, fetchOptions, apiKey, timeout, retries, retryDelay);
+    pendingGetRequests.set(dedupeKey, request);
+    try {
+      return await request;
+    } finally {
+      if (pendingGetRequests.get(dedupeKey) === request) {
+        pendingGetRequests.delete(dedupeKey);
+      }
+    }
+  }
+
+  return runApiRequest<T>(path, fetchOptions, apiKey, timeout, retries, retryDelay);
+}
+
+async function runApiRequest<T>(
+  path: string,
+  fetchOptions: RequestInit,
+  apiKey: string | undefined,
+  timeout: number,
+  retries: number,
+  retryDelay: number
+): Promise<T> {
   let lastError = new Error('request failed');
 
   for (let attempt = 0; attempt <= retries; attempt += 1) {
-    const headers = new Headers(fetchOptions.headers);
-    if (!headers.has('Content-Type') && fetchOptions.body) {
-      headers.set('Content-Type', 'application/json');
-    }
-    if (apiKey) headers.set('X-API-Key', apiKey);
+    const headers = buildRequestHeaders(fetchOptions.headers, fetchOptions.body, apiKey);
 
     let timedOut = false;
     const controller = new AbortController();
@@ -454,19 +497,28 @@ export async function api<T>(path: string, options: RequestOptions = {}): Promis
       const raw = await response.text();
       let envelope: ApiEnvelope<T>;
       try {
-        envelope = JSON.parse(raw) as ApiEnvelope<T>;
+        envelope = parseApiEnvelope<T>(raw);
       } catch {
         const fallback = raw.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
-        const details = fallback ? `：${fallback.slice(0, 120)}` : '';
+        const details = fallback ? `: ${fallback.slice(0, 120)}` : '';
         const message = response.ok
-          ? `接口 ${path} 返回了非 JSON 内容，请确认后端路由或登录状态${details}`
+          ? `API ${path} returned non-JSON content. Check the backend route or sign-in state${details}`
           : fallback
-            ? `请求失败（HTTP ${response.status}）${details}`
+            ? `Request failed (HTTP ${response.status})${details}`
             : (response.statusText || `HTTP ${response.status}`);
-        throw new ApiError(message, response.status);
+        throw new ApiError(message, response.status, { httpStatus: response.status, kind: 'parse' });
       }
       if (!response.ok || !envelope.success) {
-        throw new ApiError(String(envelope.error || response.statusText || `HTTP ${response.status}`), response.status);
+        const businessFailure = response.ok && !envelope.success;
+        throw new ApiError(
+          String(envelope.error || response.statusText || `HTTP ${response.status}`),
+          businessFailure ? BUSINESS_ERROR_STATUS : response.status,
+          {
+            httpStatus: response.status,
+            kind: businessFailure ? 'business' : 'http',
+            error: envelope.error
+          }
+        );
       }
       return envelope.data;
     } catch (err) {
@@ -487,10 +539,58 @@ export async function api<T>(path: string, options: RequestOptions = {}): Promis
   throw lastError;
 }
 
+function parseApiEnvelope<T>(raw: string): ApiEnvelope<T> {
+  const value = JSON.parse(raw) as unknown;
+  if (!isApiEnvelope(value)) {
+    throw new SyntaxError('Invalid API response envelope');
+  }
+  return value as ApiEnvelope<T>;
+}
+
+function isApiEnvelope(value: unknown): value is ApiEnvelope<unknown> {
+  return Boolean(
+    value &&
+      typeof value === 'object' &&
+      'success' in value &&
+      typeof (value as { success?: unknown }).success === 'boolean'
+  );
+}
+
+function buildRequestHeaders(headersInit: HeadersInit | undefined, body: RequestInit['body'], apiKey?: string) {
+  const headers = new Headers(headersInit);
+  if (!headers.has('Content-Type') && isJSONBody(body)) {
+    headers.set('Content-Type', 'application/json');
+  }
+  if (apiKey) headers.set('X-API-Key', apiKey);
+  return headers;
+}
+
+function isJSONBody(body: RequestInit['body']) {
+  return typeof body === 'string';
+}
+
+function isDedupableDefaultGet(fetchOptions: RequestInit) {
+  return fetchOptions.method === undefined && fetchOptions.body == null && fetchOptions.signal === undefined;
+}
+
+function getDedupeKey(path: string, headers: Headers, apiKey?: string) {
+  return JSON.stringify([
+    path,
+    apiKey || '',
+    Array.from(headers.entries()).sort(([left], [right]) => left.localeCompare(right))
+  ]);
+}
+
+function jsonHeaders(headersInit: HeadersInit | undefined) {
+  const headers = new Headers(headersInit);
+  if (!headers.has('Content-Type')) headers.set('Content-Type', 'application/json');
+  return headers;
+}
+
 export function postJSON<T>(path: string, body: unknown, options?: RequestOptions) {
-  return api<T>(path, { ...options, method: 'POST', body: JSON.stringify(body) });
+  return api<T>(path, { ...options, method: 'POST', headers: jsonHeaders(options?.headers), body: JSON.stringify(body) });
 }
 
 export function patchJSON<T>(path: string, body: unknown, options?: RequestOptions) {
-  return api<T>(path, { ...options, method: 'PATCH', body: JSON.stringify(body) });
+  return api<T>(path, { ...options, method: 'PATCH', headers: jsonHeaders(options?.headers), body: JSON.stringify(body) });
 }

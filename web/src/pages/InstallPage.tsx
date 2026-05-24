@@ -40,6 +40,8 @@ type DNSState = {
   result: InstallDNSCheckResult;
 };
 
+type InstallFieldErrors = Partial<Record<'admin_email' | 'admin_password', string>>;
+
 const INSTALL_FORM_KEY = 'hlool:install-form';
 const DEV_SKIP_INSTALL_KEY = 'hlool_skip_install';
 
@@ -52,8 +54,8 @@ export function InstallPage({ status, onDone }: { status?: InstallStatus; onDone
   const [mailHostEdited, setMailHostEdited] = useState(false);
   const [dnsState, setDNSState] = useState<DNSState | null>(null);
   const [installResult, setInstallResult] = useState<InstallResult | null>(null);
-  const [activeStep, setActiveStep] = useState(0);
   const [form, setForm] = useState<InstallForm>(() => loadInstallForm(status));
+  const [fieldErrors, setFieldErrors] = useState<InstallFieldErrors>({});
 
   // Persist form to sessionStorage on every change
   useEffect(() => {
@@ -66,6 +68,14 @@ export function InstallPage({ status, onDone }: { status?: InstallStatus; onDone
 
   const set = (changes: Partial<InstallForm>, dnsAffectsInstall = false) => {
     setForm((current) => ({ ...current, ...changes }));
+    if ('admin_email' in changes || 'admin_password' in changes) {
+      setFieldErrors((current) => {
+        const next = { ...current };
+        if ('admin_email' in changes) delete next.admin_email;
+        if ('admin_password' in changes) delete next.admin_password;
+        return next;
+      });
+    }
     if (dnsAffectsInstall) setDNSState(null);
   };
 
@@ -149,14 +159,24 @@ export function InstallPage({ status, onDone }: { status?: InstallStatus; onDone
   });
 
   // Client-side validation
-  const validate = useCallback((): string | null => {
-    if (!form.admin_email.trim()) return text.install.validationEmailRequired;
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.admin_email.trim())) return text.install.validationEmailFormat;
-    if (form.admin_password.length < 8) return text.install.validationPasswordLength;
-    if (form.database_driver === 'sqlite' && !form.database_url.trim()) return text.install.validationDatabaseRequired;
-    if (form.database_driver === 'postgres' && (!form.database_host.trim() || !form.database_name.trim() || !form.database_user.trim())) return text.install.validationDatabaseRequired;
-    if (!/^https?:\/\/.+/.test(form.public_base_url.trim())) return text.install.validationPublicURLFormat;
-    return null;
+  const validate = useCallback((): { message: string | null; fieldErrors: InstallFieldErrors; focusId?: string } => {
+    const nextFieldErrors: InstallFieldErrors = {};
+    if (!form.admin_email.trim()) {
+      nextFieldErrors.admin_email = text.install.validationEmailRequired;
+      return { message: text.install.validationEmailRequired, fieldErrors: nextFieldErrors, focusId: 'admin-email' };
+    }
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.admin_email.trim())) {
+      nextFieldErrors.admin_email = text.install.validationEmailFormat;
+      return { message: text.install.validationEmailFormat, fieldErrors: nextFieldErrors, focusId: 'admin-email' };
+    }
+    if (form.admin_password.length < 8) {
+      nextFieldErrors.admin_password = text.install.validationPasswordLength;
+      return { message: text.install.validationPasswordLength, fieldErrors: nextFieldErrors, focusId: 'admin-password' };
+    }
+    if (form.database_driver === 'sqlite' && !form.database_url.trim()) return { message: text.install.validationDatabaseRequired, fieldErrors: nextFieldErrors };
+    if (form.database_driver === 'postgres' && (!form.database_host.trim() || !form.database_name.trim() || !form.database_user.trim())) return { message: text.install.validationDatabaseRequired, fieldErrors: nextFieldErrors };
+    if (!/^https?:\/\/.+/.test(form.public_base_url.trim())) return { message: text.install.validationPublicURLFormat, fieldErrors: nextFieldErrors };
+    return { message: null, fieldErrors: nextFieldErrors };
   }, [form, text]);
 
   const handleSubmit = (e: FormEvent) => {
@@ -166,9 +186,14 @@ export function InstallPage({ status, onDone }: { status?: InstallStatus; onDone
       toast.error(text.install.finishBtnDNS);
       return;
     }
-    const error = validate();
-    if (error) {
-      toast.error(error);
+    const validation = validate();
+    setFieldErrors(validation.fieldErrors);
+    if (validation.message) {
+      toast.error(validation.message);
+      const focusId = validation.focusId;
+      if (focusId) {
+        window.requestAnimationFrame(() => document.getElementById(focusId)?.focus());
+      }
       return;
     }
     install.mutate(undefined);
@@ -270,7 +295,7 @@ export function InstallPage({ status, onDone }: { status?: InstallStatus; onDone
   // ---- Main Install Form ----
   return (
     <InstallShell status={status} runtimeConfigLocked={runtimeConfigLocked} text={text} onLogoTap={handleLogoTap}>
-      <StepIndicator current={currentStep} text={text} onStep={setActiveStep} />
+      <StepIndicator current={currentStep} text={text} />
 
       <form className="mx-auto grid max-w-6xl gap-4 lg:grid-cols-[minmax(0,1fr)_25rem]" onSubmit={handleSubmit} noValidate>
         <section className="panel">
@@ -296,8 +321,8 @@ export function InstallPage({ status, onDone }: { status?: InstallStatus; onDone
             {text.install.sectionAdmin}
           </div>
           <div className="grid gap-3 md:grid-cols-2">
-            <Field id="admin-email" required label={text.install.adminEmail} value={form.admin_email} onChange={(value) => set({ admin_email: value })} />
-            <Field id="admin-password" required label={text.install.adminPassword} value={form.admin_password} type="password" onChange={(value) => set({ admin_password: value })} />
+            <Field id="admin-email" required label={text.install.adminEmail} value={form.admin_email} error={fieldErrors.admin_email} onChange={(value) => set({ admin_email: value })} />
+            <Field id="admin-password" required label={text.install.adminPassword} value={form.admin_password} type="password" error={fieldErrors.admin_password} onChange={(value) => set({ admin_password: value })} />
           </div>
 
           <div className="install-section-title">

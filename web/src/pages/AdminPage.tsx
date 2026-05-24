@@ -9,33 +9,66 @@ import { domainModeLabel, formatDomainExpiry, relativeTime } from '../lib/displa
 import { notifySuccess } from '../lib/feedback';
 import { useAppStore } from '../store';
 import { currentText, useText } from '../locales';
-import { DataTable, InfoTip, Metric, PaginationControls, StatusPill } from '../components/shared';
+import { useHashSearchState, useTableUrlState } from '../hooks/useTableUrlState';
+import { DataTable, InfoTip, Metric, PaginationControls, SegmentedTabs, StatusPill } from '../components/shared';
 import { AdminAuditLog } from './AdminAuditLog';
+
+const ADMIN_TAB_OPTIONS = ['dns', 'domainHealth', 'quotaAlerts', 'audit'] as const;
+
+type AdminTab = (typeof ADMIN_TAB_OPTIONS)[number];
 
 export function AdminPage() {
   const queryClient = useQueryClient();
   const text = useText();
   const language = useAppStore((state) => state.language);
   const setPage = useAppStore((state) => state.setPage);
-  const [dnsCheckPage, setDnsCheckPage] = useState(1);
-  const [domainHealthPage, setDomainHealthPage] = useState(1);
-  const [quotaAlertsPage, setQuotaAlertsPage] = useState(1);
+  const { params: adminSearchParams, setParams: setAdminSearchParams } = useHashSearchState();
+  const activeAdminTab = getAdminTab(adminSearchParams.get('tab'));
+  const dnsRunsUrlState = useTableUrlState({
+    pageParam: 'dnsPage',
+    pageSizeParam: 'dnsPageSize',
+    pageSizeOptions: [10, 20, 50]
+  });
+  const domainHealthUrlState = useTableUrlState({
+    pageParam: 'healthPage',
+    pageSizeParam: 'healthPageSize',
+    pageSizeOptions: [10, 20, 50]
+  });
+  const quotaAlertsUrlState = useTableUrlState({
+    defaultPageSize: 8,
+    pageParam: 'quotaPage',
+    pageSizeParam: 'quotaPageSize',
+    pageSizeOptions: [8, 20, 50]
+  });
+  const dnsCheckPage = dnsRunsUrlState.page;
+  const dnsCheckPerPage = dnsRunsUrlState.pageSize;
+  const domainHealthPage = domainHealthUrlState.page;
+  const domainHealthPerPage = domainHealthUrlState.pageSize;
+  const quotaAlertsPage = quotaAlertsUrlState.page;
+  const quotaAlertsPerPage = quotaAlertsUrlState.pageSize;
+  const setActiveAdminTab = (nextTab: string) => {
+    const tab = getAdminTab(nextTab);
+    setAdminSearchParams((params) => {
+      if (tab === 'dns') {
+        params.delete('tab');
+      } else {
+        params.set('tab', tab);
+      }
+    });
+  };
   const saveDnsSettingsButtonRef = useRef<HTMLButtonElement | null>(null);
   const runDnsCheckButtonRef = useRef<HTMLButtonElement | null>(null);
   const domainHealthFeedbackOriginRef = useRef<HTMLElement | null>(null);
-  const dnsCheckPerPage = 10;
-  const domainHealthPerPage = 10;
-  const quotaAlertsPerPage = 8;
 
   const stats = useQuery({ queryKey: ['admin-stats'], queryFn: () => api<AdminStats>('/api/admin/stats'), retry: false, staleTime: 30_000 });
   const domainHealth = useQuery({
-    queryKey: ['admin-domain-health', domainHealthPage],
+    queryKey: ['admin-domain-health', domainHealthPage, domainHealthPerPage],
     queryFn: () => api<PaginatedResponse<AdminDomainHealth>>(`/api/admin/domain-health?page=${domainHealthPage}&per_page=${domainHealthPerPage}`),
     retry: false,
     staleTime: 30_000
   });
   const quotaAlerts = useQuery({
-    queryKey: ['admin-quota-alerts', quotaAlertsPage],
+    queryKey: ['admin-quota-alerts', quotaAlertsPage, quotaAlertsPerPage],
     queryFn: () => api<PaginatedResponse<AdminQuotaAlert>>(`/api/admin/quota-alerts?page=${quotaAlertsPage}&per_page=${quotaAlertsPerPage}`),
     retry: false,
     staleTime: 30_000
@@ -253,7 +286,19 @@ export function AdminPage() {
         </div>
       </section>
 
-      <section className="panel" id="admin-dns-check">
+      <SegmentedTabs
+        value={activeAdminTab}
+        onValueChange={setActiveAdminTab}
+        ariaLabel={text.admin.title}
+        items={[
+          { value: 'dns', label: text.admin.dnsCheck.title, badge: hasRunningCheck ? domainCheckStatusLabel('running') : undefined },
+          { value: 'domainHealth', label: text.admin.domainHealth.title, badge: stats.data?.failed_domains ? String(stats.data.failed_domains) : undefined },
+          { value: 'quotaAlerts', label: text.admin.quotaAlerts.title, badge: quotaPage?.total ? String(quotaPage.total) : undefined },
+          { value: 'audit', label: text.admin.auditLogs.title }
+        ]}
+      />
+
+      <section className="panel admin-table-panel" id="admin-dns-check" hidden={activeAdminTab !== 'dns'}>
         <div className="panel-header admin-panel-header">
           <div>
             <h2>{text.admin.dnsCheck.title}</h2>
@@ -404,13 +449,23 @@ export function AdminPage() {
                 ]
               }))}
             />
-            <PaginationControls page={runsPage?.page || 1} totalPages={runsPage?.total_pages || 1} onPageChange={setDnsCheckPage} />
+            <PaginationControls
+              page={runsPage?.page || dnsCheckPage}
+              totalPages={runsPage?.total_pages || 1}
+              onPageChange={dnsRunsUrlState.setPage}
+              rowsPerPage={dnsCheckPerPage}
+              rowsPerPageOptions={[10, 20, 50]}
+              onRowsPerPageChange={(nextRowsPerPage) => {
+                dnsRunsUrlState.setPageSize(nextRowsPerPage);
+              }}
+              rowsPerPageLabel={text.common.rowsPerPage}
+            />
           </div>
         </div>
       </section>
 
-      <div className="grid gap-4 xl:grid-cols-[1.25fr_0.75fr]" id="admin-domain-health">
-        <section className="panel">
+      <div className="admin-tab-panels" hidden={activeAdminTab !== 'domainHealth' && activeAdminTab !== 'quotaAlerts'}>
+        <section className="panel admin-table-panel" id="admin-domain-health" hidden={activeAdminTab !== 'domainHealth'}>
           <div className="panel-header admin-panel-header">
             <div>
               <h2>{text.admin.domainHealth.title}</h2>
@@ -464,10 +519,20 @@ export function AdminPage() {
               ]
             }))}
           />
-          <PaginationControls page={healthPage?.page || 1} totalPages={healthPage?.total_pages || 1} onPageChange={setDomainHealthPage} />
+          <PaginationControls
+            page={healthPage?.page || domainHealthPage}
+            totalPages={healthPage?.total_pages || 1}
+            onPageChange={domainHealthUrlState.setPage}
+            rowsPerPage={domainHealthPerPage}
+            rowsPerPageOptions={[10, 20, 50]}
+            onRowsPerPageChange={(nextRowsPerPage) => {
+              domainHealthUrlState.setPageSize(nextRowsPerPage);
+            }}
+            rowsPerPageLabel={text.common.rowsPerPage}
+          />
         </section>
 
-        <section className="panel" id="admin-quota-alerts">
+        <section className="panel admin-table-panel" id="admin-quota-alerts" hidden={activeAdminTab !== 'quotaAlerts'}>
           <div className="panel-header admin-panel-header">
             <div>
               <h2>{text.admin.quotaAlerts.title}</h2>
@@ -498,17 +563,33 @@ export function AdminPage() {
               ]
             }))}
           />
-          <PaginationControls page={quotaPage?.page || 1} totalPages={quotaPage?.total_pages || 1} onPageChange={setQuotaAlertsPage} />
+          <PaginationControls
+            page={quotaPage?.page || quotaAlertsPage}
+            totalPages={quotaPage?.total_pages || 1}
+            onPageChange={quotaAlertsUrlState.setPage}
+            rowsPerPage={quotaAlertsPerPage}
+            rowsPerPageOptions={[8, 20, 50]}
+            onRowsPerPageChange={(nextRowsPerPage) => {
+              quotaAlertsUrlState.setPageSize(nextRowsPerPage);
+            }}
+            rowsPerPageLabel={text.common.rowsPerPage}
+          />
         </section>
       </div>
 
-      <AdminAuditLog />
+      <div hidden={activeAdminTab !== 'audit'}>
+        <AdminAuditLog />
+      </div>
     </div>
   );
 }
 
 function SeverityPill({ severity, children }: { severity: 'ok' | 'warning' | 'critical'; children: string }) {
   return <span className={`severity-pill severity-${severity}`}>{children}</span>;
+}
+
+function getAdminTab(value: string | null): AdminTab {
+  return ADMIN_TAB_OPTIONS.includes(value as AdminTab) ? (value as AdminTab) : 'dns';
 }
 
 function splitResolvers(value: string) {

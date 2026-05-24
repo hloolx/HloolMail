@@ -1,18 +1,19 @@
 import { useQuery } from '@tanstack/react-query';
-import { useState, type Dispatch, type SetStateAction } from 'react';
+import { useMemo, useState } from 'react';
 import { RefreshCw, Search } from 'lucide-react';
 import { api } from '../api';
 import type { AuditLog, AuditLogPage } from '../types';
 import { relativeTime } from '../lib/display';
 import { currentText, useText } from '../locales';
-import { DataTable, InfoTip, PaginationControls } from '../components/shared';
+import { useTableUrlState } from '../hooks/useTableUrlState';
+import { DataTable, DataTableViewOptions, InfoTip, PaginationControls } from '../components/shared';
+import type { DataTableColumn } from '../components/shared';
 
 type AuditLogFilters = {
   category: string;
   severity: string;
   action: string;
   targetType: string;
-  q: string;
 };
 
 const auditActionOptions = [
@@ -33,24 +34,57 @@ const auditActionOptions = [
   'mailbox.delete',
   'oauth.login',
   'domain_check_run.create'
-];
+] as const;
+
+const AUDIT_PAGE_SIZE_OPTIONS = [10, 20, 50, 100];
+const AUDIT_CATEGORY_OPTIONS = ['security', 'activity', 'system', 'all'] as const;
+const AUDIT_SEVERITY_OPTIONS = ['all', 'critical', 'warning', 'info'] as const;
+const AUDIT_TARGET_OPTIONS = ['all', 'user', 'domain', 'api_key', 'mailbox', 'oauth_provider'] as const;
 
 export function AdminAuditLog() {
   const text = useText();
-
-  const [auditFilters, setAuditFilters] = useState<AuditLogFilters>(() => defaultAuditFilters());
-  const [auditPage, setAuditPage] = useState(1);
-  const auditPerPage = 20;
+  const {
+    page: auditPage,
+    setPage: setAuditPage,
+    pageSize: auditPerPage,
+    setPageSize: setAuditPerPage,
+    search: auditSearch,
+    setSearch: setAuditSearch,
+    filters: auditFilters,
+    setFilter: setAuditFilter
+  } = useTableUrlState<AuditLogFilters>({
+    defaultPageSize: 20,
+    defaultSearch: '',
+    defaultFilters: defaultAuditFilters(),
+    filterOptions: {
+      category: AUDIT_CATEGORY_OPTIONS,
+      severity: AUDIT_SEVERITY_OPTIONS,
+      action: ['all', ...auditActionOptions],
+      targetType: AUDIT_TARGET_OPTIONS
+    },
+    filterParams: {
+      targetType: 'target_type'
+    },
+    pageSizeOptions: AUDIT_PAGE_SIZE_OPTIONS
+  });
+  const [hiddenColumnKeys, setHiddenColumnKeys] = useState<string[]>([]);
 
   const auditLogs = useQuery({
-    queryKey: ['admin-audit-logs', auditFilters, auditPage],
-    queryFn: () => api<AuditLogPage>(`/api/admin/audit-logs?${buildAuditLogQuery(auditFilters, auditPage, auditPerPage)}`),
+    queryKey: ['admin-audit-logs', auditFilters, auditSearch, auditPage, auditPerPage],
+    queryFn: () => api<AuditLogPage>(`/api/admin/audit-logs?${buildAuditLogQuery(auditFilters, auditSearch, auditPage, auditPerPage)}`),
     retry: false,
     staleTime: 30_000
   });
+  const columns = useMemo<DataTableColumn[]>(() => [
+    { key: 'created-at', header: text.admin.auditLogs.colTime, width: '8rem', mobileSubtitle: true },
+    { key: 'event', header: text.admin.auditLogs.colEvent, minWidth: '18rem', hideable: false, mobileTitle: true },
+    { key: 'severity', header: text.admin.auditLogs.colSeverity, align: 'center', width: '8rem', mobileBadge: true },
+    { key: 'actor', header: text.admin.auditLogs.colActor, minWidth: '9rem', mobilePriority: 1 },
+    { key: 'target', header: text.admin.auditLogs.colTarget, minWidth: '12rem', mobilePriority: 2 }
+  ], [text]);
 
   return (
-    <section className="panel" id="admin-audit-logs">
+    <section className="panel admin-table-panel" id="admin-audit-logs">
       <div className="panel-header admin-panel-header">
         <div>
           <h2>{text.admin.auditLogs.title}<InfoTip text={text.admin.auditLogs.desc} /></h2>
@@ -65,6 +99,15 @@ export function AdminAuditLog() {
             <RefreshCw size={14} className={auditLogs.isFetching ? 'animate-spin' : ''} />
             {text.common.refresh}
           </button>
+          <DataTableViewOptions
+            columns={columns}
+            hiddenColumnKeys={hiddenColumnKeys}
+            onHiddenColumnKeysChange={setHiddenColumnKeys}
+            label={text.common.view}
+            menuLabel={text.common.toggleColumns}
+            resetLabel={text.common.reset}
+            emptyLabel={text.common.noToggleColumns}
+          />
         </div>
       </div>
       <div className="admin-audit-filters">
@@ -73,15 +116,15 @@ export function AdminAuditLog() {
           <div className="admin-audit-search-box">
             <Search size={15} />
             <input
-              value={auditFilters.q}
-              onChange={(event) => updateAuditFilter(setAuditFilters, setAuditPage, { q: event.target.value })}
+              value={auditSearch}
+              onChange={(event) => setAuditSearch(event.target.value, 'replace')}
               placeholder={text.admin.auditLogs.searchPlaceholder}
             />
           </div>
         </label>
         <label>
           <span>{text.admin.auditLogs.filterCategory}</span>
-          <select className="input" value={auditFilters.category} onChange={(event) => updateAuditFilter(setAuditFilters, setAuditPage, { category: event.target.value })}>
+          <select className="input" value={auditFilters.category} onChange={(event) => setAuditFilter('category', event.target.value)}>
             <option value="security">{text.admin.auditLogs.categorySecurity}</option>
             <option value="activity">{text.admin.auditLogs.categoryActivity}</option>
             <option value="system">{text.admin.auditLogs.categorySystem}</option>
@@ -90,7 +133,7 @@ export function AdminAuditLog() {
         </label>
         <label>
           <span>{text.admin.auditLogs.filterSeverity}</span>
-          <select className="input" value={auditFilters.severity} onChange={(event) => updateAuditFilter(setAuditFilters, setAuditPage, { severity: event.target.value })}>
+          <select className="input" value={auditFilters.severity} onChange={(event) => setAuditFilter('severity', event.target.value)}>
             <option value="all">{text.admin.auditLogs.all}</option>
             <option value="critical">{text.admin.auditLogs.severityCritical}</option>
             <option value="warning">{text.admin.auditLogs.severityWarning}</option>
@@ -99,7 +142,7 @@ export function AdminAuditLog() {
         </label>
         <label>
           <span>{text.admin.auditLogs.filterAction}</span>
-          <select className="input" value={auditFilters.action} onChange={(event) => updateAuditFilter(setAuditFilters, setAuditPage, { action: event.target.value })}>
+          <select className="input" value={auditFilters.action} onChange={(event) => setAuditFilter('action', event.target.value)}>
             <option value="all">{text.admin.auditLogs.all}</option>
             {auditActionOptions.map((action) => (
               <option key={action} value={action}>{auditActionLabel(action)}</option>
@@ -108,7 +151,7 @@ export function AdminAuditLog() {
         </label>
         <label>
           <span>{text.admin.auditLogs.filterTarget}</span>
-          <select className="input" value={auditFilters.targetType} onChange={(event) => updateAuditFilter(setAuditFilters, setAuditPage, { targetType: event.target.value })}>
+          <select className="input" value={auditFilters.targetType} onChange={(event) => setAuditFilter('targetType', event.target.value)}>
             <option value="all">{text.admin.auditLogs.all}</option>
             <option value="user">{text.admin.auditLogs.targetUser}</option>
             <option value="domain">{text.admin.auditLogs.targetDomain}</option>
@@ -118,16 +161,22 @@ export function AdminAuditLog() {
           </select>
         </label>
       </div>
+      {auditLogs.isError && (
+        <TableQueryError
+          label={auditLogs.error instanceof Error && auditLogs.error.message ? auditLogs.error.message : text.admin.auditLogs.empty}
+          actionLabel={text.common.retry}
+          isFetching={auditLogs.isFetching}
+          onRetry={() => auditLogs.refetch()}
+        />
+      )}
       <DataTable
         ariaLabel={text.admin.auditLogs.title}
-        emptyLabel={text.admin.auditLogs.empty}
-        columns={[
-          { key: 'created-at', header: text.admin.auditLogs.colTime, width: '8rem' },
-          { key: 'event', header: text.admin.auditLogs.colEvent, minWidth: '18rem' },
-          { key: 'severity', header: text.admin.auditLogs.colSeverity, align: 'center', width: '8rem' },
-          { key: 'actor', header: text.admin.auditLogs.colActor, minWidth: '9rem' },
-          { key: 'target', header: text.admin.auditLogs.colTarget, minWidth: '12rem' }
-        ]}
+        emptyLabel={auditLogs.isLoading ? text.common.loading : text.admin.auditLogs.empty}
+        columns={columns}
+        hiddenColumnKeys={hiddenColumnKeys}
+        onHiddenColumnKeysChange={setHiddenColumnKeys}
+        hiddenLabel={text.common.noColumnsSelected}
+        showAllColumnsLabel={text.common.showAllColumns}
         rows={(auditLogs.data?.items || []).map((log) => ({
           key: log.id,
           cells: [
@@ -147,15 +196,17 @@ export function AdminAuditLog() {
           ]
         }))}
       />
-      {auditLogs.data && auditLogs.data.total_pages > 1 && (
-        <div className="admin-audit-pagination">
-          <PaginationControls
-            page={auditLogs.data.page}
-            totalPages={auditLogs.data.total_pages}
-            onPageChange={setAuditPage}
-          />
-        </div>
-      )}
+      <div className="admin-audit-pagination">
+        <PaginationControls
+          page={auditLogs.data?.page || auditPage}
+          totalPages={auditLogs.data?.total_pages || 1}
+          onPageChange={setAuditPage}
+          rowsPerPage={auditPerPage}
+          rowsPerPageOptions={AUDIT_PAGE_SIZE_OPTIONS}
+          onRowsPerPageChange={setAuditPerPage}
+          rowsPerPageLabel={text.common.rowsPerPage}
+        />
+      </div>
     </section>
   );
 }
@@ -164,26 +215,40 @@ function SeverityPill({ severity, children }: { severity: 'ok' | 'warning' | 'cr
   return <span className={`severity-pill severity-${severity}`}>{children}</span>;
 }
 
+function TableQueryError({
+  label,
+  actionLabel,
+  isFetching,
+  onRetry
+}: {
+  label: string;
+  actionLabel: string;
+  isFetching: boolean;
+  onRetry: () => void;
+}) {
+  return (
+    <div className="grid gap-3 rounded-lg border border-[var(--bad)]/30 bg-[var(--bad)]/5 p-3" role="alert">
+      <div className="grid min-h-24 place-items-center rounded-lg border border-dashed border-[var(--border)] text-sm text-[var(--bad)]">
+        {label}
+      </div>
+      <button className="btn-secondary btn-sm justify-self-center" type="button" onClick={onRetry} disabled={isFetching}>
+        <RefreshCw size={14} className={isFetching ? 'animate-spin' : ''} />
+        {actionLabel}
+      </button>
+    </div>
+  );
+}
+
 function defaultAuditFilters(): AuditLogFilters {
   return {
     category: 'security',
     severity: 'all',
     action: 'all',
-    targetType: 'all',
-    q: ''
+    targetType: 'all'
   };
 }
 
-function updateAuditFilter(
-  setFilters: Dispatch<SetStateAction<AuditLogFilters>>,
-  setPage: Dispatch<SetStateAction<number>>,
-  patch: Partial<AuditLogFilters>
-) {
-  setFilters((current) => ({ ...current, ...patch }));
-  setPage(1);
-}
-
-function buildAuditLogQuery(filters: AuditLogFilters, page: number, perPage: number) {
+function buildAuditLogQuery(filters: AuditLogFilters, search: string, page: number, perPage: number) {
   const params = new URLSearchParams({
     page: String(page),
     per_page: String(perPage)
@@ -200,8 +265,8 @@ function buildAuditLogQuery(filters: AuditLogFilters, page: number, perPage: num
   if (filters.targetType !== 'all') {
     params.set('target_type', filters.targetType);
   }
-  if (filters.q.trim()) {
-    params.set('q', filters.q.trim());
+  if (search.trim()) {
+    params.set('q', search.trim());
   }
   return params.toString();
 }

@@ -1,3 +1,4 @@
+/* eslint-disable no-irregular-whitespace, no-misleading-character-class */
 import { useCallback, useMemo, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Check, Copy, Globe2, Plus, ShieldCheck, X } from 'lucide-react';

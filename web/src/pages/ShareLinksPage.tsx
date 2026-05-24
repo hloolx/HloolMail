@@ -9,14 +9,20 @@ import { copy } from '../lib/clipboard';
 import { relativeTime } from '../lib/display';
 import { notifySuccess, runDeleteEffect } from '../lib/feedback';
 import { useCopyState } from '../hooks/useCopyState';
-import { ConfirmModal, DataTable, DialogShell, EmptyState, IconButton, PaginationControls } from '../components/shared';
+import { useTableUrlState } from '../hooks/useTableUrlState';
+import { ConfirmModal, DataTable, DataTableToolbar, DataTableViewOptions, DialogShell, EmptyState, IconButton, PaginationControls } from '../components/shared';
+import type { DataTableColumn } from '../components/shared';
 
-const SHARE_PER_PAGE = 10;
+const SHARE_PAGE_SIZE_OPTIONS = [10, 20, 50, 100];
 
 export function ShareLinksPage() {
   const text = useText();
   const queryClient = useQueryClient();
-  const [page, setPage] = useState(1);
+  const { page, setPage, pageSize, setPageSize } = useTableUrlState({
+    defaultPageSize: 10,
+    pageSizeOptions: SHARE_PAGE_SIZE_OPTIONS
+  });
+  const [hiddenColumnKeys, setHiddenColumnKeys] = useState<string[]>([]);
   const [createOpen, setCreateOpen] = useState(false);
   const [logsTarget, setLogsTarget] = useState<ShareLinkDTO | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<ShareLinkDTO | null>(null);
@@ -24,12 +30,21 @@ export function ShareLinksPage() {
   const [oneTimeLink, setOneTimeLink] = useState<ShareLinkDTO | null>(null);
   const [dissolveTarget, setDissolveTarget] = useState<HTMLElement | null>(null);
   const links = useQuery({
-    queryKey: ['share-links', page],
-    queryFn: () => api<PaginatedResponse<ShareLinkDTO>>(`/api/share-links?page=${page}&per_page=${SHARE_PER_PAGE}`),
+    queryKey: ['share-links', page, pageSize],
+    queryFn: () => api<PaginatedResponse<ShareLinkDTO>>(`/api/share-links?page=${page}&per_page=${pageSize}`),
     retry: false
   });
   const list = links.data?.items || [];
-
+  const shareLinkColumns = useMemo<DataTableColumn[]>(() => [
+    { key: 'target', header: text.shareLinks.target, minWidth: '14rem', mobileTitle: true },
+    { key: 'token', header: text.shareLinks.tokenPrefix, minWidth: '12rem', hideable: true, mobileSubtitle: true },
+    { key: 'status', header: text.shareLinks.status, align: 'center', width: '7rem', hideable: true, mobileBadge: true },
+    { key: 'shareKey', header: text.shareLinks.shareKeySet, align: 'center', width: '7rem', hideable: true, mobilePriority: 2 },
+    { key: 'expires', header: text.shareLinks.expiresAt, width: '9rem', mobilePriority: 1 },
+    { key: 'accesses', header: text.shareLinks.accesses, align: 'right', width: '6rem', mobilePriority: 3 },
+    { key: 'last', header: text.shareLinks.lastAccessed, width: '8rem', mobilePriority: 4 },
+    { key: 'actions', header: text.shareLinks.actions, align: 'right', minWidth: '13rem', hideable: false }
+  ], [text]);
   const deleteLink = useMutation({
     mutationFn: (link: ShareLinkDTO) => api(`/api/share-links/${link.id}`, { method: 'DELETE' }),
     onSuccess: () => {
@@ -51,35 +66,50 @@ export function ShareLinksPage() {
   });
 
   return (
-    <div className="grid gap-4">
-      <section className="panel">
-        <div className="panel-header api-key-panel-header">
-          <div>
-            <h2>{text.shareLinks.title}</h2>
-            <p>{links.data?.total ?? 0} {text.shareLinks.count}</p>
-          </div>
-          <button className="btn-primary" onClick={() => setCreateOpen(true)}>
+    <div className="admin-table-page share-links-page">
+      <div className="admin-table-page-header">
+        <div className="admin-table-page-title">
+          <h1>{text.shareLinks.title}</h1>
+          <p>{text.shareLinks.desc}</p>
+        </div>
+        <button className="btn-primary admin-table-page-primary" onClick={() => setCreateOpen(true)}>
             <Share2 size={16} />
             {text.shareLinks.createButton}
-          </button>
-        </div>
-        <p className="api-key-helper">{text.shareLinks.desc}</p>
+        </button>
+      </div>
+
+      <section className="panel admin-table-panel">
         {oneTimeLink && <OneTimeLinkCard link={oneTimeLink} onClose={() => setOneTimeLink(null)} />}
+        <DataTableToolbar
+          className="share-links-toolbar"
+          state={(
+            <div className="admin-table-toolbar-copy">
+              <h2>{text.shareLinks.title}</h2>
+              <p>{links.data?.total ?? 0} {text.shareLinks.count}</p>
+            </div>
+          )}
+          viewOptions={(
+            <DataTableViewOptions
+              columns={shareLinkColumns}
+              hiddenColumnKeys={hiddenColumnKeys}
+              onHiddenColumnKeysChange={setHiddenColumnKeys}
+              label={text.common.view}
+              menuLabel={text.common.toggleColumns}
+              resetLabel={text.common.reset}
+              emptyLabel={text.common.noToggleColumns}
+            />
+          )}
+        />
         {links.isError ? (
           <EmptyState label={links.error.message} />
         ) : (
           <DataTable
             ariaLabel={text.shareLinks.title}
-            columns={[
-              { key: 'target', header: text.shareLinks.target, minWidth: '14rem' },
-              { key: 'token', header: text.shareLinks.tokenPrefix, minWidth: '12rem' },
-              { key: 'status', header: text.shareLinks.status, align: 'center', width: '7rem' },
-              { key: 'shareKey', header: text.shareLinks.shareKeySet, align: 'center', width: '7rem' },
-              { key: 'expires', header: text.shareLinks.expiresAt, width: '9rem' },
-              { key: 'accesses', header: text.shareLinks.accesses, align: 'right', width: '6rem' },
-              { key: 'last', header: text.shareLinks.lastAccessed, width: '8rem' },
-              { key: 'actions', header: text.shareLinks.actions, align: 'right', minWidth: '13rem' }
-            ]}
+            columns={shareLinkColumns}
+            hiddenColumnKeys={hiddenColumnKeys}
+            onHiddenColumnKeysChange={setHiddenColumnKeys}
+            hiddenLabel={text.common.noColumnsSelected}
+            showAllColumnsLabel={text.common.showAllColumns}
             emptyLabel={links.isLoading ? text.common.loading : text.shareLinks.empty}
             rows={list.map((link) => ({
               key: link.id,
@@ -98,8 +128,8 @@ export function ShareLinksPage() {
                   <IconButton title={text.shareLinks.rotate} onClick={() => setRotateTarget(link)} disabled={rotate.isPending}>
                     <RefreshCw size={14} />
                   </IconButton>
-                  <IconButton title={text.shareLinks.deleteLink} onClick={() => {
-                    const row = document.querySelector(`[data-share-link-id="${link.id}"]`)?.closest('tr') as HTMLElement | null;
+                  <IconButton title={text.shareLinks.deleteLink} onClick={(event) => {
+                    const row = (event.currentTarget as HTMLElement).closest('tr, .data-table-mobile-card') as HTMLElement | null;
                     setDissolveTarget(row);
                     setDeleteTarget(link);
                   }} disabled={deleteLink.isPending}>
@@ -114,6 +144,10 @@ export function ShareLinksPage() {
           page={links.data?.page || page}
           totalPages={links.data?.total_pages || 1}
           onPageChange={setPage}
+          rowsPerPage={pageSize}
+          rowsPerPageOptions={SHARE_PAGE_SIZE_OPTIONS}
+          onRowsPerPageChange={setPageSize}
+          rowsPerPageLabel={text.common.rowsPerPage}
         />
       </section>
 

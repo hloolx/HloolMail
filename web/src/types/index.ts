@@ -1,5 +1,7 @@
 import type { Domain, PaginatedResponse, PublicDomainItem, User } from '../api';
 
+type OpenString = string & {};
+
 export type Stats = {
   messages: number;
   domains: number;
@@ -47,8 +49,8 @@ export type AdminDomainHealth = Domain & {
 
 export type DomainCheckRun = {
   id: number;
-  trigger: 'schedule' | 'manual' | string;
-  status: 'running' | 'success' | 'failed' | 'canceled' | string;
+  trigger: 'schedule' | 'manual' | OpenString;
+  status: 'running' | 'success' | 'failed' | 'canceled' | OpenString;
   total: number;
   checked: number;
   passed: number;
@@ -124,8 +126,8 @@ export type AdminQuotaAlert = {
 
 export type AuditLog = {
   id: number;
-  category: 'security' | 'activity' | 'system' | string;
-  severity: 'info' | 'warning' | 'critical' | string;
+  category: 'security' | 'activity' | 'system' | OpenString;
+  severity: 'info' | 'warning' | 'critical' | OpenString;
   action: string;
   actor: string;
   target_type: string;
@@ -138,7 +140,7 @@ export type AuditLog = {
 export type AuditLogPage = PaginatedResponse<AuditLog>;
 
 export type OAuthProvider = {
-  provider: 'github' | 'linuxdo' | string;
+  provider: 'github' | 'linuxdo' | OpenString;
   name: string;
   enabled: boolean;
   configured: boolean;

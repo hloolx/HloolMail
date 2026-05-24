@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import type { FormEvent, KeyboardEvent } from 'react';
 import { useMutation, useQuery } from '@tanstack/react-query';
-import { ArrowRight, Bot, Check, CircleUserRound, Code2, Fingerprint, Github, Globe2, Inbox, KeyRound, LockKeyhole, MailCheck, MailPlus, Network, PackageCheck, RefreshCcw, Share2, ShieldCheck, Sparkles, Terminal, Users, Zap } from 'lucide-react';
+import { ArrowRight, Bot, Check, CircleUserRound, Code2, Fingerprint, Github, Globe2, Home, Inbox, KeyRound, LockKeyhole, MailCheck, MailPlus, Network, PackageCheck, RefreshCcw, Share2, ShieldCheck, Sparkles, Terminal, Users, Zap } from 'lucide-react';
 import { toast } from 'sonner';
 import type { InstallStatus, User } from '../api';
 import { api, postJSON } from '../api';
@@ -26,8 +26,18 @@ declare global {
 
 const TURNSTILE_SCRIPT_SRC = 'https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit';
 
-export function LandingPage({ status, onDone }: { status?: InstallStatus; onDone: () => void }) {
+type AuthFieldErrors = Partial<Record<'email' | 'password' | 'confirmPassword' | 'captchaAnswer' | 'verificationCode', string>>;
+
+type LandingPageProps = {
+  status?: InstallStatus;
+  onDone: () => void;
+  authMode?: 'home' | 'auth';
+  initialMode?: 'login' | 'register';
+};
+
+export function LandingPage({ status, onDone, authMode = 'home', initialMode = 'login' }: LandingPageProps) {
   const text = useText();
+  const isAuthPage = authMode === 'auth';
   const mxTarget = (status?.config?.expected_mx || status?.config?.mail_hostname || 'mail.example.com').replace(/\.$/, '');
   const siteApiCallsToday = status?.site_api_calls_today ?? 0;
   const registeredUsers = status?.registered_users ?? 0;
@@ -45,13 +55,14 @@ export function LandingPage({ status, onDone }: { status?: InstallStatus; onDone
   const passkeySubmitRef = useRef<HTMLButtonElement>(null);
   const loginTabRef = useRef<HTMLButtonElement>(null);
   const registerTabRef = useRef<HTMLButtonElement>(null);
-  const [mode, setMode] = useState<'login' | 'register'>('login');
+  const [mode, setMode] = useState<'login' | 'register'>(initialMode);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [verification, setVerification] = useState<RegisterResponse | null>(null);
   const [verificationCode, setVerificationCode] = useState('');
   const [captchaAnswer, setCaptchaAnswer] = useState('');
+  const [authFieldErrors, setAuthFieldErrors] = useState<AuthFieldErrors>({});
   const oauthProviders = useQuery({
     queryKey: ['oauth-providers'],
     queryFn: () => api<OAuthProvider[]>('/api/oauth/providers'),
@@ -85,6 +96,10 @@ export function LandingPage({ status, onDone }: { status?: InstallStatus; onDone
     retry: false
   });
 
+  useEffect(() => {
+    setMode(initialMode);
+  }, [initialMode]);
+
   const refreshCaptcha = useCallback(() => {
     setCaptchaAnswer('');
     void registerCaptcha.refetch();
@@ -106,6 +121,7 @@ export function LandingPage({ status, onDone }: { status?: InstallStatus; onDone
     setMode(nextMode);
     setVerification(null);
     setVerificationCode('');
+    setAuthFieldErrors({});
     resetTurnstile();
   }, [emailRegistrationAvailable, resetTurnstile]);
 
@@ -139,6 +155,7 @@ export function LandingPage({ status, onDone }: { status?: InstallStatus; onDone
       setVerification(null);
       setVerificationCode('');
       setCaptchaAnswer('');
+      setAuthFieldErrors({});
     }
   }, [emailRegistrationAvailable, mode]);
 
@@ -255,7 +272,7 @@ export function LandingPage({ status, onDone }: { status?: InstallStatus; onDone
       const normalizedEmail = email.trim();
       if (!normalizedEmail) throw new Error(text.login.emailRequired);
       if (password.length < 8) {
-        throw new Error(text.login.passwordTooShort || '密码至少 8 位');
+        throw new Error(text.login.passwordTooShort);
       }
       if (password !== confirmPassword) {
         throw new Error(text.login.passwordMismatch);
@@ -314,9 +331,44 @@ export function LandingPage({ status, onDone }: { status?: InstallStatus; onDone
     onError: (error) => toast.error(error.message),
   });
   const pending = login.isPending || register.isPending || verifyRegister.isPending || passkeyLogin.isPending;
-  const registerCaptchaBlocked = captchaRequired && (registerCaptcha.isLoading || !registerCaptcha.data?.captcha_id || !captchaAnswer.trim());
+  const registerCaptchaBlocked = captchaRequired && (registerCaptcha.isLoading || !registerCaptcha.data?.captcha_id);
+  const focusAuthField = (field: keyof AuthFieldErrors) => {
+    const idByField: Record<keyof AuthFieldErrors, string> = {
+      email: 'auth-email',
+      password: 'auth-password',
+      confirmPassword: 'auth-confirm-password',
+      captchaAnswer: 'auth-captcha-answer',
+      verificationCode: 'auth-verification-code'
+    };
+    window.requestAnimationFrame(() => document.getElementById(idByField[field])?.focus());
+  };
+  const clearAuthFieldError = (field: keyof AuthFieldErrors) => {
+    setAuthFieldErrors((current) => {
+      if (!current[field]) return current;
+      const next = { ...current };
+      delete next[field];
+      return next;
+    });
+  };
+  const validateAuthFields = () => {
+    const nextErrors: AuthFieldErrors = {};
+    if (isVerificationStep) {
+      if (!verificationCode.trim()) nextErrors.verificationCode = text.login.verificationCodeRequired;
+    } else {
+      if (!email.trim()) nextErrors.email = text.login.emailRequired;
+      if (isRegister && password.length < 8) nextErrors.password = text.login.passwordTooShort;
+      if (isRegister && password !== confirmPassword) nextErrors.confirmPassword = text.login.passwordMismatch;
+      if (captchaRequired && !captchaAnswer.trim()) nextErrors.captchaAnswer = text.login.captchaAnswerRequired;
+    }
+    setAuthFieldErrors(nextErrors);
+    const firstInvalid = (['email', 'password', 'confirmPassword', 'captchaAnswer', 'verificationCode'] as (keyof AuthFieldErrors)[])
+      .find((field) => nextErrors[field]);
+    if (firstInvalid) focusAuthField(firstInvalid);
+    return Object.keys(nextErrors).length === 0;
+  };
   const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
+    if (!validateAuthFields()) return;
     if (isVerificationStep) {
       verifyRegister.mutate();
       return;
@@ -329,7 +381,7 @@ export function LandingPage({ status, onDone }: { status?: InstallStatus; onDone
   };
 
   return (
-    <div className="landing-page">
+    <div className={`landing-page${isAuthPage ? ' login-page' : ''}`}>
       <a href="#auth-panel" className="skip-to-content">
         {text.login.skipToContent ?? '跳到主要内容'}
       </a>
@@ -341,14 +393,24 @@ export function LandingPage({ status, onDone }: { status?: InstallStatus; onDone
           <span>HLOOL Mail</span>
         </div>
         <nav className="landing-nav">
-          <a href="https://github.com/hloolx/HloolMail" target="_blank" rel="noopener noreferrer" aria-label="GitHub">
+          {isAuthPage ? (
+            <a className="landing-nav-link landing-nav-icon" href="#/" aria-label={text.login.homeLink || 'Home'}>
+              <Home size={18} />
+            </a>
+          ) : (
+            <a className="landing-nav-link landing-nav-icon" href="#/login" aria-label={text.login.loginTab}>
+              <CircleUserRound size={18} />
+            </a>
+          )}
+          <a className="landing-nav-link landing-nav-icon" href="https://github.com/hloolx/HloolMail" target="_blank" rel="noopener noreferrer" aria-label="GitHub">
             <Github size={17} />
           </a>
         </nav>
         <HeaderSettings />
       </header>
 
-      <main className="landing-main">
+      <main className={isAuthPage ? 'login-main' : 'landing-main landing-main-public'}>
+        {!isAuthPage && (
         <section className="landing-hero">
           <div className="landing-kicker">
             <Sparkles size={14} />
@@ -359,7 +421,7 @@ export function LandingPage({ status, onDone }: { status?: InstallStatus; onDone
           <p className="landing-hero-desc">{text.login.homeDesc}</p>
           <div className="landing-actions">
             {emailRegistrationAvailable && (
-              <button className="btn-primary" type="button" onClick={() => { selectAuthMode('register'); authPanelRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }); }}>
+              <button className="btn-primary" type="button" onClick={() => { window.location.hash = '#/register'; }}>
                 <MailPlus size={16} />
                 {text.login.primaryAction}
               </button>
@@ -390,8 +452,33 @@ export function LandingPage({ status, onDone }: { status?: InstallStatus; onDone
               </span>
             </div>
           </aside>
+          <div className="landing-console-preview landing-hero-preview" aria-hidden>
+            <div className="landing-preview-top">
+              <span />
+              <span />
+              <span />
+              <b>{text.login.previewTitle}</b>
+            </div>
+            <div className="landing-preview-row">
+              <Inbox size={15} />
+              <span>{text.login.previewInbox}</span>
+              <Check size={14} />
+            </div>
+            <div className="landing-preview-row">
+              <Globe2 size={15} />
+              <span>{previewDomain}</span>
+              <Check size={14} />
+            </div>
+            <div className="landing-preview-row">
+              <KeyRound size={15} />
+              <span>{previewApi}</span>
+              <ArrowRight size={14} />
+            </div>
+          </div>
         </section>
+        )}
 
+        {isAuthPage && (
         <section id="auth-panel" ref={authPanelRef} className="auth-panel" aria-label={isRegister ? text.login.registerTitle : text.login.title}>
           <div className="auth-tabs" role="tablist" aria-orientation="horizontal" aria-label={text.login.title} onKeyDown={handleAuthTabKeyDown}>
             <button ref={loginTabRef} className={!isRegister ? 'auth-tab-active' : ''} type="button" role="tab" aria-selected={!isRegister} tabIndex={!isRegister ? 0 : -1} onClick={() => selectAuthMode('login')}>
@@ -411,7 +498,21 @@ export function LandingPage({ status, onDone }: { status?: InstallStatus; onDone
             {isVerificationStep ? (
               <>
                 <label htmlFor="auth-verification-code" className="sr-only">{text.login.verificationCode}</label>
-                <input id="auth-verification-code" className="input" value={verificationCode} onChange={(event) => setVerificationCode(event.target.value)} placeholder={text.login.verificationCode} inputMode="numeric" autoComplete="one-time-code" />
+                <input
+                  id="auth-verification-code"
+                  className="input"
+                  value={verificationCode}
+                  onChange={(event) => {
+                    setVerificationCode(event.target.value);
+                    clearAuthFieldError('verificationCode');
+                  }}
+                  placeholder={text.login.verificationCode}
+                  inputMode="numeric"
+                  autoComplete="one-time-code"
+                  aria-invalid={Boolean(authFieldErrors.verificationCode)}
+                  aria-describedby={authFieldErrors.verificationCode ? 'auth-verification-code-error' : undefined}
+                />
+                {authFieldErrors.verificationCode && <span id="auth-verification-code-error" className="field-error" role="alert">{authFieldErrors.verificationCode}</span>}
                 <button className="btn-secondary auth-submit" type="button" disabled={pending} onClick={() => selectAuthMode('register')}>
                   {text.login.backToRegister}
                 </button>
@@ -419,14 +520,58 @@ export function LandingPage({ status, onDone }: { status?: InstallStatus; onDone
             ) : (
               <>
                 <label htmlFor="auth-email" className="sr-only">{text.login.email}</label>
-                <input id="auth-email" className="input" value={email} onChange={(event) => setEmail(event.target.value)} placeholder={text.login.email} type="email" autoComplete="email" />
+                <input
+                  id="auth-email"
+                  className="input"
+                  value={email}
+                  onChange={(event) => {
+                    setEmail(event.target.value);
+                    clearAuthFieldError('email');
+                  }}
+                  placeholder={text.login.email}
+                  type="email"
+                  autoComplete="email"
+                  aria-invalid={Boolean(authFieldErrors.email)}
+                  aria-describedby={authFieldErrors.email ? 'auth-email-error' : undefined}
+                />
+                {authFieldErrors.email && <span id="auth-email-error" className="field-error" role="alert">{authFieldErrors.email}</span>}
                 <label htmlFor="auth-password" className="sr-only">{text.login.password}</label>
-                <input id="auth-password" className="input" value={password} onChange={(event) => setPassword(event.target.value)} placeholder={text.login.password} type="password" autoComplete={isRegister ? 'new-password' : 'current-password'} />
+                <input
+                  id="auth-password"
+                  className="input"
+                  value={password}
+                  onChange={(event) => {
+                    setPassword(event.target.value);
+                    clearAuthFieldError('password');
+                  }}
+                  placeholder={text.login.password}
+                  type="password"
+                  autoComplete={isRegister ? 'new-password' : 'current-password'}
+                  aria-invalid={Boolean(authFieldErrors.password)}
+                  aria-describedby={authFieldErrors.password ? 'auth-password-error' : undefined}
+                />
+                {authFieldErrors.password && <span id="auth-password-error" className="field-error" role="alert">{authFieldErrors.password}</span>}
                 {isRegister && <InfoTip text={text.login.passwordHint} />}
-                <div className={`auth-confirm-wrapper${isRegister ? '' : ' auth-confirm-collapsed'}`}>
-                  <label htmlFor="auth-confirm-password" className="sr-only">{text.login.confirmPassword}</label>
-                  <input id="auth-confirm-password" className="input" value={confirmPassword} onChange={(event) => setConfirmPassword(event.target.value)} placeholder={text.login.confirmPassword} type="password" autoComplete="new-password" />
-                </div>
+                {isRegister && (
+                  <div className="auth-confirm-wrapper">
+                    <label htmlFor="auth-confirm-password" className="sr-only">{text.login.confirmPassword}</label>
+                    <input
+                      id="auth-confirm-password"
+                      className="input"
+                      value={confirmPassword}
+                      onChange={(event) => {
+                        setConfirmPassword(event.target.value);
+                        clearAuthFieldError('confirmPassword');
+                      }}
+                      placeholder={text.login.confirmPassword}
+                      type="password"
+                      autoComplete="new-password"
+                      aria-invalid={Boolean(authFieldErrors.confirmPassword)}
+                      aria-describedby={authFieldErrors.confirmPassword ? 'auth-confirm-password-error' : undefined}
+                    />
+                    {authFieldErrors.confirmPassword && <span id="auth-confirm-password-error" className="field-error" role="alert">{authFieldErrors.confirmPassword}</span>}
+                  </div>
+                )}
               </>
             )}
             {!isVerificationStep && turnstileEnabled && (
@@ -434,7 +579,7 @@ export function LandingPage({ status, onDone }: { status?: InstallStatus; onDone
                 <div ref={turnstileContainerRef} className="auth-turnstile-widget" />
                 {turnstileLoadError && (
                   <p className="auth-turnstile-error" role="status">
-                    Turnstile failed to load. Refresh the page or check CSP/network settings.
+                    {text.login.turnstileLoadError}
                   </p>
                 )}
               </>
@@ -448,7 +593,20 @@ export function LandingPage({ status, onDone }: { status?: InstallStatus; onDone
                   </button>
                 </div>
                 <label htmlFor="auth-captcha-answer" className="sr-only">{text.login.captchaAnswer}</label>
-                <input id="auth-captcha-answer" className="input" value={captchaAnswer} onChange={(event) => setCaptchaAnswer(event.target.value)} placeholder={text.login.captchaAnswer} autoComplete="off" />
+                <input
+                  id="auth-captcha-answer"
+                  className="input"
+                  value={captchaAnswer}
+                  onChange={(event) => {
+                    setCaptchaAnswer(event.target.value);
+                    clearAuthFieldError('captchaAnswer');
+                  }}
+                  placeholder={text.login.captchaAnswer}
+                  autoComplete="off"
+                  aria-invalid={Boolean(authFieldErrors.captchaAnswer)}
+                  aria-describedby={authFieldErrors.captchaAnswer ? 'auth-captcha-answer-error' : undefined}
+                />
+                {authFieldErrors.captchaAnswer && <span id="auth-captcha-answer-error" className="field-error" role="alert">{authFieldErrors.captchaAnswer}</span>}
               </div>
             )}
             <button ref={authSubmitRef} className="btn-primary auth-submit" type="submit" disabled={pending || (!isVerificationStep && !!turnstileEnabled && !turnstileToken) || registerCaptchaBlocked}>
@@ -496,6 +654,18 @@ export function LandingPage({ status, onDone }: { status?: InstallStatus; onDone
           {oauthProviders.isError && (
             <p className="oauth-error-fallback">{text.oauth.load_error}</p>
           )}
+          {isAuthPage && (
+            <p className="auth-page-terms">
+              {text.login.termsPrefix || 'By continuing, you agree to our '}
+              <a href="#/terms">{text.login.termsService || 'Terms of Service'}</a>
+              {' '}
+              {text.login.termsAnd || 'and'}
+              {' '}
+              <a href="#/privacy">{text.login.privacyPolicy || 'Privacy Policy'}</a>
+              .
+            </p>
+          )}
+          {!isAuthPage && (
           <div className="landing-console-preview" aria-hidden>
             <div className="landing-preview-top">
               <span />
@@ -519,9 +689,13 @@ export function LandingPage({ status, onDone }: { status?: InstallStatus; onDone
               <ArrowRight size={14} />
             </div>
           </div>
+          )}
         </section>
+        )}
       </main>
 
+      {!isAuthPage && (
+      <>
       <section className="landing-stats">
         <div className="landing-stats-grid">
           <div className="landing-stat">
@@ -709,6 +883,8 @@ export function LandingPage({ status, onDone }: { status?: InstallStatus; onDone
           <p className="landing-footer-copy">{text.login.footerCopy}</p>
         </div>
       </footer>
+      </>
+      )}
     </div>
   );
 }

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { AlertTriangle, Bell, CheckCheck, Mail, Megaphone, Trash2, X } from 'lucide-react';
+import { AlertTriangle, Bell, CheckCheck, Mail, Megaphone, X } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { toast } from 'sonner';
 import type { AppNotification, Announcement } from '../../api';
@@ -10,6 +10,7 @@ import { relativeTime } from '../../lib/display';
 import { sseStream } from '../../lib/sse';
 import { useAppStore } from '../../store';
 import { markdownToText, simpleMarkdownToHTML } from '../../lib/markdown';
+import { useVisibleRefetchInterval } from '../../hooks/useVisibleRefetchInterval';
 
 type UnreadCount = {
   unread: number;
@@ -26,18 +27,20 @@ export function NotificationBell() {
     setPage
   } = useAppStore();
 
+  const notificationsInterval = useVisibleRefetchInterval(30000);
+
   // System notifications (existing)
   const notifications = useQuery({
     queryKey: ['notifications'],
     queryFn: () => api<AppNotification[]>('/api/notifications?limit=8'),
-    refetchInterval: 30000,
+    refetchInterval: notificationsInterval,
     retry: false
   });
 
   const unread = useQuery({
     queryKey: ['notifications-unread-count'],
     queryFn: () => api<UnreadCount>('/api/notifications/unread-count'),
-    refetchInterval: 30000,
+    refetchInterval: notificationsInterval,
     retry: false
   });
 
@@ -45,14 +48,14 @@ export function NotificationBell() {
   const announcements = useQuery({
     queryKey: ['announcements'],
     queryFn: () => api<Announcement[]>('/api/announcements?limit=5'),
-    refetchInterval: 30000,
+    refetchInterval: notificationsInterval,
     retry: false
   });
 
   const announcementUnread = useQuery({
     queryKey: ['announcements-unread-count'],
     queryFn: () => api<UnreadCount>('/api/announcements/unread-count'),
-    refetchInterval: 30000,
+    refetchInterval: notificationsInterval,
     retry: false
   });
 

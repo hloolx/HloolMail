@@ -8,10 +8,13 @@ import { useText } from './locales';
 import { useAppStore } from './store';
 import { CenteredState, ErrorBoundary } from './components/shared';
 import { Console } from './components/layout/Console';
-import { InstallPage } from './pages/InstallPage';
-import { LandingPage } from './pages/LandingPage';
 import { notifySuccess } from './lib/feedback';
+import { expireUserSession } from './lib/queryClient';
 
+const InstallPage = lazy(() => import('./pages/InstallPage').then(m => ({ default: m.InstallPage })));
+const LandingPage = lazy(() => import('./pages/LandingPage').then(m => ({ default: m.LandingPage })));
+const LoginPage = lazy(() => import('./pages/LoginPage').then(m => ({ default: m.LoginPage })));
+const LegalPage = lazy(() => import('./pages/LegalPage').then(m => ({ default: m.LegalPage })));
 const SharedMessagePage = lazy(() => import('./pages/SharedMessagePage').then(m => ({ default: m.SharedMessagePage })));
 
 export default function App() {
@@ -27,6 +30,10 @@ function AppContent() {
   const [routeKey, setRouteKey] = useState(() => currentRouteKey());
   const sharedToken = sharedTokenFromLocation(routeKey);
   const isSharedRoute = Boolean(sharedToken);
+  const authRoute = authRouteFromLocation(routeKey);
+  const isAuthRoute = authRoute !== null;
+  const legalRoute = legalRouteFromLocation(routeKey);
+  const isLegalRoute = legalRoute !== null;
   const { theme, language, page, awayMailCount, awayAnnouncementCount } = useAppStore();
   const text = useText();
   const me = useQuery({
@@ -71,16 +78,24 @@ function AppContent() {
   }, []);
 
   useEffect(() => {
+    const handleAuthExpired = () => expireUserSession(queryClient);
+    window.addEventListener('hlool:auth-expired', handleAuthExpired);
+    return () => window.removeEventListener('hlool:auth-expired', handleAuthExpired);
+  }, [queryClient]);
+
+  useEffect(() => {
     const unreadCount = awayMailCount + awayAnnouncementCount;
     const pageTitle = isSharedRoute
       ? text.shared.title
+      : isAuthRoute
+        ? (authRoute === 'register' ? text.login.registerTitle : text.login.title)
       : (!me.isError && me.data?.installed === false
         ? text.install.title
         : me.isError || !me.data?.user
           ? text.login.title
           : text.page[page]);
     document.title = `${unreadCount > 0 ? `(${unreadCount}) ` : ''}${pageTitle} | HLOOL Mail`;
-  }, [awayAnnouncementCount, awayMailCount, isSharedRoute, me.data?.installed, me.data?.user, me.isError, page, text]);
+  }, [authRoute, awayAnnouncementCount, awayMailCount, isAuthRoute, isSharedRoute, me.data?.installed, me.data?.user, me.isError, page, text]);
 
   useEffect(() => {
     if (skipInstall && me.data?.user) {
@@ -106,36 +121,56 @@ function AppContent() {
   const bootLoading = me.isLoading || (!me.isError && me.data?.installed === false && installStatus.isLoading);
 
   return (
-    <AnimatePresence mode="wait" initial={false}>
-      {sharedToken ? (
-        <Suspense fallback={<CenteredState key="shared-loader">{text.common.loading}</CenteredState>}>
+    <Suspense fallback={<CenteredState key="app-loader">{text.common.loading}</CenteredState>}>
+      <AnimatePresence mode="wait" initial={false}>
+        {sharedToken ? (
           <SharedMessagePage token={sharedToken} />
-        </Suspense>
-      ) : bootLoading ? (
-        <CenteredState key="loader">{text.loading.starting}</CenteredState>
-      ) : (
-        <motion.div
-          key="app-content"
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          transition={{ duration: 0.35, ease: [0.22, 1, 0.36, 1] }}
-        >
-          {!me.isError && me.data?.installed === false ? (
-            <InstallPage
-              status={installStatus.data}
-              onDone={() => {
-                queryClient.invalidateQueries({ queryKey: ['me'] });
-                queryClient.invalidateQueries({ queryKey: ['install-status'] });
-              }}
-            />
-          ) : me.isError || !me.data?.user ? (
-            <LandingPage status={installStatus.data} onDone={() => queryClient.invalidateQueries({ queryKey: ['me'] })} />
-          ) : (
-            <Console user={me.data.user} />
-          )}
-        </motion.div>
-      )}
-    </AnimatePresence>
+        ) : isLegalRoute ? (
+          <motion.div
+            key="legal-content"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            transition={{ duration: 0.35, ease: [0.22, 1, 0.36, 1] }}
+          >
+            <LegalPage type={legalRoute} />
+          </motion.div>
+        ) : bootLoading ? (
+          <CenteredState key="loader">{text.loading.starting}</CenteredState>
+        ) : (
+          <motion.div
+            key="app-content"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            transition={{ duration: 0.35, ease: [0.22, 1, 0.36, 1] }}
+          >
+            {!me.isError && me.data?.installed === false ? (
+              <InstallPage
+                status={installStatus.data}
+                onDone={() => {
+                  queryClient.invalidateQueries({ queryKey: ['me'] });
+                  queryClient.invalidateQueries({ queryKey: ['install-status'] });
+                }}
+              />
+            ) : me.isError || !me.data?.user ? (
+              isAuthRoute ? (
+                <LoginPage
+                  status={installStatus.data}
+                  initialMode={authRoute}
+                  onDone={() => {
+                    queryClient.invalidateQueries({ queryKey: ['me'] });
+                    window.location.hash = '#/dashboard';
+                  }}
+                />
+              ) : (
+                <LandingPage status={installStatus.data} onDone={() => queryClient.invalidateQueries({ queryKey: ['me'] })} />
+              )
+            ) : (
+              <Console user={me.data.user} />
+            )}
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </Suspense>
   );
 }
 
@@ -157,6 +192,18 @@ function sharedTokenFromLocation(routeKey: string) {
   } catch {
     return raw;
   }
+}
+
+function authRouteFromLocation(routeKey: string): 'login' | 'register' | null {
+  if (typeof window === 'undefined') return null;
+  const [pathAndSearch, hash = ''] = routeKey.split('#');
+  const pathOnly = pathAndSearch.split('?')[0].replace(/\/+$/, '') || '/';
+  const hashPath = (`#${hash}`).split('?')[0];
+  if (pathOnly === '/login') return 'login';
+  if (pathOnly === '/register') return 'register';
+  if (hashPath === '#/login') return 'login';
+  if (hashPath === '#/register') return 'register';
+  return null;
 }
 
 type OAuthFeedback = {
@@ -216,4 +263,14 @@ function oauthProviderDisplayName(provider: string) {
   if (provider === 'github') return 'GitHub';
   if (provider === 'linuxdo') return 'Linux.do';
   return provider;
+}
+
+function legalRouteFromLocation(routeKey: string): 'terms' | 'privacy' | null {
+  if (typeof window === 'undefined') return null;
+  const [pathAndSearch, hash = ''] = routeKey.split('#');
+  const pathOnly = pathAndSearch.split('?')[0].replace(/\/+$/, '') || '/';
+  const hashPath = (`#${hash}`).split('?')[0];
+  if (pathOnly === '/terms' || hashPath === '#/terms') return 'terms';
+  if (pathOnly === '/privacy' || hashPath === '#/privacy') return 'privacy';
+  return null;
 }

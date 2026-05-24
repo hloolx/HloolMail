@@ -1,11 +1,16 @@
 .inbox-layout {
   display: block;
+  width: 100%;
 }
 
 .inbox-column,
 .inbox-detail-pane,
 .mail-detail-panel {
   min-width: 0;
+}
+
+.inbox-detail-pane {
+  display: flex;
 }
 
 .inbox-column {
@@ -523,13 +528,18 @@
 
 .mail-detail-panel {
   display: flex;
+  width: 100%;
   min-height: calc(100vh - var(--app-header-height) - 2rem);
   flex-direction: column;
   overflow: hidden;
 }
 
 .mail-detail-empty {
+  align-items: center;
   justify-content: center;
+  text-align: center;
+  font-size: 0.9rem;
+  line-height: 1.6;
 }
 
 .message-text {
@@ -653,7 +663,7 @@
   .inbox-layout {
     display: grid;
     min-height: calc(100vh - var(--app-header-height) - 2rem);
-    grid-template-columns: minmax(13rem, 0.72fr) minmax(18rem, 1fr) minmax(23rem, 1.35fr);
+    grid-template-columns: minmax(14rem, 0.65fr) minmax(18rem, 0.85fr) minmax(28rem, 1.65fr);
     align-items: stretch;
     gap: 1rem;
   }
@@ -675,6 +685,15 @@
 
   .mail-row-details {
     display: none;
+  }
+}
+
+@media (min-width: 1536px) {
+  .inbox-layout {
+    grid-template-columns:
+      clamp(17rem, 19vw, 24rem)
+      clamp(22rem, 25vw, 32rem)
+      minmax(34rem, 1fr);
   }
 }
 

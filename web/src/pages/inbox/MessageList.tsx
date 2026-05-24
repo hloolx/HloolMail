@@ -18,6 +18,8 @@ type MessageListProps = {
   pulseIds: Set<string>;
   isLoading: boolean;
   isFetching: boolean;
+  error: unknown;
+  onRetry: () => void;
   shouldReduceMotion: boolean;
   onSelectMessage: (id: string) => void;
   onPageChange: (page: number) => void;
@@ -34,6 +36,8 @@ export const MessageList = forwardRef<HTMLDivElement, MessageListProps>(function
   pulseIds,
   isLoading,
   isFetching,
+  error,
+  onRetry,
   shouldReduceMotion,
   onSelectMessage,
   onPageChange
@@ -56,8 +60,9 @@ export const MessageList = forwardRef<HTMLDivElement, MessageListProps>(function
             onSelect={() => onSelectMessage(selectedID === message.id ? '' : message.id)}
           />
         ))}
-        {email && (isLoading || isFetching) && items.length === 0 && <EmptyState label={text.common.loading} />}
-        {email && !isLoading && !isFetching && items.length === 0 && <EmptyState label={text.inbox.empty} />}
+        {email && Boolean(error) && <InboxListError label={readErrorMessage(error)} actionLabel={text.common.refresh} onRetry={onRetry} />}
+        {email && !error && (isLoading || isFetching) && items.length === 0 && <EmptyState label={text.common.loading} />}
+        {email && !error && !isLoading && !isFetching && items.length === 0 && <EmptyState label={text.inbox.empty} />}
         {!email && <EmptyState label={text.inbox.start} />}
       </motion.div>
       {email && (
@@ -102,7 +107,7 @@ export function MessageRow({
           type="button"
           className="mail-row-select"
           onClick={onSelect}
-          aria-expanded={expanded}
+          aria-current={expanded ? 'true' : undefined}
         >
           <div className="min-w-0">
             <div className="flex items-center gap-2">
@@ -133,4 +138,19 @@ export function MessageRow({
       )}
     </motion.div>
   );
+}
+
+function InboxListError({ label, actionLabel, onRetry }: { label: string; actionLabel: string; onRetry: () => void }) {
+  return (
+    <div className="inbox-list-error" role="alert">
+      <span>{label}</span>
+      <button className="btn-secondary btn-sm" type="button" onClick={onRetry}>
+        {actionLabel}
+      </button>
+    </div>
+  );
+}
+
+function readErrorMessage(error: unknown) {
+  return error instanceof Error && error.message ? error.message : 'Request failed';
 }

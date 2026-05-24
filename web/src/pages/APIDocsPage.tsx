@@ -29,8 +29,7 @@ import { generateCode, codeGenLabel, type CodeGenLang } from '../lib/codegen';
 import { ParamBuilder } from '../components/api-explorer/ParamBuilder';
 import { ResponsePanel, type ExplorerResult } from '../components/api-explorer/ResponsePanel';
 import { ApiKeySelector } from '../components/api-explorer/ApiKeySelector';
-import { InfoTip } from '../components/shared';
-import { ConfirmModal } from '../components/api-explorer/ConfirmModal';
+import { InfoTip, ConfirmModal } from '../components/shared';
 import { ApiDocsHero } from './ApiDocsHero';
 import { ApiDocsHistory } from './ApiDocsHistory';
 import { ApiDocsMarkdownPreview } from './ApiDocsMarkdownPreview';
@@ -52,7 +51,7 @@ function normalizePath(path: string) {
   return value.startsWith('/') ? value : `/${value}`;
 }
 
-function buildRequestURL(apiBase: string, requestPath: string, queryString: string, fallbackBase: string, fallbackPath: string): URL | null {
+function buildRequestURL(apiBase: string, requestPath: string, queryString: string, fallbackBase: string): URL | null {
   try {
     const url = new URL(normalizePath(requestPath), (apiBase || fallbackBase).replace(/\/$/, ''));
     const query = queryString.trim().replace(/^\?/, '');
@@ -171,7 +170,7 @@ export function APIDocsPage() {
   );
 
   const previewURL = useMemo(
-    () => buildRequestURL(apiBase, requestPath, queryString, browserBaseURL, defaultRequest.path) ?? new URL(defaultRequest.path, browserBaseURL),
+    () => buildRequestURL(apiBase, requestPath, queryString, browserBaseURL) ?? new URL(defaultRequest.path, browserBaseURL),
     [apiBase, browserBaseURL, defaultRequest.path, queryString, requestPath]
   );
 
@@ -250,7 +249,7 @@ export function APIDocsPage() {
   async function callEndpoint() {
     clearResult();
 
-    const url = buildRequestURL(apiBase, requestPath, queryString, browserBaseURL, defaultRequest.path);
+    const url = buildRequestURL(apiBase, requestPath, queryString, browserBaseURL);
     if (!url) {
       setCallError(text.apiDocs.invalidURL);
       return;

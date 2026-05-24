@@ -1,7 +1,9 @@
-import { currentText } from '../../locales';
+import { useText } from '../../locales';
+import { useAppStore } from '../../store';
 
 export function QuotaThermometer({ used, limit }: { used: number; limit: number }) {
-  const text = currentText();
+  const text = useText();
+  const language = useAppStore((state) => state.language);
   const unlimited = limit <= 0;
   if (unlimited) {
     return (
@@ -12,7 +14,8 @@ export function QuotaThermometer({ used, limit }: { used: number; limit: number 
   }
 
   const ratio = Math.min(1, Math.max(0, used / Math.max(limit, 1)));
-  const label = `${used.toLocaleString()} / ${limit.toLocaleString()}`;
+  const formatter = new Intl.NumberFormat(language);
+  const label = `${formatter.format(used)} / ${formatter.format(limit)}`;
 
   return (
     <div className="quota-thermo" title={label}>

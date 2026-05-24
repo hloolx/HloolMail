@@ -5,7 +5,7 @@ import { CircleUserRound, Clipboard, ExternalLink, Github, Loader2, Mail, Pencil
 import { toast } from 'sonner';
 import { api, patchJSON, postJSON } from '../api';
 import type { OAuthProvider, LoginSettings } from '../types';
-import { ConfirmModal, DialogShell, InfoTip, LoadingIndicator } from '../components/shared';
+import { ConfirmModal, DialogShell, InfoTip, LoadingIndicator, SegmentedTabs, SelectDropdown } from '../components/shared';
 import { notifySuccess } from '../lib/feedback';
 import { useText } from '../locales';
 
@@ -33,6 +33,7 @@ type RegistrationForm = {
 export function LoginSettingsPage() {
   const text = useText();
   const queryClient = useQueryClient();
+  const [activeSettingsTab, setActiveSettingsTab] = useState<'oauth' | 'registration' | 'security'>('oauth');
 
   // --- OAuth section ---
   const providers = useQuery({
@@ -114,7 +115,6 @@ export function LoginSettingsPage() {
   const [turnstileInitial, setTurnstileInitial] = useState({ enabled: false, site_key: '', secret_key: '' });
   const [savingTurnstile, setSavingTurnstile] = useState(false);
   const [passkeyEnabled, setPasskeyEnabled] = useState(false);
-  const [passkeyInitial, setPasskeyInitial] = useState(false);
   const [registrationForm, setRegistrationForm] = useState<RegistrationForm>(emptyRegistrationForm());
   const [registrationInitial, setRegistrationInitial] = useState<RegistrationForm>(emptyRegistrationForm());
   const [testRecipient, setTestRecipient] = useState('');
@@ -125,7 +125,6 @@ export function LoginSettingsPage() {
     setTurnstileForm({ enabled: s.turnstile_enabled, site_key: s.turnstile_site_key || '', secret_key: '' });
     setTurnstileInitial({ enabled: s.turnstile_enabled, site_key: s.turnstile_site_key || '', secret_key: '' });
     setPasskeyEnabled(s.passkey_enabled);
-    setPasskeyInitial(s.passkey_enabled);
     const nextRegistration = registrationFormFromSettings(s);
     setRegistrationForm(nextRegistration);
     setRegistrationInitial(nextRegistration);
@@ -203,7 +202,6 @@ export function LoginSettingsPage() {
       {
         onSuccess: (settings) => {
           setPasskeyEnabled(settings.passkey_enabled);
-          setPasskeyInitial(settings.passkey_enabled);
         },
         onError: () => {
           setPasskeyEnabled(previous);
@@ -337,8 +335,19 @@ export function LoginSettingsPage() {
         </div>
       </div>
 
+      <SegmentedTabs
+        value={activeSettingsTab}
+        onValueChange={setActiveSettingsTab}
+        ariaLabel={text.loginSettings.title}
+        items={[
+          { value: 'oauth', label: text.oauth.title, badge: providerRows.length || undefined },
+          { value: 'registration', label: text.loginSettings.registrationTitle },
+          { value: 'security', label: `${text.turnstile.title} / ${text.passkey.title}` }
+        ]}
+      />
+
       {/* --- Section 1: Third-party Login (OAuth) --- */}
-      <section className="admin-settings-section">
+      <section className="admin-settings-section" hidden={activeSettingsTab !== 'oauth'}>
         <div className="admin-settings-section-header">
           <div>
             <h2>{text.oauth.title}<InfoTip text={text.oauth.admin_desc} /></h2>
@@ -363,7 +372,6 @@ export function LoginSettingsPage() {
 
         <div className="admin-oauth-grid">
           {providerRows.map((provider) => {
-            const form = forms[provider.provider] || formFromProvider(provider);
             const callbackURL = provider.redirect_url || fallbackCallbackURL(provider);
             const Icon = provider.provider === 'github' ? Github : CircleUserRound;
             return (
@@ -425,7 +433,7 @@ export function LoginSettingsPage() {
       </section>
 
       {/* --- Section 2: Registration Settings --- */}
-      <section className="admin-settings-section">
+      <section className="admin-settings-section" hidden={activeSettingsTab !== 'registration'}>
         <div className="admin-settings-section-header">
           <h2>{text.loginSettings.registrationTitle}<InfoTip text={text.loginSettings.registrationDesc} /></h2>
         </div>
@@ -521,11 +529,17 @@ export function LoginSettingsPage() {
                   </label>
                   <label className="user-form-field">
                     <span>{text.loginSettings.smtpSecurity}</span>
-                    <select className="input" value={registrationForm.smtp_security} onChange={(event) => setRegistrationForm((form) => ({ ...form, smtp_security: event.target.value as RegistrationForm['smtp_security'] }))}>
-                      <option value="none">{text.loginSettings.smtpSecurityNone}</option>
-                      <option value="starttls">{text.loginSettings.smtpSecurityStarttls}</option>
-                      <option value="tls">{text.loginSettings.smtpSecurityTls}</option>
-                    </select>
+                    <SelectDropdown
+                      className="form-select-dropdown"
+                      value={registrationForm.smtp_security}
+                      ariaLabel={text.loginSettings.smtpSecurity}
+                      onChange={(value) => setRegistrationForm((form) => ({ ...form, smtp_security: value as RegistrationForm['smtp_security'] }))}
+                      options={[
+                        { value: 'none', label: text.loginSettings.smtpSecurityNone },
+                        { value: 'starttls', label: text.loginSettings.smtpSecurityStarttls },
+                        { value: 'tls', label: text.loginSettings.smtpSecurityTls }
+                      ]}
+                    />
                   </label>
                   <label className="user-form-field">
                     <span>{text.loginSettings.smtpUsername}</span>
@@ -570,7 +584,7 @@ export function LoginSettingsPage() {
       </section>
 
       {/* --- Section 3: Security Settings --- */}
-      <section className="admin-settings-section">
+      <section className="admin-settings-section" hidden={activeSettingsTab !== 'security'}>
         <div className="admin-settings-section-header">
           <h2>{text.turnstile.title} / {text.passkey.title}</h2>
         </div>

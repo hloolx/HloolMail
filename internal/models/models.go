@@ -231,12 +231,12 @@ type Message struct {
 	Recipient       string         `gorm:"index:idx_messages_recipient_created,priority:1;size:320;not null" json:"recipient"`
 	RecipientLocal  string         `gorm:"size:160;not null" json:"recipient_local"`
 	RecipientDomain string         `gorm:"index;size:255;not null" json:"recipient_domain"`
-	RootDomain      string         `gorm:"size:255;not null" json:"root_domain"`
+	RootDomain      string         `gorm:"index;size:255;not null" json:"root_domain"`
 	DomainID        *uint          `gorm:"index" json:"domain_id,omitempty"`
 	DomainRef       *Domain        `gorm:"foreignKey:DomainID;constraint:OnUpdate:CASCADE,OnDelete:SET NULL;" json:"-"`
 	OwnerID         *uint          `gorm:"index" json:"owner_id,omitempty"`
 	Owner           *User          `gorm:"foreignKey:OwnerID;constraint:OnUpdate:CASCADE,OnDelete:SET NULL;" json:"-"`
-	MailboxID       *uint          `gorm:"index" json:"mailbox_id,omitempty"`
+	MailboxID       *uint          `gorm:"index;index:idx_messages_mailbox_created,priority:1" json:"mailbox_id,omitempty"`
 	Mailbox         *Mailbox       `gorm:"foreignKey:MailboxID;constraint:OnUpdate:CASCADE,OnDelete:SET NULL;" json:"-"`
 	FromAddress     string         `gorm:"size:320;not null" json:"from_address"`
 	FromName        string         `gorm:"size:255" json:"from_name,omitempty"`
@@ -245,7 +245,7 @@ type Message struct {
 	TextContent     string         `gorm:"type:text" json:"text_content,omitempty"`
 	HTMLContent     string         `gorm:"type:text" json:"html_content,omitempty"`
 	HeadersJSON     string         `gorm:"type:text" json:"headers_json,omitempty"`
-	CreatedAt       time.Time      `gorm:"index:idx_messages_recipient_created,priority:2" json:"created_at"`
+	CreatedAt       time.Time      `gorm:"index:idx_messages_recipient_created,priority:2;index:idx_messages_mailbox_created,priority:2" json:"created_at"`
 	ExpiresAt       time.Time      `gorm:"index;not null" json:"expires_at"`
 	DeletedAt       gorm.DeletedAt `gorm:"index" json:"-"`
 }

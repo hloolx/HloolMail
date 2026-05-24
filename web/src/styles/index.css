@@ -2,7 +2,15 @@
 @import "./landing.css";
 @import "./auth.css";
 @import "./layout.css";
-@import "./components.css";
+@import "./base-components.css";
+@import "./app-frame.css";
+@import "./ui.css";
+@import "./data-table.css";
+@import "./form-controls.css";
+@import "./admin.css";
+@import "./users.css";
+@import "./notification.css";
+@import "./shared-utils.css";
 @import "./settings.css";
 @import "./dashboard.css";
 @import "./domains.css";
@@ -78,6 +86,8 @@ body {
   background: var(--shell);
   scrollbar-width: thin;
   scrollbar-color: var(--border) transparent;
+  scrollbar-gutter: stable;
+  overflow-y: scroll;
 }
 
 ::-webkit-scrollbar {

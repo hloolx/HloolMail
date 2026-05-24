@@ -133,6 +133,91 @@ func TestParseWithOptionsLimitsUnnamedBinaryParts(t *testing.T) {
 	}
 }
 
+func TestParseWithOptionsRejectsTooManyAttachments(t *testing.T) {
+	var raw strings.Builder
+	raw.WriteString("From: Sender <sender@test.local>\r\n" +
+		"To: demo@example.test\r\n" +
+		"Subject: Many empty attachments\r\n" +
+		"MIME-Version: 1.0\r\n" +
+		"Content-Type: multipart/mixed; boundary=outer\r\n\r\n")
+	for i := 0; i < 3; i++ {
+		raw.WriteString("--outer\r\n" +
+			"Content-Type: application/octet-stream; name=file.bin\r\n" +
+			"Content-Disposition: attachment; filename=file.bin\r\n\r\n")
+	}
+	raw.WriteString("--outer--\r\n")
+
+	_, err := ParseWithOptions([]byte(raw.String()), ParseOptions{MaxAttachments: 2})
+	if !errors.Is(err, ErrTooManyAttachments) {
+		t.Fatalf("error = %v, want ErrTooManyAttachments", err)
+	}
+}
+
+func TestParseWithOptionsRejectsTooManyMIMEParts(t *testing.T) {
+	raw := []byte("From: Sender <sender@test.local>\r\n" +
+		"To: demo@example.test\r\n" +
+		"Subject: Too many parts\r\n" +
+		"MIME-Version: 1.0\r\n" +
+		"Content-Type: multipart/mixed; boundary=outer\r\n\r\n" +
+		"--outer\r\n" +
+		"Content-Type: text/plain; charset=utf-8\r\n\r\n" +
+		"one\r\n" +
+		"--outer\r\n" +
+		"Content-Type: text/plain; charset=utf-8\r\n\r\n" +
+		"two\r\n" +
+		"--outer--\r\n")
+
+	_, err := ParseWithOptions(raw, ParseOptions{MaxMIMEParts: 1})
+	if !errors.Is(err, ErrTooManyMIMEParts) {
+		t.Fatalf("error = %v, want ErrTooManyMIMEParts", err)
+	}
+}
+
+func TestParseWithOptionsRejectsOversizedTextBody(t *testing.T) {
+	raw := []byte("From: Sender <sender@test.local>\r\n" +
+		"To: demo@example.test\r\n" +
+		"Subject: Large text\r\n" +
+		"MIME-Version: 1.0\r\n" +
+		"Content-Type: text/html; charset=utf-8\r\n\r\n" +
+		"123456\r\n")
+
+	_, err := ParseWithOptions(raw, ParseOptions{MaxBodyBytes: 5})
+	if !errors.Is(err, ErrBodyTooLarge) {
+		t.Fatalf("error = %v, want ErrBodyTooLarge", err)
+	}
+}
+
+func TestParseTruncatesLongAttachmentMetadata(t *testing.T) {
+	longFilename := strings.Repeat("f", 700)
+	longContentID := strings.Repeat("c", 300)
+	raw := []byte("From: Sender <sender@test.local>\r\n" +
+		"To: demo@example.test\r\n" +
+		"Subject: Long metadata\r\n" +
+		"MIME-Version: 1.0\r\n" +
+		"Content-Type: multipart/mixed; boundary=outer\r\n\r\n" +
+		"--outer\r\n" +
+		"Content-Type: application/octet-stream; name=\"" + longFilename + "\"\r\n" +
+		"Content-Disposition: attachment; filename=\"" + longFilename + "\"\r\n" +
+		"Content-ID: <" + longContentID + ">\r\n\r\n" +
+		"data\r\n" +
+		"--outer--\r\n")
+
+	parsed, err := Parse(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(parsed.Attachments) != 1 {
+		t.Fatalf("attachments = %d, want 1", len(parsed.Attachments))
+	}
+	attachment := parsed.Attachments[0]
+	if len([]rune(attachment.Filename)) != 500 {
+		t.Fatalf("filename length = %d, want 500", len([]rune(attachment.Filename)))
+	}
+	if len([]rune(attachment.ContentID)) != 255 {
+		t.Fatalf("content id length = %d, want 255", len([]rune(attachment.ContentID)))
+	}
+}
+
 func TestParseTextCharsets(t *testing.T) {
 	tests := []struct {
 		name             string

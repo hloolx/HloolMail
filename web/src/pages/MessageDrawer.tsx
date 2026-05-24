@@ -18,11 +18,26 @@ function injectApiKeyIntoHtml(html: string, apiKey: string): string {
   );
 }
 
-export function MessageDrawer({ message, loading, apiKey, onBack }: { message?: MessageDetail; loading: boolean; apiKey: string; onBack?: () => void }) {
+export function MessageDrawer({
+  message,
+  loading,
+  error,
+  apiKey,
+  onBack,
+  onRetry
+}: {
+  message?: MessageDetail;
+  loading: boolean;
+  error?: unknown;
+  apiKey: string;
+  onBack?: () => void;
+  onRetry?: () => void;
+}) {
   const text = useText();
   const [codeCopied, markCodeCopied] = useCopyState();
 
   if (loading) return <aside className="panel mail-detail-panel"><LoadingState label={text.common.loading} /></aside>;
+  if (error) return <MessageDetailError label={readErrorMessage(error)} actionLabel={text.common.retry} onRetry={onRetry} />;
   if (!message) return <aside className="panel mail-detail-panel mail-detail-empty text-sm text-[var(--muted)]">{text.inbox.selectMessage}</aside>;
   const code = extractCode(message);
   const hasHtml = Boolean(message.html_content?.trim());
@@ -53,8 +68,10 @@ export function MessageDrawer({ message, loading, apiKey, onBack }: { message?: 
       {hasHtml ? (
         <iframe
           className="message-frame"
-          title={message.subject || text.common.noSubject}
+          title={`${text.inbox.messages}: ${message.subject || text.common.noSubject}`}
+          aria-label={`${text.inbox.messages}: ${message.subject || text.common.noSubject}`}
           sandbox="allow-downloads"
+          referrerPolicy="no-referrer"
           srcDoc={buildEmailSrcDoc(injectApiKeyIntoHtml(message.html_content || '', apiKey))}
         />
       ) : message.text_content ? (
@@ -64,6 +81,25 @@ export function MessageDrawer({ message, loading, apiKey, onBack }: { message?: 
       )}
     </aside>
   );
+}
+
+function MessageDetailError({ label, actionLabel, onRetry }: { label: string; actionLabel: string; onRetry?: () => void }) {
+  return (
+    <aside className="panel mail-detail-panel mail-detail-empty">
+      <div className="grid gap-3 place-items-center text-center">
+        <EmptyState label={label} />
+        {onRetry && (
+          <button className="btn-secondary btn-sm" type="button" onClick={onRetry}>
+            {actionLabel}
+          </button>
+        )}
+      </div>
+    </aside>
+  );
+}
+
+function readErrorMessage(error: unknown) {
+  return error instanceof Error && error.message ? error.message : 'Request failed';
 }
 
 function MessageAttachmentList({ attachments }: { attachments: AttachmentMetadata[] }) {

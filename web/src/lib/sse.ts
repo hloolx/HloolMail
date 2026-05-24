@@ -2,13 +2,25 @@ type SSEOptions = {
   signal?: AbortSignal;
   maxRetries?: number;
   retryDelay?: number;
+  maxRetryDelay?: number;
 };
+
+export class SSEAuthError extends Error {
+  status: number;
+
+  constructor(status: number) {
+    super('SSE authentication failed');
+    this.name = 'SSEAuthError';
+    this.status = status;
+  }
+}
 
 export async function* sseStream<T = unknown>(url: string, options: SSEOptions = {}): AsyncGenerator<T> {
   const {
     signal,
     maxRetries = 3,
-    retryDelay = 1000
+    retryDelay = 1000,
+    maxRetryDelay = 30000
   } = options;
 
   for (let attempt = 0; attempt <= maxRetries; attempt += 1) {
@@ -19,9 +31,13 @@ export async function* sseStream<T = unknown>(url: string, options: SSEOptions =
         signal,
         credentials: 'same-origin'
       });
+      if (response.status === 401) {
+        window.dispatchEvent(new CustomEvent('hlool:auth-expired'));
+        throw new SSEAuthError(response.status);
+      }
       if (!response.ok) {
         if (attempt < maxRetries) {
-          await delay(retryDelay * Math.pow(2, attempt));
+          await delay(backoffDelay(retryDelay, maxRetryDelay, attempt), signal);
           continue;
         }
         throw new Error(`SSE failed: ${response.status}`);
@@ -33,7 +49,7 @@ export async function* sseStream<T = unknown>(url: string, options: SSEOptions =
       let buffer = '';
       while (true) {
         const { done, value } = await reader.read();
-        if (done) return;
+        if (done) throw new Error('SSE connection closed');
         buffer += decoder.decode(value, { stream: true });
         const frames = buffer.split(/\r?\n\r?\n/);
         buffer = frames.pop() || '';
@@ -53,8 +69,9 @@ export async function* sseStream<T = unknown>(url: string, options: SSEOptions =
         }
       }
     } catch (err) {
+      if (err instanceof SSEAuthError || signal?.aborted) throw err;
       if (attempt < maxRetries && !signal?.aborted) {
-        await delay(retryDelay * Math.pow(2, attempt));
+        await delay(backoffDelay(retryDelay, maxRetryDelay, attempt), signal);
         continue;
       }
       throw err;
@@ -62,6 +79,26 @@ export async function* sseStream<T = unknown>(url: string, options: SSEOptions =
   }
 }
 
-function delay(ms: number): Promise<void> {
-  return new Promise((resolve) => window.setTimeout(resolve, ms));
+function backoffDelay(baseDelay: number, maxDelay: number, attempt: number) {
+  return Math.min(maxDelay, baseDelay * Math.pow(2, attempt));
+}
+
+function delay(ms: number, signal?: AbortSignal): Promise<void> {
+  if (signal?.aborted) return Promise.reject(abortError());
+
+  return new Promise((resolve, reject) => {
+    const timeout = window.setTimeout(() => {
+      signal?.removeEventListener('abort', onAbort);
+      resolve();
+    }, ms);
+    const onAbort = () => {
+      window.clearTimeout(timeout);
+      reject(abortError());
+    };
+    signal?.addEventListener('abort', onAbort, { once: true });
+  });
+}
+
+function abortError() {
+  return new DOMException('The operation was aborted.', 'AbortError');
 }

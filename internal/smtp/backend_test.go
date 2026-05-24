@@ -9,6 +9,7 @@ import (
 
 	"gptmail/internal/config"
 	"gptmail/internal/domain"
+	mailparser "gptmail/internal/mail"
 	"gptmail/internal/models"
 	"gptmail/internal/webhook"
 
@@ -126,6 +127,114 @@ func TestDataStoresAttachmentMetadataOnly(t *testing.T) {
 	wantHash := sha256.Sum256([]byte("secret"))
 	if attachment.SHA256 != hex.EncodeToString(wantHash[:]) {
 		t.Fatalf("attachment sha256 = %q", attachment.SHA256)
+	}
+}
+
+func TestDataTruncatesLongAttachmentMetadataBeforeStore(t *testing.T) {
+	session, db := newSMTPTestSession(t, config.Config{
+		MaxMessageBytes:    4096,
+		MaxAttachmentBytes: 1024,
+		MessageRetention:   time.Hour,
+	})
+	longFilename := strings.Repeat("f", 700)
+	longContentID := strings.Repeat("c", 300)
+
+	raw := "From: Sender <sender@example.test>\r\n" +
+		"To: demo@example.test\r\n" +
+		"Subject: Long attachment metadata\r\n" +
+		"MIME-Version: 1.0\r\n" +
+		"Content-Type: multipart/mixed; boundary=outer\r\n\r\n" +
+		"--outer\r\n" +
+		"Content-Type: text/plain; charset=utf-8\r\n\r\n" +
+		"visible text\r\n" +
+		"--outer\r\n" +
+		"Content-Type: application/octet-stream; name=\"" + longFilename + "\"\r\n" +
+		"Content-Disposition: attachment; filename=\"" + longFilename + "\"\r\n" +
+		"Content-ID: <" + longContentID + ">\r\n\r\n" +
+		"data\r\n" +
+		"--outer--\r\n"
+
+	if err := session.Data(strings.NewReader(raw)); err != nil {
+		t.Fatal(err)
+	}
+	var attachment models.MessageAttachment
+	if err := db.First(&attachment).Error; err != nil {
+		t.Fatal(err)
+	}
+	if len([]rune(attachment.Filename)) != 500 {
+		t.Fatalf("filename length = %d, want 500", len([]rune(attachment.Filename)))
+	}
+	if len([]rune(attachment.ContentID)) != 255 {
+		t.Fatalf("content id length = %d, want 255", len([]rune(attachment.ContentID)))
+	}
+}
+
+func TestDataAllowsTextBodyUpToMessageLimit(t *testing.T) {
+	body := strings.Repeat("a", 2*1024*1024+1024)
+	raw := "From: Sender <sender@example.test>\r\n" +
+		"To: demo@example.test\r\n" +
+		"Subject: Large text body\r\n" +
+		"MIME-Version: 1.0\r\n" +
+		"Content-Type: text/plain; charset=utf-8\r\n\r\n" +
+		body + "\r\n"
+	session, db := newSMTPTestSession(t, config.Config{
+		MaxMessageBytes:  int64(len(raw) + 1024),
+		MessageRetention: time.Hour,
+	})
+
+	if err := session.Data(strings.NewReader(raw)); err != nil {
+		t.Fatal(err)
+	}
+	var msg models.Message
+	if err := db.First(&msg).Error; err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(msg.TextContent, body) {
+		t.Fatalf("text body was not preserved up to configured message limit: got prefix length %d want at least %d", len(msg.TextContent), len(body))
+	}
+}
+
+func TestCreateMessageAttachmentsTruncatesParserBypassMetadata(t *testing.T) {
+	_, db := newSMTPTestSession(t, config.Config{
+		MaxMessageBytes:  4096,
+		MessageRetention: time.Hour,
+	})
+	messageID := "metadata-truncate-message"
+	if err := db.Create(&models.Message{
+		ID:              messageID,
+		Recipient:       "demo@example.test",
+		RecipientLocal:  "demo",
+		RecipientDomain: "example.test",
+		RootDomain:      "example.test",
+		FromAddress:     "sender@example.test",
+		Subject:         "metadata",
+		ExpiresAt:       time.Now().Add(time.Hour),
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	if err := createMessageAttachments(db, messageID, []mailparser.ParsedAttachment{{
+		Sequence:         1,
+		Filename:         strings.Repeat("f", 700),
+		ContentType:      strings.Repeat("t", 300),
+		Disposition:      strings.Repeat("d", 80),
+		ContentID:        strings.Repeat("c", 300),
+		TransferEncoding: strings.Repeat("e", 80),
+		SHA256:           strings.Repeat("a", 64),
+	}}); err != nil {
+		t.Fatal(err)
+	}
+
+	var attachment models.MessageAttachment
+	if err := db.First(&attachment, "message_id = ?", messageID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if len([]rune(attachment.Filename)) != 500 ||
+		len([]rune(attachment.ContentType)) != 255 ||
+		len([]rune(attachment.Disposition)) != 40 ||
+		len([]rune(attachment.ContentID)) != 255 ||
+		len([]rune(attachment.TransferEncoding)) != 40 {
+		t.Fatalf("metadata was not truncated to model limits: %+v", attachment)
 	}
 }
 

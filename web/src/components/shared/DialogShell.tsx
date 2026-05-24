@@ -138,6 +138,13 @@ export function DialogShell({
       onClose();
     }
   };
+  const handleFormSubmit: FormEventHandler<HTMLFormElement> = (event) => {
+    if (onSubmit) {
+      onSubmit(event);
+      return;
+    }
+    event.preventDefault();
+  };
 
   const panelProps = {
     className,
@@ -150,7 +157,7 @@ export function DialogShell({
     tabIndex: -1
   };
   const panel = as === 'form' ? (
-    <form {...panelProps} ref={setPanelRef as RefCallback<HTMLFormElement>} onSubmit={onSubmit}>
+    <form {...panelProps} ref={setPanelRef as RefCallback<HTMLFormElement>} onSubmit={handleFormSubmit}>
       {children}
     </form>
   ) : (

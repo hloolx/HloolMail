@@ -207,6 +207,8 @@ export function InboxPage() {
           page={inbox.mailboxes.data?.page || 1}
           totalPages={inbox.mailboxes.data?.total_pages || 1}
           isLoading={inbox.mailboxes.isLoading}
+          error={inbox.mailboxes.error}
+          onRetry={() => inbox.mailboxes.refetch()}
           confirmingId={confirmingId}
           onSearchChange={setMailboxSearch}
           onPageChange={setMailboxPage}
@@ -268,6 +270,8 @@ export function InboxPage() {
           pulseIds={pulseIds}
           isLoading={inbox.emails.isLoading}
           isFetching={inbox.emails.isFetching}
+          error={inbox.emails.error}
+          onRetry={() => inbox.emails.refetch()}
           shouldReduceMotion={Boolean(shouldReduceMotion)}
           onSelectMessage={selectMessage}
           onPageChange={(page) => {
@@ -282,8 +286,10 @@ export function InboxPage() {
         <MessagePreviewPane
           message={selectedID ? inbox.detail.data : undefined}
           loading={Boolean(selectedID) && inbox.detail.isLoading}
+          error={selectedID ? inbox.detail.error : null}
           apiKey={apiKey}
           onBack={() => setMobileStep('messages')}
+          onRetry={() => inbox.detail.refetch()}
         />
       </div>
     </div>

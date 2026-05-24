@@ -82,7 +82,7 @@ func (h *Handler) requireActor(c *gin.Context) (*requestActor, bool) {
 }
 
 func (a *requestActor) isAdmin() bool {
-	return a != nil && (a.Global || (a.User != nil && a.User.Role == models.UserRoleAdmin))
+	return a != nil && a.APIKey == nil && a.User != nil && a.User.Role == models.UserRoleAdmin
 }
 
 func (a *requestActor) ownerID() (uint, bool) {
@@ -1265,10 +1265,7 @@ func (h *Handler) listAPIKeys(c *gin.Context) {
 		return
 	}
 	var keys []models.APIKey
-	query := h.DB.Order("created_at desc")
-	if user.Role != models.UserRoleAdmin {
-		query = query.Where("owner_id = ?", user.ID)
-	}
+	query := h.DB.Where("owner_id = ?", user.ID).Order("created_at desc")
 	if err := query.Find(&keys).Error; err != nil {
 		fail(c, http.StatusInternalServerError, err.Error())
 		return
@@ -1328,7 +1325,7 @@ func (h *Handler) patchAPIKey(c *gin.Context) {
 		fail(c, http.StatusNotFound, "api key not found")
 		return
 	}
-	if user.Role != models.UserRoleAdmin && (key.OwnerID == nil || *key.OwnerID != user.ID) {
+	if key.OwnerID == nil || *key.OwnerID != user.ID {
 		fail(c, http.StatusForbidden, "api key access denied")
 		return
 	}
@@ -1389,7 +1386,7 @@ func (h *Handler) deleteAPIKey(c *gin.Context) {
 		fail(c, http.StatusNotFound, "api key not found")
 		return
 	}
-	if user.Role != models.UserRoleAdmin && (key.OwnerID == nil || *key.OwnerID != user.ID) {
+	if key.OwnerID == nil || *key.OwnerID != user.ID {
 		fail(c, http.StatusForbidden, "api key access denied")
 		return
 	}
@@ -1415,7 +1412,7 @@ func (h *Handler) revealAPIKey(c *gin.Context) {
 		fail(c, http.StatusNotFound, "api key not found")
 		return
 	}
-	if user.Role != models.UserRoleAdmin && (key.OwnerID == nil || *key.OwnerID != user.ID) {
+	if key.OwnerID == nil || *key.OwnerID != user.ID {
 		fail(c, http.StatusForbidden, "api key access denied")
 		return
 	}
@@ -1547,7 +1544,7 @@ func (h *Handler) selectDomainForActor(input string, actor *requestActor) (*mode
 			if ownerID, ok := actor.ownerID(); ok && d.OwnerID != nil && *d.OwnerID == ownerID {
 				return &d, nil
 			}
-			return nil, fmt.Errorf("该私有域名仅域名所有者或管理员可使用")
+			return nil, fmt.Errorf("该私有域名仅域名所有者可使用")
 		}
 		return &d, nil
 	}
@@ -1956,26 +1953,18 @@ func (h *Handler) listMailboxes(c *gin.Context) {
 		fail(c, http.StatusInternalServerError, err.Error())
 		return
 	}
-	type mailboxWithCount struct {
-		models.Mailbox
-		MessageCount  int64      `json:"message_count"`
-		LastMessageAt *time.Time `json:"last_message_at,omitempty"`
+	stats, err := mailboxMessageStats(h.DB, mailboxes)
+	if err != nil {
+		fail(c, http.StatusInternalServerError, err.Error())
+		return
 	}
 	out := make([]mailboxWithCount, 0, len(mailboxes))
 	for _, m := range mailboxes {
-		var count int64
-		h.scopeInboxMessagesForMailbox(h.DB.Model(&models.Message{}), m).Count(&count)
-		var lastMsg models.Message
-		lastAt := new(time.Time)
-		if err := h.scopeInboxMessagesForMailbox(h.DB.Model(&models.Message{}), m).Order("created_at desc").First(&lastMsg).Error; err == nil {
-			*lastAt = lastMsg.CreatedAt
-		} else {
-			lastAt = nil
-		}
+		stat := stats[m.ID]
 		out = append(out, mailboxWithCount{
 			Mailbox:       m,
-			MessageCount:  count,
-			LastMessageAt: lastAt,
+			MessageCount:  stat.MessageCount,
+			LastMessageAt: stat.LastMessageAt,
 		})
 	}
 	if paged {
@@ -1989,6 +1978,69 @@ func (h *Handler) listMailboxes(c *gin.Context) {
 		return
 	}
 	ok(c, out)
+}
+
+type mailboxWithCount struct {
+	models.Mailbox
+	MessageCount  int64      `json:"message_count"`
+	LastMessageAt *time.Time `json:"last_message_at,omitempty"`
+}
+
+type mailboxMessageStat struct {
+	MessageCount  int64
+	LastMessageAt *time.Time
+}
+
+func mailboxMessageStats(db *gorm.DB, mailboxes []models.Mailbox) (map[uint]mailboxMessageStat, error) {
+	out := make(map[uint]mailboxMessageStat, len(mailboxes))
+	if len(mailboxes) == 0 {
+		return out, nil
+	}
+	ids := make([]uint, 0, len(mailboxes))
+	for _, mailbox := range mailboxes {
+		ids = append(ids, mailbox.ID)
+	}
+	type aggregate struct {
+		MailboxID    uint
+		MessageCount int64
+	}
+	var rows []aggregate
+	if err := db.Model(&models.Message{}).
+		Select("mailbox_id, COUNT(*) AS message_count").
+		Where("mailbox_id IN ?", ids).
+		Group("mailbox_id").
+		Scan(&rows).Error; err != nil {
+		return nil, err
+	}
+	for _, row := range rows {
+		out[row.MailboxID] = mailboxMessageStat{
+			MessageCount: row.MessageCount,
+		}
+	}
+	type latestRow struct {
+		MailboxID uint
+		CreatedAt time.Time
+	}
+	var latestRows []latestRow
+	if err := db.Raw(`
+		SELECT mailbox_id, created_at
+		FROM (
+			SELECT mailbox_id, created_at,
+				ROW_NUMBER() OVER (PARTITION BY mailbox_id ORDER BY created_at DESC, id DESC) AS row_num
+			FROM messages
+			WHERE mailbox_id IN ? AND deleted_at IS NULL
+		) ranked
+		WHERE row_num = 1
+	`, ids).Scan(&latestRows).Error; err != nil {
+		return nil, err
+	}
+	for _, row := range latestRows {
+		stat := out[row.MailboxID]
+		createdAt := row.CreatedAt
+		stat.LastMessageAt = &createdAt
+		out[row.MailboxID] = stat
+	}
+	return out, nil
 }
 
 func (h *Handler) deleteMailbox(c *gin.Context) {

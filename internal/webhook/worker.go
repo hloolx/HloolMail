@@ -368,6 +368,12 @@ func (w *Worker) httpClient() *http.Client {
 		w.Client = &http.Client{Timeout: 10 * time.Second}
 	}
 	client := *w.Client
+	if client.Transport == nil {
+		transport := http.DefaultTransport.(*http.Transport).Clone()
+		transport.Proxy = nil
+		transport.DialContext = safeWebhookDialer{Resolve: w.Resolve}.DialContext
+		client.Transport = transport
+	}
 	baseCheck := client.CheckRedirect
 	client.CheckRedirect = func(req *http.Request, via []*http.Request) error {
 		if len(via) >= 3 {

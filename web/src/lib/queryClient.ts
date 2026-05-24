@@ -1,0 +1,133 @@
+import { MutationCache, QueryCache, QueryClient } from '@tanstack/react-query';
+import { toast } from 'sonner';
+import { ApiError } from '../api';
+import { useAppStore } from '../store';
+
+const SESSION_EXPIRED_MESSAGE = 'Session expired. Please sign in again.';
+const DEFAULT_ERROR_MESSAGE = 'Request failed. Please try again.';
+const USER_QUERY_ROOTS = new Set([
+  'admin-announcements',
+  'admin-audit-logs',
+  'admin-domain-check-runs',
+  'admin-domain-check-settings',
+  'admin-domain-health',
+  'admin-login-settings',
+  'admin-oauth-providers',
+  'admin-quota-alerts',
+  'admin-quota-settings',
+  'admin-stats',
+  'announcements',
+  'announcements-unread-count',
+  'api-keys',
+  'domains-all',
+  'domains-available',
+  'email-detail',
+  'emails',
+  'mailbox-stats',
+  'mailboxes',
+  'me',
+  'notifications',
+  'notifications-dashboard',
+  'notifications-unread-count',
+  'share-link-access-logs',
+  'share-links',
+  'stats',
+  'stats-timeseries',
+  'user-oauth-identities',
+  'user-passkeys',
+  'users',
+  'webhook-deliveries',
+  'webhooks'
+]);
+
+let sessionExpiredNotified = false;
+
+export function createAppQueryClient() {
+  const queryClient = new QueryClient({
+    queryCache: new QueryCache({
+      onError: (error, query) => {
+        handleQueryError(error, queryClient, query.queryKey);
+      }
+    }),
+    mutationCache: new MutationCache({
+      onError: (error, _variables, _context, mutation) => {
+        handleMutationError(error, queryClient, Boolean(mutation.options.onError));
+      }
+    }),
+    defaultOptions: {
+      queries: {
+        refetchOnWindowFocus: false,
+        retry: (failureCount, error) => {
+          if (error instanceof ApiError && error.status >= 400 && error.status < 500) return false;
+          return failureCount < 1;
+        }
+      },
+      mutations: {
+        retry: false
+      }
+    }
+  });
+
+  return queryClient;
+}
+
+function handleQueryError(error: unknown, queryClient: QueryClient, queryKey: readonly unknown[]) {
+  if (isAuthProbeUnauthorized(error, queryKey)) return;
+  if (handleAuthError(error, queryClient)) return;
+}
+
+function handleMutationError(error: unknown, queryClient: QueryClient, hasLocalHandler: boolean) {
+  if (handleAuthError(error, queryClient)) return;
+  if (hasLocalHandler) return;
+  toast.error(readErrorMessage(error));
+}
+
+function handleAuthError(error: unknown, queryClient: QueryClient) {
+  if (!(error instanceof ApiError) || error.status !== 401) return false;
+
+  expireUserSession(queryClient);
+  return true;
+}
+
+export function expireUserSession(queryClient: QueryClient) {
+  useAppStore.getState().logout();
+  clearUserQueryCache(queryClient);
+  notifySessionExpired();
+
+  if (typeof window !== 'undefined' && !window.location.hash.startsWith('#/login')) {
+    window.location.hash = '#/login';
+  }
+}
+
+export function clearUserSession(queryClient: QueryClient) {
+  useAppStore.getState().logout();
+  clearUserQueryCache(queryClient);
+}
+
+export function clearUserQueryCache(queryClient: QueryClient) {
+  queryClient.removeQueries({
+    predicate: (query) => {
+      const [root] = query.queryKey;
+      return typeof root === 'string' && USER_QUERY_ROOTS.has(root);
+    }
+  });
+}
+
+function notifySessionExpired() {
+  if (sessionExpiredNotified) return;
+
+  sessionExpiredNotified = true;
+  toast.error(SESSION_EXPIRED_MESSAGE);
+  window.setTimeout(() => {
+    sessionExpiredNotified = false;
+  }, 5000);
+}
+
+function isAuthProbeUnauthorized(error: unknown, queryKey: readonly unknown[]) {
+  return error instanceof ApiError && error.status === 401 && queryKey[0] === 'me';
+}
+
+function readErrorMessage(error: unknown) {
+  if (error instanceof Error && error.message.trim()) return error.message;
+  return DEFAULT_ERROR_MESSAGE;
+}

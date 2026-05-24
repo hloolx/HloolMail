@@ -1,0 +1,437 @@
+:root {
+  --control-radius: 0.5rem;
+  --panel-radius: 0.85rem;
+  --ui-focus-ring: 0 0 0 3px color-mix(in srgb, var(--focus) 18%, transparent);
+}
+
+.ui-button {
+  display: inline-flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: center;
+  gap: 0.45rem;
+  border: 1px solid transparent;
+  border-radius: var(--control-radius);
+  padding: 0 0.75rem;
+  color: var(--foreground);
+  font-size: 0.875rem;
+  font-weight: 650;
+  line-height: 1;
+  letter-spacing: 0;
+  text-decoration: none;
+  white-space: nowrap;
+  transition:
+    background-color 180ms ease,
+    border-color 180ms ease,
+    color 180ms ease,
+    box-shadow 180ms ease,
+    transform 180ms ease;
+}
+
+.ui-button-sm {
+  height: 1.85rem;
+  padding: 0 0.6rem;
+  font-size: 0.78rem;
+}
+
+.ui-button-md {
+  height: 2.25rem;
+}
+
+.ui-button-lg {
+  height: 2.55rem;
+  padding: 0 0.95rem;
+}
+
+.ui-button-icon {
+  width: 2.25rem;
+  height: 2.25rem;
+  padding: 0;
+}
+
+.ui-button-primary {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: var(--accent-foreground);
+}
+
+.ui-button-secondary {
+  border-color: var(--border);
+  background: var(--panel);
+  color: var(--foreground);
+}
+
+.ui-button-outline {
+  border-color: color-mix(in srgb, var(--focus) 42%, var(--border));
+  background: color-mix(in srgb, var(--panel) 86%, transparent);
+  color: var(--foreground);
+}
+
+.ui-button-ghost {
+  background: transparent;
+  color: var(--foreground);
+}
+
+.ui-button-danger {
+  border-color: color-mix(in srgb, var(--bad) 52%, transparent);
+  background: var(--bad);
+  color: var(--accent-foreground);
+}
+
+.ui-button:hover:not(:disabled) {
+  transform: translateY(-1px);
+}
+
+.ui-button-secondary:hover:not(:disabled),
+.ui-button-ghost:hover:not(:disabled),
+.ui-button-outline:hover:not(:disabled) {
+  background: var(--soft);
+}
+
+.ui-button:active:not(:disabled) {
+  transform: translateY(0) scale(0.98);
+  transition-duration: 80ms;
+}
+
+.ui-button:focus-visible,
+.ui-input:focus-visible,
+.ui-switch:focus-visible {
+  outline: 0;
+  border-color: var(--focus);
+  box-shadow: var(--ui-focus-ring);
+}
+
+.ui-button:disabled,
+.ui-input:disabled,
+.ui-switch:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.ui-button-loading {
+  cursor: wait;
+}
+
+.ui-button-icon-slot {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+}
+
+.ui-input {
+  width: 100%;
+  min-width: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--control-radius);
+  background: var(--panel);
+  color: var(--foreground);
+  font-size: 0.875rem;
+  letter-spacing: 0;
+  outline: none;
+  transition:
+    background-color 180ms ease,
+    border-color 180ms ease,
+    box-shadow 180ms ease;
+}
+
+.ui-input-sm {
+  height: 1.95rem;
+  padding: 0 0.6rem;
+  font-size: 0.8rem;
+}
+
+.ui-input-md {
+  height: 2.25rem;
+  padding: 0 0.75rem;
+}
+
+.ui-input-lg {
+  height: 2.55rem;
+  padding: 0 0.9rem;
+}
+
+.ui-input::placeholder {
+  color: color-mix(in srgb, var(--muted) 82%, transparent);
+}
+
+.ui-input:disabled {
+  background: color-mix(in srgb, var(--soft) 76%, var(--panel));
+  color: color-mix(in srgb, var(--muted) 86%, var(--foreground));
+}
+
+.ui-input-invalid {
+  border-color: var(--bad);
+}
+
+.ui-input-invalid:focus-visible {
+  border-color: var(--bad);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--bad) 16%, transparent);
+}
+
+.ui-switch {
+  position: relative;
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--panel);
+  padding: 0;
+  transition:
+    background-color 180ms ease,
+    border-color 180ms ease,
+    box-shadow 180ms ease;
+}
+
+.ui-switch-md {
+  width: 2.5rem;
+  height: 1.375rem;
+}
+
+.ui-switch-sm {
+  width: 2.125rem;
+  height: 1.125rem;
+}
+
+.ui-switch-checked {
+  border-color: var(--foreground);
+  background: var(--foreground);
+}
+
+.ui-switch-thumb {
+  position: absolute;
+  border-radius: 999px;
+  background: var(--foreground);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.15);
+  transition:
+    background-color 180ms ease,
+    transform 180ms ease;
+}
+
+.ui-switch-md .ui-switch-thumb {
+  top: 2px;
+  left: 2px;
+  width: 1rem;
+  height: 1rem;
+}
+
+.ui-switch-sm .ui-switch-thumb {
+  top: 1.5px;
+  left: 1.5px;
+  width: 0.8125rem;
+  height: 0.8125rem;
+}
+
+.ui-switch-md.ui-switch-checked .ui-switch-thumb {
+  transform: translateX(1.125rem);
+}
+
+.ui-switch-sm.ui-switch-checked .ui-switch-thumb {
+  transform: translateX(1rem);
+}
+
+.ui-switch-checked .ui-switch-thumb {
+  background: var(--background);
+}
+
+.ui-badge {
+  display: inline-flex;
+  width: fit-content;
+  max-width: 100%;
+  align-items: center;
+  justify-content: center;
+  gap: 0.3rem;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  font-weight: 720;
+  line-height: 1;
+  letter-spacing: 0;
+  white-space: nowrap;
+}
+
+.ui-badge-sm {
+  min-height: 1.35rem;
+  padding: 0 0.45rem;
+  font-size: 0.68rem;
+}
+
+.ui-badge-md {
+  min-height: 1.55rem;
+  padding: 0 0.55rem;
+  font-size: 0.74rem;
+}
+
+.ui-badge-default {
+  background: var(--foreground);
+  color: var(--background);
+}
+
+.ui-badge-secondary,
+.ui-badge-muted {
+  border-color: var(--border);
+  background: var(--soft);
+  color: var(--muted);
+}
+
+.ui-badge-success {
+  background: color-mix(in srgb, var(--good) 14%, transparent);
+  color: var(--good);
+}
+
+.ui-badge-warning {
+  background: color-mix(in srgb, var(--warn) 15%, transparent);
+  color: var(--warn);
+}
+
+.ui-badge-danger {
+  background: color-mix(in srgb, var(--bad) 14%, transparent);
+  color: var(--bad);
+}
+
+.ui-badge-outline {
+  border-color: color-mix(in srgb, var(--focus) 38%, var(--border));
+  background: color-mix(in srgb, var(--panel) 92%, transparent);
+  color: var(--foreground);
+}
+
+.ui-panel {
+  min-width: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--panel-radius);
+  background: var(--panel);
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, var(--background) 78%, transparent),
+    0 1px 0 color-mix(in srgb, var(--border) 44%, transparent);
+}
+
+.ui-panel-soft {
+  background: color-mix(in srgb, var(--soft) 46%, var(--panel));
+}
+
+.ui-panel-padding-none {
+  padding: 0;
+}
+
+.ui-panel-padding-sm {
+  padding: 0.75rem;
+}
+
+.ui-panel-padding-md {
+  padding: 1rem;
+}
+
+.ui-panel-padding-lg {
+  padding: 1.25rem;
+}
+
+.ui-panel-header,
+.ui-panel-footer,
+.ui-page-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.ui-panel-header {
+  margin-bottom: 1rem;
+}
+
+.ui-panel-title,
+.ui-page-header-title {
+  margin: 0;
+  color: var(--foreground);
+  font-weight: 760;
+  letter-spacing: 0;
+}
+
+.ui-panel-title {
+  font-size: 0.95rem;
+}
+
+.ui-panel-description,
+.ui-page-header-description {
+  margin: 0.2rem 0 0;
+  color: var(--muted);
+  line-height: 1.5;
+}
+
+.ui-panel-description {
+  font-size: 0.78rem;
+}
+
+.ui-panel-content {
+  min-width: 0;
+}
+
+.ui-panel-footer {
+  margin-top: 1rem;
+  border-top: 1px solid var(--border);
+  padding-top: 1rem;
+}
+
+.ui-page-header {
+  min-width: 0;
+  margin-bottom: 1rem;
+}
+
+.ui-page-header-copy {
+  min-width: 0;
+}
+
+.ui-page-header-eyebrow {
+  margin-bottom: 0.3rem;
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 760;
+  text-transform: uppercase;
+}
+
+.ui-page-header-title {
+  font-size: 1.1rem;
+}
+
+.ui-page-header-description {
+  max-width: 48rem;
+  font-size: 0.82rem;
+}
+
+.ui-page-header-actions {
+  display: inline-flex;
+  flex: 0 0 auto;
+  max-width: 100%;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 0.5rem;
+}
+
+@media (pointer: coarse), (max-width: 640px) {
+  .ui-button-md,
+  .ui-button-icon,
+  .ui-input-md,
+  .ui-switch-md {
+    min-height: 2.5rem;
+  }
+
+  .ui-button-icon {
+    width: 2.5rem;
+  }
+}
+
+@media (max-width: 640px) {
+  .ui-panel-header,
+  .ui-panel-footer,
+  .ui-page-header {
+    flex-direction: column;
+  }
+
+  .ui-page-header-actions {
+    width: 100%;
+    justify-content: flex-start;
+  }
+
+  .ui-page-header-actions .ui-button {
+    width: 100%;
+  }
+}

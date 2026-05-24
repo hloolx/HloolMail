@@ -379,11 +379,15 @@ function formFromEndpoint(endpoint?: WebhookEndpointDTO): WebhookFormState {
     name: endpoint?.name || '',
     url: endpoint?.url || '',
     enabled: endpoint?.enabled ?? true,
-    scope: endpoint?.scope === 'domain' || endpoint?.scope === 'mailbox' ? endpoint.scope : 'all',
+    scope: normalizeWebhookScope(endpoint?.scope),
     domainId: endpoint?.domain_id ? String(endpoint.domain_id) : '',
     mailboxId: endpoint?.mailbox_id ? String(endpoint.mailbox_id) : '',
     messageReceived: endpoint?.events?.includes(MESSAGE_RECEIVED) ?? true
   };
+}
+
+function normalizeWebhookScope(scope?: string): WebhookFormState['scope'] {
+  return scope === 'domain' || scope === 'mailbox' ? scope : 'all';
 }
 
 function formPayload(form: WebhookFormState) {

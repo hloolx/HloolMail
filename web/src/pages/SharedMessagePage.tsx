@@ -35,6 +35,7 @@ export function SharedMessagePage({ token }: { token: string }) {
 
   const data = shared.data;
   const statusMessage = errorMessage(shared.error, text);
+  const isClearingRejectedKey = Boolean(mailboxKey && isInvalidShareKeyError(shared.error));
   const mailboxNeedsKey = data && isSharedMailbox(data) && !mailboxKey;
   const lockedData = data && isLockedShare(data)
     ? data
@@ -49,8 +50,7 @@ export function SharedMessagePage({ token }: { token: string }) {
   }, [data, mailboxKey]);
 
   useEffect(() => {
-    if (!mailboxKey || !(shared.error instanceof ApiError)) return;
-    if (shared.error.status !== 401 && shared.error.status !== 403) return;
+    if (!mailboxKey || !isInvalidShareKeyError(shared.error)) return;
     stripShareKeyFromLocation();
     keyFromURL.current = false;
     setMailboxKey('');
@@ -76,9 +76,13 @@ export function SharedMessagePage({ token }: { token: string }) {
           <section className="panel shared-panel">
             <LoadingState label={text.shared.loading} />
           </section>
+        ) : isClearingRejectedKey ? (
+          <section className="panel shared-panel">
+            <LoadingState label={text.shared.loading} />
+          </section>
         ) : shared.isError ? (
           <section className="panel shared-panel">
-            <EmptyState label={statusMessage} />
+            <RetryState label={statusMessage} actionLabel={text.common.retry} onRetry={() => shared.refetch()} />
           </section>
         ) : lockedData ? (
           <LockedShare
@@ -202,6 +206,8 @@ function SharedMailbox({ token, data, accessKey }: { token: string; data: Public
             pulseIds={emptyPulseIds}
             isLoading={messages.isLoading}
             isFetching={messages.isFetching}
+            error={messages.error}
+            onRetry={() => messages.refetch()}
             shouldReduceMotion={Boolean(shouldReduceMotion)}
             onSelectMessage={(id) => {
               const nextID = selectedID === id ? '' : id;
@@ -222,6 +228,7 @@ function SharedMailbox({ token, data, accessKey }: { token: string; data: Public
           message={selectedID ? detail.data : undefined}
           loading={Boolean(selectedID) && detail.isLoading}
           error={detail.error}
+          onRetry={() => detail.refetch()}
           onBack={() => setMobileStep('messages')}
         />
       </div>
@@ -233,16 +240,24 @@ function SharedMailboxMessageDetail({
   message,
   loading,
   error,
+  onRetry,
   onBack
 }: {
   message?: PublicSharedMailboxMessage;
   loading: boolean;
   error: unknown;
+  onRetry: () => void;
   onBack: () => void;
 }) {
   const text = useText();
   if (loading) return <aside className="panel mail-detail-panel"><LoadingState label={text.common.loading} /></aside>;
-  if (error) return <aside className="panel mail-detail-panel mail-detail-empty"><EmptyState label={errorMessage(error, text)} /></aside>;
+  if (error) {
+    return (
+      <aside className="panel mail-detail-panel mail-detail-empty">
+        <RetryState label={errorMessage(error, text)} actionLabel={text.common.retry} onRetry={onRetry} />
+      </aside>
+    );
+  }
   if (!message) return <aside className="panel mail-detail-panel mail-detail-empty text-sm text-[var(--muted)]">{text.inbox.selectMessage}</aside>;
   const code = extractCode(message);
   const hasHtml = Boolean(message.html_content?.trim());
@@ -267,8 +282,10 @@ function SharedMailboxMessageDetail({
       {hasHtml ? (
         <iframe
           className="message-frame"
-          title={message.subject || text.common.noSubject}
+          title={`${text.inbox.messages}: ${message.subject || text.common.noSubject}`}
+          aria-label={`${text.inbox.messages}: ${message.subject || text.common.noSubject}`}
           sandbox="allow-downloads"
+          referrerPolicy="no-referrer"
           srcDoc={buildEmailSrcDoc(message.html_content || '')}
         />
       ) : message.text_content ? (
@@ -277,6 +294,17 @@ function SharedMailboxMessageDetail({
         <EmptyState label={text.shared.noContent} />
       )}
     </aside>
+  );
+}
+
+function RetryState({ label, actionLabel, onRetry }: { label: string; actionLabel: string; onRetry: () => void }) {
+  return (
+    <div className="grid gap-3 place-items-center text-center" role="alert">
+      <EmptyState label={label} />
+      <button className="btn-secondary btn-sm" type="button" onClick={onRetry}>
+        {actionLabel}
+      </button>
+    </div>
   );
 }
 
@@ -384,6 +412,10 @@ function errorMessage(error: unknown, text: ReturnType<typeof useText>) {
     if (error.status === 404) return text.shared.notFound;
   }
   return error instanceof Error ? error.message : text.shared.notFound;
+}
+
+function isInvalidShareKeyError(error: unknown) {
+  return error instanceof ApiError && (error.status === 401 || error.status === 403);
 }
 
 function formatCount(value: number | undefined, empty: string) {

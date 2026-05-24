@@ -381,6 +381,182 @@ func TestAPIKeyResponsesRedactStoredSecret(t *testing.T) {
 	}
 }
 
+func TestAdminAPIKeyManagementScopesToOwnKeys(t *testing.T) {
+	db := httpTestDB(t)
+	hash, err := auth.HashSecret("password123")
+	if err != nil {
+		t.Fatal(err)
+	}
+	admin := models.User{Email: "admin@example.com", PasswordHash: hash, Role: models.UserRoleAdmin, Enabled: true}
+	owner := models.User{Email: "owner@example.com", PasswordHash: hash, Role: models.UserRoleUser, Enabled: true}
+	if err := db.Create(&admin).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&owner).Error; err != nil {
+		t.Fatal(err)
+	}
+	service := auth.APIKeyService{DB: db}
+	adminKey, _, err := service.CreateFor(&admin.ID, "admin-owned", 20, 0, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ownerKey, _, err := service.CreateFor(&owner.ID, "owner-owned", 20, 0, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	router := testRouter(t, db)
+	login := perform(router, http.MethodPost, "/api/auth/login", map[string]any{
+		"email":    "admin@example.com",
+		"password": "password123",
+	}, nil)
+	if login.Code != http.StatusOK {
+		t.Fatalf("login = %d: %s", login.Code, login.Body.String())
+	}
+	headers := sessionHeaders(login)
+
+	list := perform(router, http.MethodGet, "/api/api-keys", nil, headers)
+	if list.Code != http.StatusOK {
+		t.Fatalf("list api keys = %d: %s", list.Code, list.Body.String())
+	}
+	if !strings.Contains(list.Body.String(), adminKey.KeyPrefix) || strings.Contains(list.Body.String(), ownerKey.KeyPrefix) {
+		t.Fatalf("admin api key list should only include own keys: %s", list.Body.String())
+	}
+
+	patch := perform(router, http.MethodPatch, "/api/api-keys/"+strconv.Itoa(int(ownerKey.ID)), map[string]any{"enabled": false}, headers)
+	if patch.Code != http.StatusForbidden {
+		t.Fatalf("admin patch other user's api key = %d: %s", patch.Code, patch.Body.String())
+	}
+	reveal := perform(router, http.MethodPost, "/api/api-keys/"+strconv.Itoa(int(ownerKey.ID))+"/reveal", map[string]any{}, headers)
+	if reveal.Code != http.StatusForbidden {
+		t.Fatalf("admin reveal other user's api key = %d: %s", reveal.Code, reveal.Body.String())
+	}
+	deleted := perform(router, http.MethodDelete, "/api/api-keys/"+strconv.Itoa(int(ownerKey.ID)), nil, headers)
+	if deleted.Code != http.StatusForbidden {
+		t.Fatalf("admin delete other user's api key = %d: %s", deleted.Code, deleted.Body.String())
+	}
+	var remaining int64
+	if err := db.Model(&models.APIKey{}).Where("id = ?", ownerKey.ID).Count(&remaining).Error; err != nil {
+		t.Fatal(err)
+	}
+	if remaining != 1 {
+		t.Fatalf("owner key should remain after forbidden admin actions, remaining=%d", remaining)
+	}
+}
+
+func TestAdminUserAPIKeysEndpointListsSearchesAndReveals(t *testing.T) {
+	db := httpTestDB(t)
+	hash, err := auth.HashSecret("password123")
+	if err != nil {
+		t.Fatal(err)
+	}
+	admin := models.User{Email: "admin@example.com", PasswordHash: hash, Role: models.UserRoleAdmin, Enabled: true}
+	owner := models.User{Email: "owner@example.com", PasswordHash: hash, Role: models.UserRoleUser, Enabled: true}
+	if err := db.Create(&admin).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&owner).Error; err != nil {
+		t.Fatal(err)
+	}
+	service := auth.APIKeyService{DB: db}
+	deployKey, deployPlain, err := service.CreateFor(&owner.ID, "deploy-prod", 20, 0, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ciKey, _, err := service.CreateFor(&owner.ID, "ci-worker", 20, 0, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	adminKey, _, err := service.CreateFor(&admin.ID, "admin-owned", 20, 0, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	router := testRouterWithConfig(t, db, func(cfg *config.Config) {
+		cfg.AdminToken = "test-admin-token"
+	})
+	login := perform(router, http.MethodPost, "/api/auth/login", map[string]any{
+		"email":    "admin@example.com",
+		"password": "password123",
+	}, nil)
+	if login.Code != http.StatusOK {
+		t.Fatalf("login = %d: %s", login.Code, login.Body.String())
+	}
+	headers := sessionHeaders(login)
+
+	apiKeyOnly := perform(router, http.MethodGet, "/api/users/"+strconv.Itoa(int(owner.ID))+"/api-keys", nil, map[string]string{"X-API-Key": deployPlain})
+	if apiKeyOnly.Code != http.StatusForbidden {
+		t.Fatalf("api key-only user api key list = %d: %s", apiKeyOnly.Code, apiKeyOnly.Body.String())
+	}
+	apiKeyOnlyReveal := perform(router, http.MethodPost, "/api/users/"+strconv.Itoa(int(owner.ID))+"/api-keys/"+strconv.Itoa(int(deployKey.ID))+"/reveal", map[string]any{}, map[string]string{"X-API-Key": deployPlain})
+	if apiKeyOnlyReveal.Code != http.StatusForbidden {
+		t.Fatalf("api key-only user api key reveal = %d: %s", apiKeyOnlyReveal.Code, apiKeyOnlyReveal.Body.String())
+	}
+	adminTokenOnly := perform(router, http.MethodGet, "/api/users/"+strconv.Itoa(int(owner.ID))+"/api-keys", nil, map[string]string{"X-Admin-Token": "test-admin-token"})
+	if adminTokenOnly.Code != http.StatusForbidden {
+		t.Fatalf("admin token-only user api key list = %d: %s", adminTokenOnly.Code, adminTokenOnly.Body.String())
+	}
+	adminTokenOnlyReveal := perform(router, http.MethodPost, "/api/users/"+strconv.Itoa(int(owner.ID))+"/api-keys/"+strconv.Itoa(int(deployKey.ID))+"/reveal", map[string]any{}, map[string]string{"X-Admin-Token": "test-admin-token"})
+	if adminTokenOnlyReveal.Code != http.StatusForbidden {
+		t.Fatalf("admin token-only user api key reveal = %d: %s", adminTokenOnlyReveal.Code, adminTokenOnlyReveal.Body.String())
+	}
+	ownerLogin := perform(router, http.MethodPost, "/api/auth/login", map[string]any{
+		"email":    "owner@example.com",
+		"password": "password123",
+	}, nil)
+	if ownerLogin.Code != http.StatusOK {
+		t.Fatalf("owner login = %d: %s", ownerLogin.Code, ownerLogin.Body.String())
+	}
+	nonAdminSession := perform(router, http.MethodGet, "/api/users/"+strconv.Itoa(int(owner.ID))+"/api-keys", nil, sessionHeaders(ownerLogin))
+	if nonAdminSession.Code != http.StatusForbidden {
+		t.Fatalf("non-admin user api key list = %d: %s", nonAdminSession.Code, nonAdminSession.Body.String())
+	}
+
+	list := perform(router, http.MethodGet, "/api/users/"+strconv.Itoa(int(owner.ID))+"/api-keys?page=1&page_size=10", nil, headers)
+	if list.Code != http.StatusOK {
+		t.Fatalf("admin list user api keys = %d: %s", list.Code, list.Body.String())
+	}
+	if !strings.Contains(list.Body.String(), deployKey.KeyPrefix) || !strings.Contains(list.Body.String(), ciKey.KeyPrefix) || strings.Contains(list.Body.String(), adminKey.KeyPrefix) {
+		t.Fatalf("admin user api key list was not scoped to target user: %s", list.Body.String())
+	}
+	if strings.Contains(list.Body.String(), deployPlain) {
+		t.Fatalf("admin user api key list exposed plain key: %s", list.Body.String())
+	}
+
+	userSearch := perform(router, http.MethodGet, "/api/users?search=deploy", nil, headers)
+	if userSearch.Code != http.StatusOK {
+		t.Fatalf("admin user search by api key = %d: %s", userSearch.Code, userSearch.Body.String())
+	}
+	if !strings.Contains(userSearch.Body.String(), owner.Email) || strings.Contains(userSearch.Body.String(), admin.Email) {
+		t.Fatalf("user search by api key returned wrong users: %s", userSearch.Body.String())
+	}
+
+	searchByName := perform(router, http.MethodGet, "/api/users/"+strconv.Itoa(int(owner.ID))+"/api-keys?search=deploy", nil, headers)
+	if searchByName.Code != http.StatusOK {
+		t.Fatalf("admin search user api keys by name = %d: %s", searchByName.Code, searchByName.Body.String())
+	}
+	if !strings.Contains(searchByName.Body.String(), deployKey.KeyPrefix) || strings.Contains(searchByName.Body.String(), ciKey.KeyPrefix) {
+		t.Fatalf("search by name returned wrong keys: %s", searchByName.Body.String())
+	}
+	searchByPrefix := perform(router, http.MethodGet, "/api/users/"+strconv.Itoa(int(owner.ID))+"/api-keys?search="+deployKey.KeyPrefix, nil, headers)
+	if searchByPrefix.Code != http.StatusOK {
+		t.Fatalf("admin search user api keys by prefix = %d: %s", searchByPrefix.Code, searchByPrefix.Body.String())
+	}
+	if !strings.Contains(searchByPrefix.Body.String(), deployKey.KeyPrefix) || strings.Contains(searchByPrefix.Body.String(), ciKey.KeyPrefix) {
+		t.Fatalf("search by prefix returned wrong keys: %s", searchByPrefix.Body.String())
+	}
+
+	reveal := perform(router, http.MethodPost, "/api/users/"+strconv.Itoa(int(owner.ID))+"/api-keys/"+strconv.Itoa(int(deployKey.ID))+"/reveal", map[string]any{}, headers)
+	if reveal.Code != http.StatusOK {
+		t.Fatalf("admin reveal user api key = %d: %s", reveal.Code, reveal.Body.String())
+	}
+	if !strings.Contains(reveal.Body.String(), deployPlain) {
+		t.Fatalf("admin reveal response did not include requested key: %s", reveal.Body.String())
+	}
+	wrongOwnerReveal := perform(router, http.MethodPost, "/api/users/"+strconv.Itoa(int(owner.ID))+"/api-keys/"+strconv.Itoa(int(adminKey.ID))+"/reveal", map[string]any{}, headers)
+	if wrongOwnerReveal.Code != http.StatusNotFound {
+		t.Fatalf("admin reveal key outside requested user = %d: %s", wrongOwnerReveal.Code, wrongOwnerReveal.Body.String())
+	}
+}
+
 func TestAPIKeyCanGenerateAndReadOwnedMailbox(t *testing.T) {
 	db := httpTestDB(t)
 	hash, err := auth.HashSecret("password123")
@@ -817,7 +993,7 @@ func TestGenerateEmailUsesRootReadyForExplicitDomain(t *testing.T) {
 	if blocked.Code != http.StatusBadRequest {
 		t.Fatalf("other api key private generate = %d: %s", blocked.Code, blocked.Body.String())
 	}
-	if !strings.Contains(blocked.Body.String(), "仅域名所有者或管理员") {
+	if !strings.Contains(blocked.Body.String(), "仅域名所有者") {
 		t.Fatalf("private access error should be explicit: %s", blocked.Body.String())
 	}
 }
@@ -1031,7 +1207,7 @@ func TestUserDailyLimitAppliesOnlyToPublicMailboxCreation(t *testing.T) {
 	}
 }
 
-func TestAdminBypassesPublicMailboxDailyQuota(t *testing.T) {
+func TestAdminSessionBypassesPublicMailboxDailyQuota(t *testing.T) {
 	db := httpTestDB(t)
 	hash, err := auth.HashSecret("password123")
 	if err != nil {
@@ -1064,11 +1240,14 @@ func TestAdminBypassesPublicMailboxDailyQuota(t *testing.T) {
 		t.Fatal(err)
 	}
 	router := testRouter(t, db)
-	_, plain, err := (auth.APIKeyService{DB: db}).CreateFor(&admin.ID, "admin-key", 20, 0, nil)
-	if err != nil {
-		t.Fatal(err)
+	login := perform(router, http.MethodPost, "/api/auth/login", map[string]any{
+		"email":    "admin@example.com",
+		"password": "password123",
+	}, nil)
+	if login.Code != http.StatusOK {
+		t.Fatalf("login = %d: %s", login.Code, login.Body.String())
 	}
-	headers := map[string]string{"X-API-Key": plain}
+	headers := sessionHeaders(login)
 
 	for _, prefix := range []string{"one", "two"} {
 		resp := perform(router, http.MethodPost, "/api/generate-email", map[string]any{
@@ -1076,7 +1255,7 @@ func TestAdminBypassesPublicMailboxDailyQuota(t *testing.T) {
 			"domain": "admin-public-quota.test",
 		}, headers)
 		if resp.Code != http.StatusCreated {
-			t.Fatalf("admin public generate %q = %d: %s", prefix, resp.Code, resp.Body.String())
+			t.Fatalf("admin session public generate %q = %d: %s", prefix, resp.Code, resp.Body.String())
 		}
 	}
 	var refreshed models.User
@@ -1085,6 +1264,61 @@ func TestAdminBypassesPublicMailboxDailyQuota(t *testing.T) {
 	}
 	if refreshed.PublicMailboxCreated != 2 || refreshed.PublicMailboxToday != 2 {
 		t.Fatalf("admin public counters = %d/%d, want 2/2", refreshed.PublicMailboxCreated, refreshed.PublicMailboxToday)
+	}
+}
+
+func TestAdminAPIKeyUsesPublicMailboxDailyQuota(t *testing.T) {
+	db := httpTestDB(t)
+	hash, err := auth.HashSecret("password123")
+	if err != nil {
+		t.Fatal(err)
+	}
+	admin := models.User{
+		Email:        "admin@example.com",
+		PasswordHash: hash,
+		Role:         models.UserRoleAdmin,
+		Enabled:      true,
+		DailyLimit:   1000,
+	}
+	if err := db.Create(&admin).Error; err != nil {
+		t.Fatal(err)
+	}
+	settings := models.SystemQuotaSettings{
+		ID:                          1,
+		UserDailyPublicMailboxLimit: 1,
+	}
+	if err := db.Create(&settings).Error; err != nil {
+		t.Fatal(err)
+	}
+	publicDomain := models.Domain{
+		Domain:     "admin-api-public-quota.test",
+		Mode:       models.DomainModePublic,
+		Active:     true,
+		MXVerified: true,
+	}
+	if err := db.Create(&publicDomain).Error; err != nil {
+		t.Fatal(err)
+	}
+	router := testRouter(t, db)
+	_, plain, err := (auth.APIKeyService{DB: db}).CreateFor(&admin.ID, "admin-key", 20, 0, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	headers := map[string]string{"X-API-Key": plain}
+
+	first := perform(router, http.MethodPost, "/api/generate-email", map[string]any{
+		"prefix": "one",
+		"domain": "admin-api-public-quota.test",
+	}, headers)
+	if first.Code != http.StatusCreated {
+		t.Fatalf("first admin api key public generate = %d: %s", first.Code, first.Body.String())
+	}
+	second := perform(router, http.MethodPost, "/api/generate-email", map[string]any{
+		"prefix": "two",
+		"domain": "admin-api-public-quota.test",
+	}, headers)
+	if second.Code != http.StatusTooManyRequests {
+		t.Fatalf("second admin api key public generate = %d: %s", second.Code, second.Body.String())
 	}
 }
 
@@ -1312,8 +1546,9 @@ func TestInboxPaginationAndMailboxSearch(t *testing.T) {
 		Success bool `json:"success"`
 		Data    struct {
 			Items []struct {
-				Email        string `json:"email"`
-				MessageCount int64  `json:"message_count"`
+				Email         string     `json:"email"`
+				MessageCount  int64      `json:"message_count"`
+				LastMessageAt *time.Time `json:"last_message_at"`
 			} `json:"items"`
 			Page       int   `json:"page"`
 			PerPage    int   `json:"per_page"`
@@ -1326,6 +1561,29 @@ func TestInboxPaginationAndMailboxSearch(t *testing.T) {
 	}
 	if mailboxBody.Data.Page != 2 || mailboxBody.Data.PerPage != 2 || mailboxBody.Data.Total != 3 || mailboxBody.Data.TotalPages != 2 || len(mailboxBody.Data.Items) != 1 {
 		t.Fatalf("unexpected mailbox pagination: %+v", mailboxBody.Data)
+	}
+	if mailboxBody.Data.Items[0].MessageCount != 0 || mailboxBody.Data.Items[0].LastMessageAt != nil {
+		t.Fatalf("second mailbox page stats = count %d last %v, want empty stats", mailboxBody.Data.Items[0].MessageCount, mailboxBody.Data.Items[0].LastMessageAt)
+	}
+	firstMailboxResponse := perform(router, http.MethodGet, "/api/mailboxes?q=page.test&page=1&per_page=2", nil, headers)
+	if firstMailboxResponse.Code != http.StatusOK {
+		t.Fatalf("first mailbox page response = %d: %s", firstMailboxResponse.Code, firstMailboxResponse.Body.String())
+	}
+	if err := json.Unmarshal(firstMailboxResponse.Body.Bytes(), &mailboxBody); err != nil {
+		t.Fatal(err)
+	}
+	foundAlphaStats := false
+	for _, item := range mailboxBody.Data.Items {
+		if item.Email != "alpha@page.test" {
+			continue
+		}
+		foundAlphaStats = true
+		if item.MessageCount != 3 || item.LastMessageAt == nil || !item.LastMessageAt.Equal(now.Add(2*time.Minute)) {
+			t.Fatalf("alpha mailbox stats = count %d last %v, want 3/%v", item.MessageCount, item.LastMessageAt, now.Add(2*time.Minute))
+		}
+	}
+	if !foundAlphaStats {
+		t.Fatalf("alpha mailbox not found in first page: %+v", mailboxBody.Data.Items)
 	}
 
 	pagedEmailResponse := perform(router, http.MethodGet, "/api/emails?email=alpha@page.test&page=2&per_page=2", nil, headers)
@@ -1359,6 +1617,78 @@ func TestInboxPaginationAndMailboxSearch(t *testing.T) {
 	}
 	if len(legacyEmailBody.Data) != 2 {
 		t.Fatalf("legacy email list length = %d", len(legacyEmailBody.Data))
+	}
+}
+
+func TestAdminDomainHealthPaginatesAndAggregatesCurrentPage(t *testing.T) {
+	db := httpTestDB(t)
+	hash, err := auth.HashSecret("password123")
+	if err != nil {
+		t.Fatal(err)
+	}
+	admin := models.User{Email: "admin@example.com", PasswordHash: hash, Role: models.UserRoleAdmin, Enabled: true}
+	owner := models.User{Email: "owner@example.com", PasswordHash: hash, Role: models.UserRoleUser, Enabled: true}
+	if err := db.Create(&admin).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&owner).Error; err != nil {
+		t.Fatal(err)
+	}
+	domains := []models.Domain{
+		{Domain: "a-critical.test", Mode: models.DomainModePrivate, OwnerID: &owner.ID, Active: true, MXVerified: false, VerificationToken: "a-token"},
+		{Domain: "b-critical.test", Mode: models.DomainModePublic, Active: true, MXVerified: false, VerificationToken: "b-token"},
+		{Domain: "c-warning.test", Mode: models.DomainModePublic, Active: false, MXVerified: true, VerificationToken: "c-token"},
+	}
+	if err := db.Create(&domains).Error; err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	for i := 0; i < 2; i++ {
+		message := models.Message{
+			ID:              "domain-health-message-" + strconv.Itoa(i+1),
+			Recipient:       "box@a-critical.test",
+			RecipientLocal:  "box",
+			RecipientDomain: "a-critical.test",
+			RootDomain:      "a-critical.test",
+			DomainID:        &domains[0].ID,
+			OwnerID:         &owner.ID,
+			FromAddress:     "sender@example.test",
+			Subject:         "health",
+			CreatedAt:       now.Add(time.Duration(i) * time.Minute),
+			ExpiresAt:       now.Add(time.Hour),
+		}
+		if err := db.Create(&message).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+	router := testRouter(t, db)
+	login := perform(router, http.MethodPost, "/api/auth/login", map[string]any{
+		"email":    "admin@example.com",
+		"password": "password123",
+	}, nil)
+	if login.Code != http.StatusOK {
+		t.Fatalf("login = %d: %s", login.Code, login.Body.String())
+	}
+	response := perform(router, http.MethodGet, "/api/admin/domain-health?page=1&per_page=1", nil, sessionHeaders(login))
+	if response.Code != http.StatusOK {
+		t.Fatalf("domain health = %d: %s", response.Code, response.Body.String())
+	}
+	var body struct {
+		Success bool                     `json:"success"`
+		Data    domainHealthListResponse `json:"data"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if body.Data.Total != 3 || body.Data.Page != 1 || body.Data.PerPage != 1 || body.Data.TotalPages != 3 || len(body.Data.Items) != 1 {
+		t.Fatalf("unexpected domain health pagination: %+v", body.Data)
+	}
+	item := body.Data.Items[0]
+	if item.Domain.Domain != "a-critical.test" || item.Severity != "critical" || item.Issue != "mx_failed" {
+		t.Fatalf("unexpected first health item: %+v", item)
+	}
+	if item.MessageCount != 2 || item.OwnerEmail != owner.Email {
+		t.Fatalf("health item aggregates = count %d owner %q, want 2/%q", item.MessageCount, item.OwnerEmail, owner.Email)
 	}
 }
 
@@ -1405,6 +1735,7 @@ func TestAvailableDomainsRequiresActorAndSeparatesModes(t *testing.T) {
 		{Domain: "owner-pending.test", Mode: models.DomainModePrivate, OwnerID: &owner.ID, Active: true},
 		{Domain: "owner-inactive.test", Mode: models.DomainModePrivate, OwnerID: &owner.ID, Active: false, MXVerified: true},
 		{Domain: "other-ready.test", Mode: models.DomainModePrivate, OwnerID: &other.ID, Active: true, MXVerified: true},
+		{Domain: "admin-ready.test", Mode: models.DomainModePrivate, OwnerID: &admin.ID, Active: true, MXVerified: true},
 	}
 	if err := db.Create(&domains).Error; err != nil {
 		t.Fatal(err)
@@ -1457,8 +1788,15 @@ func TestAvailableDomainsRequiresActorAndSeparatesModes(t *testing.T) {
 		t.Fatalf("available domains with admin api key = %d: %s", adminResponse.Code, adminResponse.Body.String())
 	}
 	_, adminPrivateNames := decodeAvailableDomainNames(t, adminResponse.Body.Bytes())
-	if !adminPrivateNames["owner-ready.test"] || !adminPrivateNames["other-ready.test"] {
+	if !adminPrivateNames["admin-ready.test"] || adminPrivateNames["owner-ready.test"] || adminPrivateNames["other-ready.test"] {
 		t.Fatalf("admin api key private domain visibility mismatch: %v", adminPrivateNames)
+	}
+	adminPrivateCreate := perform(router, http.MethodPost, "/api/generate-email", map[string]any{
+		"prefix": "blocked",
+		"domain": "owner-ready.test",
+	}, map[string]string{"X-API-Key": adminPlain})
+	if adminPrivateCreate.Code != http.StatusBadRequest {
+		t.Fatalf("admin api key using another user's private domain = %d: %s", adminPrivateCreate.Code, adminPrivateCreate.Body.String())
 	}
 
 	login := perform(router, http.MethodPost, "/api/auth/login", map[string]any{
@@ -2898,6 +3236,14 @@ func perform(handler http.Handler, method, path string, body map[string]any, hea
 	response := httptest.NewRecorder()
 	handler.ServeHTTP(response, request)
 	return response
+}
+
+func sessionHeaders(response *httptest.ResponseRecorder) map[string]string {
+	cookies := make([]string, 0, len(response.Result().Cookies()))
+	for _, cookie := range response.Result().Cookies() {
+		cookies = append(cookies, cookie.Name+"="+cookie.Value)
+	}
+	return map[string]string{"Cookie": strings.Join(cookies, "; ")}
 }
 
 func deleteDomainRequest(handler http.Handler, login *httptest.ResponseRecorder, id uint) *httptest.ResponseRecorder {

@@ -6,7 +6,10 @@ import (
 	"testing"
 
 	"gptmail/internal/auth"
+	"gptmail/internal/config"
 	"gptmail/internal/models"
+
+	"gorm.io/gorm"
 )
 
 func TestWebSessionOnlyRoutesRejectAPIKeyAndDoNotConsumeQuota(t *testing.T) {
@@ -95,6 +98,99 @@ func TestWebSessionOnlyRoutesRejectAPIKeyAndDoNotConsumeQuota(t *testing.T) {
 	if available.Code != http.StatusOK {
 		t.Fatalf("domains/available should remain API-key accessible, got %d: %s", available.Code, available.Body.String())
 	}
+}
+
+func TestSessionCookieWritesRequireSameOriginWhenBrowserSendsOrigin(t *testing.T) {
+	db := httpTestDB(t)
+	owner := createShareTestUser(t, db, "csrf-owner@example.test")
+	router := testRouterWithConfig(t, db, func(cfg *config.Config) {
+		cfg.PublicBaseURL = "https://console.example.test/app"
+	})
+	login := loginShareTestUser(t, router, owner.Email)
+	headers := cookieHeaders(login.Result().Cookies())
+
+	crossSiteAnnouncement := createCSRFTestAnnouncement(t, db, owner.ID, "cross-site")
+	headers["Origin"] = "https://evil.example.test"
+	blocked := perform(router, http.MethodPatch, "/api/announcements/"+uintPath(crossSiteAnnouncement.ID)+"/read", nil, headers)
+	if blocked.Code != http.StatusForbidden {
+		t.Fatalf("cross-site session write = %d, want 403: %s", blocked.Code, blocked.Body.String())
+	}
+	var reads int64
+	if err := db.Model(&models.AnnouncementRead{}).Where("announcement_id = ?", crossSiteAnnouncement.ID).Count(&reads).Error; err != nil {
+		t.Fatal(err)
+	}
+	if reads != 0 {
+		t.Fatalf("cross-site session write created %d announcement reads", reads)
+	}
+
+	samePublicBaseHeaders := cookieHeaders(login.Result().Cookies())
+	samePublicBaseHeaders["Origin"] = "https://console.example.test"
+	publicBaseAnnouncement := createCSRFTestAnnouncement(t, db, owner.ID, "public-base")
+	allowed := perform(router, http.MethodPatch, "/api/announcements/"+uintPath(publicBaseAnnouncement.ID)+"/read", nil, samePublicBaseHeaders)
+	if allowed.Code != http.StatusOK {
+		t.Fatalf("same PublicBaseURL origin session write = %d: %s", allowed.Code, allowed.Body.String())
+	}
+
+	sameHostRefererHeaders := cookieHeaders(login.Result().Cookies())
+	sameHostRefererHeaders["Referer"] = "http://example.com/settings"
+	hostAnnouncement := createCSRFTestAnnouncement(t, db, owner.ID, "host-referer")
+	hostAllowed := perform(router, http.MethodPatch, "/api/announcements/"+uintPath(hostAnnouncement.ID)+"/read", nil, sameHostRefererHeaders)
+	if hostAllowed.Code != http.StatusOK {
+		t.Fatalf("same Host referer session write = %d: %s", hostAllowed.Code, hostAllowed.Body.String())
+	}
+
+	schemeMismatchHeaders := cookieHeaders(login.Result().Cookies())
+	schemeMismatchHeaders["Origin"] = "http://example.com"
+	schemeMismatchHeaders["X-Forwarded-Proto"] = "https"
+	schemeMismatchAnnouncement := createCSRFTestAnnouncement(t, db, owner.ID, "scheme-mismatch")
+	schemeMismatchBlocked := perform(router, http.MethodPatch, "/api/announcements/"+uintPath(schemeMismatchAnnouncement.ID)+"/read", nil, schemeMismatchHeaders)
+	if schemeMismatchBlocked.Code != http.StatusForbidden {
+		t.Fatalf("scheme-mismatched same-host session write = %d, want 403: %s", schemeMismatchBlocked.Code, schemeMismatchBlocked.Body.String())
+	}
+
+	noBrowserOriginHeaders := cookieHeaders(login.Result().Cookies())
+	noOriginAnnouncement := createCSRFTestAnnouncement(t, db, owner.ID, "no-origin")
+	noOriginAllowed := perform(router, http.MethodPatch, "/api/announcements/"+uintPath(noOriginAnnouncement.ID)+"/read", nil, noBrowserOriginHeaders)
+	if noOriginAllowed.Code != http.StatusOK {
+		t.Fatalf("session write without browser origin = %d: %s", noOriginAllowed.Code, noOriginAllowed.Body.String())
+	}
+}
+
+func TestAPIKeyWritesIgnoreBrowserOriginCSRFCheck(t *testing.T) {
+	db := httpTestDB(t)
+	owner := createShareTestUser(t, db, "csrf-api-key-owner@example.test")
+	createShareTestDomain(t, db, "csrf-api-key.test", models.DomainModePrivate, &owner.ID)
+	_, plain, err := (auth.APIKeyService{DB: db}).CreateFor(&owner.ID, "csrf-api-key", 20, 0, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	router := testRouterWithConfig(t, db, func(cfg *config.Config) {
+		cfg.PublicBaseURL = "https://console.example.test"
+	})
+
+	response := perform(router, http.MethodPost, "/api/generate-email", map[string]any{
+		"prefix": "allowed",
+		"domain": "csrf-api-key.test",
+	}, map[string]string{
+		"X-API-Key": plain,
+		"Origin":    "https://evil.example.test",
+	})
+	if response.Code != http.StatusCreated {
+		t.Fatalf("api key write with cross-site origin = %d: %s", response.Code, response.Body.String())
+	}
+}
+
+func createCSRFTestAnnouncement(t *testing.T, db *gorm.DB, adminID uint, title string) models.Announcement {
+	t.Helper()
+	announcement := models.Announcement{
+		Title:   title,
+		Content: "csrf boundary test",
+		AdminID: adminID,
+	}
+	if err := db.Create(&announcement).Error; err != nil {
+		t.Fatal(err)
+	}
+	return announcement
 }
 
 func TestInvalidAPIKeyAttemptsArePreAuthRateLimited(t *testing.T) {

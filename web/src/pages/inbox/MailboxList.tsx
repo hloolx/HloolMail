@@ -14,6 +14,8 @@ type MailboxListProps = {
   page: number;
   totalPages: number;
   isLoading: boolean;
+  error: unknown;
+  onRetry: () => void;
   confirmingId: number | null;
   onSearchChange: (value: string) => void;
   onPageChange: (page: number) => void;
@@ -31,6 +33,8 @@ export function MailboxList({
   page,
   totalPages,
   isLoading,
+  error,
+  onRetry,
   confirmingId,
   onSearchChange,
   onPageChange,
@@ -38,7 +42,7 @@ export function MailboxList({
   onDeleteMailbox,
   setConfirmingId
 }: MailboxListProps) {
-  if (!isLoading && !search && total <= 0) return null;
+  if (!isLoading && !error && !search && total <= 0) return null;
 
   return (
     <div className="inbox-list-section inbox-mailbox-list-section">
@@ -61,7 +65,9 @@ export function MailboxList({
           </IconButton>
         )}
       </div>
-      {isLoading ? (
+      {error ? (
+        <InboxListError label={readErrorMessage(error)} actionLabel={text.common.refresh} onRetry={onRetry} />
+      ) : isLoading ? (
         <EmptyState label={text.common.loading} />
       ) : items.length > 0 ? (
         <div className="inbox-scroll-list inbox-mailbox-list" role="list">
@@ -88,6 +94,21 @@ export function MailboxList({
       />
     </div>
   );
+}
+
+function InboxListError({ label, actionLabel, onRetry }: { label: string; actionLabel: string; onRetry: () => void }) {
+  return (
+    <div className="inbox-list-error" role="alert">
+      <span>{label}</span>
+      <button className="btn-secondary btn-sm" type="button" onClick={onRetry}>
+        {actionLabel}
+      </button>
+    </div>
+  );
+}
+
+function readErrorMessage(error: unknown) {
+  return error instanceof Error && error.message ? error.message : 'Request failed';
 }
 
 type MailboxRowProps = {

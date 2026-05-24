@@ -126,6 +126,8 @@ func TestAutoMigrateCreatesIntegrityConstraints(t *testing.T) {
 	if got := columnDefault(t, database, "share_links", "resource_type"); got != models.ShareResourceTypeMailbox {
 		t.Fatalf("share_links.resource_type default = %q, want %q", got, models.ShareResourceTypeMailbox)
 	}
+	assertIndex(t, database, "messages", "idx_messages_root_domain")
+	assertIndex(t, database, "messages", "idx_messages_mailbox_created")
 }
 
 func TestAutoMigrateUpgradesLegacyShareLinksForMailboxShares(t *testing.T) {
@@ -669,4 +671,11 @@ func assertForeignKey(t *testing.T, database *gorm.DB, table string, from string
 		}
 	}
 	t.Fatalf("%s.%s foreign key to %s not found: %+v", table, from, targetTable, keys)
+}
+
+func assertIndex(t *testing.T, database *gorm.DB, table, index string) {
+	t.Helper()
+	if !database.Migrator().HasIndex(table, index) {
+		t.Fatalf("%s index %s not found", table, index)
+	}
 }

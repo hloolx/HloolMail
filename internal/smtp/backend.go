@@ -37,6 +37,14 @@ type acceptedRecipient struct {
 	MailboxID *uint
 }
 
+const (
+	maxAttachmentFilenameLength         = 500
+	maxAttachmentContentTypeLength      = 255
+	maxAttachmentDispositionLength      = 40
+	maxAttachmentContentIDLength        = 255
+	maxAttachmentTransferEncodingLength = 40
+)
+
 func (b *Backend) NewSession(_ *gosmtp.Conn) (gosmtp.Session, error) {
 	return &Session{service: b.Service}, nil
 }
@@ -107,6 +115,7 @@ func (s *Session) Data(r io.Reader) error {
 	}
 	parsed, err := mailparser.ParseWithOptions(raw, mailparser.ParseOptions{
 		MaxAttachmentBytes: maxAttachmentBytes(s.service.Config.MaxAttachmentBytes, s.service.Config.MaxMessageBytes),
+		MaxBodyBytes:       s.service.Config.MaxMessageBytes,
 	})
 	if err != nil {
 		if errors.Is(err, mailparser.ErrAttachmentTooLarge) {
@@ -177,11 +186,11 @@ func createMessageAttachments(tx *gorm.DB, messageID string, parsed []mailparser
 			ID:               uuid.NewString(),
 			MessageID:        messageID,
 			Sequence:         sequence,
-			Filename:         attachment.Filename,
-			ContentType:      attachment.ContentType,
-			Disposition:      attachment.Disposition,
-			ContentID:        attachment.ContentID,
-			TransferEncoding: attachment.TransferEncoding,
+			Filename:         truncateString(attachment.Filename, maxAttachmentFilenameLength),
+			ContentType:      truncateString(attachment.ContentType, maxAttachmentContentTypeLength),
+			Disposition:      truncateString(attachment.Disposition, maxAttachmentDispositionLength),
+			ContentID:        truncateString(attachment.ContentID, maxAttachmentContentIDLength),
+			TransferEncoding: truncateString(attachment.TransferEncoding, maxAttachmentTransferEncodingLength),
 			SizeBytes:        attachment.SizeBytes,
 			SHA256:           attachment.SHA256,
 			Inline:           attachment.Inline,
@@ -225,3 +234,17 @@ func readLimited(r io.Reader, max int64) ([]byte, error) {
 }
 
 var errMessageTooLarge = errors.New("message exceeds size limit")
+
+func truncateString(value string, maxRunes int) string {
+	if maxRunes <= 0 || value == "" {
+		return value
+	}
+	if len(value) <= maxRunes {
+		return value
+	}
+	runes := []rune(value)
+	if len(runes) <= maxRunes {
+		return value
+	}
+	return string(runes[:maxRunes])
+}

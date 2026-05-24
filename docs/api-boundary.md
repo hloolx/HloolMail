@@ -6,6 +6,11 @@ This document is intentionally about boundaries, not implementation. It records 
 current router surface and the API contract decisions that later phases must
 preserve.
 
+Security model notes that are intentionally broader than route ownership live
+in [security-model.md](security-model.md). In particular, API key reveal is a
+deliberate Web Console capability and should be audited as sensitive operator
+activity rather than treated as accidental API exposure.
+
 Phase 8 update: share is now documented as mailbox-only. API-key automation may
 create a mailbox share during `POST /api/generate-email`; share-link management
 remains web-session only, public shared mailbox reads skip API-key
@@ -75,7 +80,7 @@ API-key automation OpenAPI group:
 | SSE | Current: `GET /api/inbox-stream`, `GET /api/notification-stream`, `GET /api/announcement-stream` | Session-only web realtime. Excluded from OpenAPI automation. |
 | Stats charts | Current: `GET /api/stats/timeseries` | Session-only Web Console chart data. API-key automation should not access it. |
 | Domain management | Current: `/api/domains`, `/api/domains/request`, `/api/domains/batch-request`, `/api/domains/check-mx`, `/api/domains/:id`, `/api/domains/:id/mx-auto-retry` | Web-console task, except `GET /api/domains/available` which is API-key automation. |
-| API-key management | Current: `/api/api-keys`, `/api/api-keys/:id`, `/api/api-keys/:id/reveal` | Session-only; API keys cannot create or manage API keys. |
+| API-key management | Current: `/api/api-keys`, `/api/api-keys/:id`, `/api/api-keys/:id/reveal` | Session-only; API keys cannot create, manage, or reveal API keys. Reveal is intentional Web Console behavior; see `docs/security-model.md`. |
 | Admin | Current: `/api/admin/*`, `/api/users*` | Admin/session-only. |
 | Notifications and announcements | Current: `/api/notifications*`, `/api/announcements*` | Web-console state, not automation API. |
 | Auth and account | Current: `/api/auth/*`, `/api/user/oauth-identities*`, `/api/user/passkeys*`, `/api/oauth/*` | Browser account/session flows. |

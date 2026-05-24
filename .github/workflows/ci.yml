@@ -1,0 +1,55 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Run Go tests
+        run: go test ./...
+
+      - name: Run race tests for critical packages
+        run: go test -race ./internal/http ./internal/auth ./internal/webhook ./internal/events ./internal/jobs
+
+      - name: Build web console
+        working-directory: web
+        run: |
+          npm ci
+          node scripts/install-native-build-deps.cjs
+          npm run build
+
+      - name: Validate Docker Compose config
+        env:
+          POSTGRES_PASSWORD: ci-postgres-password
+        run: docker compose config
+
+      - name: Build Docker image
+        run: docker build --target api .

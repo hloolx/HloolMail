@@ -23,7 +23,11 @@ func (h *Handler) listUsers(c *gin.Context) {
 
 	db := h.DB.Model(&models.User{})
 	if search != "" {
-		db = db.Where("LOWER(email) LIKE ?", "%"+strings.ToLower(search)+"%")
+		like := "%" + strings.ToLower(search) + "%"
+		db = db.Where(
+			"LOWER(email) LIKE ? OR EXISTS (SELECT 1 FROM api_keys WHERE api_keys.owner_id = users.id AND (LOWER(api_keys.name) LIKE ? OR LOWER(api_keys.key_prefix) LIKE ?))",
+			like, like, like,
+		)
 	}
 	if role == models.UserRoleAdmin || role == models.UserRoleUser {
 		db = db.Where("role = ?", role)
@@ -57,6 +61,76 @@ func (h *Handler) listUsers(c *gin.Context) {
 		Total:      total,
 		TotalPages: totalPages,
 	})
+}
+
+func (h *Handler) listUserAPIKeys(c *gin.Context) {
+	if _, ok := h.requireAdminSession(c); !ok {
+		return
+	}
+	userID, err := auth.ParseUintID(c.Param("id"))
+	if err != nil {
+		fail(c, http.StatusBadRequest, err.Error())
+		return
+	}
+	var user models.User
+	if err := h.DB.First(&user, "id = ?", userID).Error; err != nil {
+		fail(c, http.StatusNotFound, "user not found")
+		return
+	}
+	page := parsePage(c.Query("page"))
+	pageSize := parseLimit(c.Query("page_size"), 10, 100)
+	search := strings.TrimSpace(c.Query("search"))
+
+	query := h.DB.Model(&models.APIKey{}).Where("owner_id = ?", user.ID)
+	if search != "" {
+		like := "%" + strings.ToLower(search) + "%"
+		query = query.Where("LOWER(name) LIKE ? OR LOWER(key_prefix) LIKE ?", like, like)
+	}
+	var total int64
+	if err := query.Session(&gorm.Session{}).Count(&total).Error; err != nil {
+		fail(c, http.StatusInternalServerError, err.Error())
+		return
+	}
+	totalPages := pageCount(total, pageSize)
+	if page > totalPages {
+		page = totalPages
+	}
+
+	var keys []models.APIKey
+	if err := query.Order("created_at desc").Offset((page - 1) * pageSize).Limit(pageSize).Find(&keys).Error; err != nil {
+		fail(c, http.StatusInternalServerError, err.Error())
+		return
+	}
+	ok(c, paginatedResponse[models.APIKey]{
+		Items:      keys,
+		Page:       page,
+		PerPage:    pageSize,
+		Total:      total,
+		TotalPages: totalPages,
+	})
+}
+
+func (h *Handler) revealUserAPIKey(c *gin.Context) {
+	if _, ok := h.requireAdminSession(c); !ok {
+		return
+	}
+	userID, err := auth.ParseUintID(c.Param("id"))
+	if err != nil {
+		fail(c, http.StatusBadRequest, err.Error())
+		return
+	}
+	keyID, err := auth.ParseUintID(c.Param("key_id"))
+	if err != nil {
+		fail(c, http.StatusBadRequest, err.Error())
+		return
+	}
+	var key models.APIKey
+	if err := h.DB.First(&key, "id = ? AND owner_id = ?", keyID, userID).Error; err != nil {
+		fail(c, http.StatusNotFound, "api key not found")
+		return
+	}
+	h.audit("api_key.reveal", actor(c), key.KeyPrefix, "admin user key view")
+	ok(c, gin.H{"plain_key": key.KeyValue})
 }
 
 func (h *Handler) createUser(c *gin.Context) {

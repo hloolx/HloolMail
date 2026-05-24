@@ -6,12 +6,14 @@ import { parseFromAddress } from '../../api';
 import { useBrowserNotification } from '../../hooks/useBrowserNotification';
 import { useText } from '../../locales';
 import { useAppStore } from '../../store';
-import { sseStream } from '../../lib/sse';
+import { SSEAuthError, sseStream } from '../../lib/sse';
 
 type ActiveMailboxStreamOptions = {
   email: string;
   onMessage: () => void;
 };
+
+const OUTER_RECONNECT_LIMIT = 3;
 
 export function useActiveMailboxStream({ email, onMessage }: ActiveMailboxStreamOptions) {
   const queryClient = useQueryClient();
@@ -21,6 +23,7 @@ export function useActiveMailboxStream({ email, onMessage }: ActiveMailboxStream
   const { notify } = useBrowserNotification();
   const [sseGen, setSseGen] = useState(0);
   const sseErrorCooldownRef = useRef(0);
+  const outerReconnectsRef = useRef(0);
   const onMessageRef = useRef(onMessage);
   const labelsRef = useRef({
     toastNewMail: text.toast.newMail,
@@ -36,6 +39,10 @@ export function useActiveMailboxStream({ email, onMessage }: ActiveMailboxStream
   };
 
   useEffect(() => {
+    outerReconnectsRef.current = 0;
+  }, [email]);
+
+  useEffect(() => {
     if (!email) return undefined;
     const controller = new AbortController();
     let reconnectTimer: ReturnType<typeof setTimeout> | undefined;
@@ -44,6 +51,7 @@ export function useActiveMailboxStream({ email, onMessage }: ActiveMailboxStream
     void (async () => {
       try {
         for await (const event of sseStream<InboxSSEEvent>(url.toString(), { signal: controller.signal })) {
+          outerReconnectsRef.current = 0;
           onMessageRef.current();
           queryClient.invalidateQueries({ queryKey: ['emails'] });
           queryClient.invalidateQueries({ queryKey: ['mailboxes'] });
@@ -68,6 +76,8 @@ export function useActiveMailboxStream({ email, onMessage }: ActiveMailboxStream
         }
       } catch (error) {
         if (controller.signal.aborted) return;
+        if (error instanceof SSEAuthError || outerReconnectsRef.current >= OUTER_RECONNECT_LIMIT) return;
+        outerReconnectsRef.current += 1;
         const now = Date.now();
         const elapsed = now - sseErrorCooldownRef.current;
         if (elapsed >= 30000) {
