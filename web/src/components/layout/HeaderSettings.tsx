@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { ChevronDown, Monitor, Moon, RefreshCw, SlidersHorizontal, Sun } from 'lucide-react';
+import { AlertCircle, CheckCircle2, ChevronDown, ExternalLink, Monitor, Moon, RefreshCw, SlidersHorizontal, Sparkles, Sun } from 'lucide-react';
 import type { User } from '../../api';
 import { api } from '../../api';
 import { useText } from '../../locales';
@@ -27,8 +27,13 @@ export function HeaderSettings({ user }: { user?: User }) {
   const menuRef = useRef<HTMLDivElement>(null);
   const [versionInfo, setVersionInfo] = useState<VersionInfo | null>(null);
   const [updateInfo, setUpdateInfo] = useState<UpdateInfo | null>(null);
+  const [updateCheckFailed, setUpdateCheckFailed] = useState(false);
   const [checkingUpdate, setCheckingUpdate] = useState(false);
   const isAdmin = user?.role === 'admin';
+  const currentVersion = versionInfo?.version || updateInfo?.currentVersion;
+  const currentVersionLabel = currentVersion ? `v${currentVersion}` : '...';
+  const latestVersionLabel = updateInfo?.latestVersion ? `v${updateInfo.latestVersion}` : '';
+  const updateStatus = updateCheckFailed ? 'error' : updateInfo?.updateAvailable ? 'available' : updateInfo ? 'current' : 'idle';
 
   const themeOptions: { value: ThemeMode; label: string; icon: typeof Sun }[] = [
     { value: 'system', label: text.settings.system, icon: Monitor },
@@ -61,11 +66,12 @@ export function HeaderSettings({ user }: { user?: User }) {
 
   const checkUpdate = useCallback(async () => {
     setCheckingUpdate(true);
+    setUpdateCheckFailed(false);
     try {
       const result = await api<UpdateInfo>('/api/version/check', { method: 'GET' });
       setUpdateInfo(result);
     } catch {
-      // ignore check failures
+      setUpdateCheckFailed(true);
     } finally {
       setCheckingUpdate(false);
     }
@@ -111,33 +117,59 @@ export function HeaderSettings({ user }: { user?: User }) {
               </span>
             </label>
             {isAdmin && (
-              <div className="settings-row">
-                <span className="settings-label">{text.settings.version}</span>
-                <span className="settings-version-row">
-                  <span className="settings-version-value">
-                    {versionInfo ? `v${versionInfo.version}` : '...'}
-                  </span>
-                  <button
-                    className={`settings-version-refresh ${checkingUpdate ? 'settings-version-refresh-spin' : ''}`}
-                    title={text.settings.checkUpdate}
-                    aria-label={text.settings.checkUpdate}
-                    disabled={checkingUpdate}
-                    onClick={checkUpdate}
-                  >
-                    <RefreshCw size={12} />
-                  </button>
-                  {updateInfo?.updateAvailable && (
-                    <a
-                      className="settings-version-update"
-                      href={updateInfo.releaseURL || 'https://github.com/hloolx/HloolMail/releases'}
-                      target="_blank"
-                      rel="noopener noreferrer"
+              <>
+                <div className="settings-row">
+                  <span className="settings-label">{text.settings.version}</span>
+                  <span className="settings-version-row">
+                    <span className="settings-version-value">{currentVersionLabel}</span>
+                    <button
+                      className="settings-version-refresh"
+                      title={text.settings.checkUpdate}
+                      aria-label={text.settings.checkUpdate}
+                      disabled={checkingUpdate}
+                      onClick={checkUpdate}
                     >
-                      {text.settings.updateAvailable}
-                    </a>
-                  )}
-                </span>
-              </div>
+                      <RefreshCw className={checkingUpdate ? 'settings-version-refresh-spin' : undefined} size={12} />
+                    </button>
+                  </span>
+                </div>
+                {updateStatus !== 'idle' && (
+                  <div className={`settings-version-card settings-version-card-${updateStatus}`}>
+                    <span className="settings-version-card-icon" aria-hidden>
+                      {updateStatus === 'available' ? <Sparkles size={15} /> : updateStatus === 'error' ? <AlertCircle size={15} /> : <CheckCircle2 size={15} />}
+                    </span>
+                    <span className="settings-version-card-copy">
+                      <strong>
+                        {updateStatus === 'available'
+                          ? text.settings.updateReadyTitle.replace('{version}', latestVersionLabel)
+                          : updateStatus === 'error'
+                            ? text.settings.updateCheckFailed
+                            : text.settings.updateCurrentTitle}
+                      </strong>
+                      <small>
+                        {updateStatus === 'available'
+                          ? text.settings.updateReadyDesc
+                              .replace('{current}', currentVersionLabel)
+                              .replace('{latest}', latestVersionLabel)
+                          : updateStatus === 'error'
+                            ? text.settings.updateCheckFailedDesc
+                            : text.settings.updateCurrentDesc.replace('{version}', currentVersionLabel)}
+                      </small>
+                    </span>
+                    {updateStatus === 'available' && (
+                      <a
+                        className="settings-version-card-action"
+                        href={updateInfo?.releaseURL || 'https://github.com/hloolx/HloolMail/releases'}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                      >
+                        <span>{text.settings.viewRelease}</span>
+                        <ExternalLink size={13} />
+                      </a>
+                    )}
+                  </div>
+                )}
+              </>
             )}
           </div>
 

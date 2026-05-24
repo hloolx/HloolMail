@@ -992,6 +992,37 @@
   font-size: 0.74rem;
 }
 
+.created-key-notices {
+  display: grid;
+  grid-column: 1 / -1;
+  gap: 0.45rem;
+  border-top: 1px solid color-mix(in srgb, var(--good) 24%, var(--border));
+  padding-top: 0.65rem;
+}
+
+.created-key-notice {
+  display: grid;
+  grid-template-columns: 1rem minmax(0, 1fr);
+  align-items: start;
+  gap: 0.48rem;
+  color: var(--foreground);
+  font-size: 0.75rem;
+  line-height: 1.55;
+}
+
+.created-key-notice svg {
+  margin-top: 0.1rem;
+  color: var(--accent);
+}
+
+.created-key-notice-warning svg {
+  color: var(--bad);
+}
+
+.created-key-notice p {
+  margin: 0;
+}
+
 .status-pill,
 .status-dot,
 .badge {

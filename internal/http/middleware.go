@@ -151,7 +151,8 @@ func isSessionOnlyWebPath(path string) bool {
 		isSessionOnlyNotificationPath(path) ||
 		isSessionOnlyAnnouncementPath(path) ||
 		isSessionOnlyStatsPath(path) ||
-		isSessionOnlyDomainPath(path)
+		isSessionOnlyDomainPath(path) ||
+		isSessionOnlyVersionCheckPath(path)
 }
 
 func isSessionOnlyAnnouncementPath(path string) bool {
@@ -167,6 +168,10 @@ func isSessionOnlyDomainPath(path string) bool {
 		return false
 	}
 	return path == "/api/domains" || strings.HasPrefix(path, "/api/domains/")
+}
+
+func isSessionOnlyVersionCheckPath(path string) bool {
+	return path == "/api/version/check"
 }
 
 func isSessionOnlyManagementPath(path string) bool {

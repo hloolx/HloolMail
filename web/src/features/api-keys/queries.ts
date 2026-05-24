@@ -1,8 +1,9 @@
 import { useQuery } from '@tanstack/react-query';
 import { api, patchJSON, postJSON } from '../../api';
-import type { APIKey, CreateApiKeyPayload, CreateApiKeyResponse, RevealApiKeyResponse } from './types';
+import type { APIKey, CreateApiKeyPayload, CreateApiKeyResponse, MailboxStats, RevealApiKeyResponse } from './types';
 
 export const apiKeysQueryKey = ['api-keys'] as const;
+export const apiKeyMailboxStatsQueryKey = ['api-keys', 'mailbox-stats'] as const;
 
 export type DeleteApiKeysResult = {
   deleted: APIKey[];
@@ -21,8 +22,21 @@ export function useApiKeysQuery() {
   });
 }
 
+export function useApiKeyMailboxStatsQuery() {
+  return useQuery({
+    queryKey: apiKeyMailboxStatsQueryKey,
+    queryFn: fetchApiKeyMailboxStats,
+    retry: false,
+    staleTime: 30_000
+  });
+}
+
 export function fetchApiKeys() {
   return api<APIKey[]>('/api/api-keys');
+}
+
+export function fetchApiKeyMailboxStats() {
+  return api<MailboxStats>('/api/mailboxes/stats');
 }
 
 export function createApiKey(payload: CreateApiKeyPayload) {

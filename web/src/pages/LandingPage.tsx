@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import type { FormEvent, KeyboardEvent } from 'react';
 import { useMutation, useQuery } from '@tanstack/react-query';
-import { ArrowRight, Bot, Check, CircleUserRound, Code2, Copy as CopyIcon, Fingerprint, Github, Globe2, Home, Inbox, KeyRound, LockKeyhole, MailCheck, MailPlus, Network, PackageCheck, RefreshCcw, Share2, ShieldCheck, Sparkles, Terminal, Users, Zap, type LucideIcon } from 'lucide-react';
+import { ArrowRight, Bot, Check, CircleAlert, CircleUserRound, Code2, Copy as CopyIcon, Fingerprint, Github, Globe2, Home, Inbox, KeyRound, LockKeyhole, MailCheck, MailPlus, Network, PackageCheck, RefreshCcw, Share2, Sparkles, Terminal, Users, Zap, type LucideIcon } from 'lucide-react';
 import { toast } from 'sonner';
 import type { InstallStatus, User } from '../api';
 import { api, postJSON } from '../api';
@@ -86,9 +86,11 @@ export function LandingPage({ status, onDone, authMode = 'home', initialMode = '
   const turnstileEnabled = Boolean(loginSettings.data?.turnstile_enabled && loginSettings.data?.turnstile_site_key);
   const turnstileSiteKey = loginSettings.data?.turnstile_site_key || '';
   const passkeyEnabled = !!loginSettings.data?.passkey_enabled;
+  const oauthRegistrationOpen = loginSettings.data ? loginSettings.data.registration_open !== false : true;
   const emailRegistrationAvailable = loginSettings.data
     ? loginSettings.data.registration_open !== false && loginSettings.data.email_registration_enabled !== false
     : true;
+  const oauthError = isAuthPage ? oauthErrorFromLocation() : null;
   const isRegister = mode === 'register';
   const isVerificationStep = isRegister && verification !== null;
   const captchaRequired = isRegister && !isVerificationStep && loginSettings.isSuccess && !turnstileEnabled;
@@ -174,6 +176,10 @@ export function LandingPage({ status, onDone, authMode = 'home', initialMode = '
     setAuthFieldErrors({});
     resetTurnstile();
   }, [emailRegistrationAvailable, resetTurnstile]);
+
+  const clearOAuthError = useCallback(() => {
+    window.location.hash = '#/login';
+  }, []);
 
   const focusAuthTab = useCallback((nextMode: 'login' | 'register') => {
     const ref = nextMode === 'login' ? loginTabRef : registerTabRef;
@@ -382,6 +388,7 @@ export function LandingPage({ status, onDone, authMode = 'home', initialMode = '
   });
   const pending = login.isPending || register.isPending || verifyRegister.isPending || passkeyLogin.isPending;
   const registerCaptchaBlocked = captchaRequired && (registerCaptcha.isLoading || !registerCaptcha.data?.captcha_id);
+  const oauthErrorProviderName = oauthError?.provider ? oauthProviderDisplayName(oauthError.provider) : text.oauth.title;
   const focusAuthField = (field: keyof AuthFieldErrors) => {
     const idByField: Record<keyof AuthFieldErrors, string> = {
       email: 'auth-email',
@@ -488,8 +495,8 @@ export function LandingPage({ status, onDone, authMode = 'home', initialMode = '
                     {text.login.primaryAction}
                   </button>
                 )}
-                <a className="btn-secondary" href="#features">
-                  <ShieldCheck size={16} />
+                <a className="btn-secondary" href="https://github.com/hloolx/HloolMail" target="_blank" rel="noopener noreferrer">
+                  <Github size={16} />
                   {text.login.secondaryAction}
                 </a>
               </div>
@@ -570,6 +577,21 @@ export function LandingPage({ status, onDone, authMode = 'home', initialMode = '
             <h2>{isVerificationStep ? text.login.verificationTitle : isRegister ? text.login.registerTitle : text.login.title}</h2>
             <p>{isVerificationStep ? text.login.verificationDesc.replace('{email}', email.trim()) : isRegister ? text.login.registerDesc : text.login.desc}</p>
           </div>
+          {oauthError?.code === 'registration_closed' && (
+            <div className="oauth-error-alert" role="alert">
+              <span className="oauth-error-alert-icon">
+                <CircleAlert size={18} aria-hidden="true" />
+              </span>
+              <div className="oauth-error-alert-content">
+                <h3>{text.login.oauthRegistrationClosedTitle}</h3>
+                <p>{text.login.oauthRegistrationClosedDesc.replace('{provider}', oauthErrorProviderName)}</p>
+                <button className="btn-secondary" type="button" onClick={clearOAuthError}>
+                  <Home size={15} aria-hidden="true" />
+                  {text.login.oauthRegistrationClosedAction}
+                </button>
+              </div>
+            </div>
+          )}
           <form className="auth-form" onSubmit={submit}>
             {isVerificationStep ? (
               <>
@@ -710,7 +732,12 @@ export function LandingPage({ status, onDone, authMode = 'home', initialMode = '
               <div className="oauth-login-actions">
                 {(oauthProviders.data || []).map((provider) => {
                   const Icon = provider.provider === 'github' ? Github : CircleUserRound;
-                  const actionLabel = (isRegister ? text.oauth.register_with : text.oauth.login_with).replace('{provider}', provider.name);
+                  const actionTemplate = isRegister
+                    ? text.oauth.register_with
+                    : oauthRegistrationOpen
+                      ? text.oauth.continue_with
+                      : text.oauth.login_with;
+                  const actionLabel = actionTemplate.replace('{provider}', provider.name);
                   return (
                     <button
                       className="oauth-login-button"
@@ -942,6 +969,37 @@ export function LandingPage({ status, onDone, authMode = 'home', initialMode = '
       )}
     </div>
   );
+}
+
+type OAuthErrorState = {
+  code: string;
+  provider: string;
+};
+
+function oauthErrorFromLocation(): OAuthErrorState | null {
+  if (typeof window === 'undefined') return null;
+
+  const fromSearch = oauthErrorFromParams(new URLSearchParams(window.location.search));
+  if (fromSearch) return fromSearch;
+
+  const queryStart = window.location.hash.indexOf('?');
+  if (queryStart < 0) return null;
+  return oauthErrorFromParams(new URLSearchParams(window.location.hash.slice(queryStart + 1)));
+}
+
+function oauthErrorFromParams(params: URLSearchParams): OAuthErrorState | null {
+  const code = params.get('oauth_error');
+  if (!code) return null;
+  return {
+    code,
+    provider: params.get('oauth_provider') || ''
+  };
+}
+
+function oauthProviderDisplayName(provider: string) {
+  if (provider === 'github') return 'GitHub';
+  if (provider === 'linuxdo') return 'Linux.do';
+  return provider;
 }
 
 type LandingStatProps = {

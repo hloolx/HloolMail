@@ -1,11 +1,11 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Database, Globe2, Inbox, KeyRound, Play, RefreshCw, Save, ShieldAlert, Users } from 'lucide-react';
+import { Database, Globe2, Inbox, KeyRound, Play, RefreshCw, Save, ShieldAlert, Trash2, Users } from 'lucide-react';
 import { toast } from 'sonner';
 import { api, patchJSON, postJSON } from '../api';
 import type { PaginatedResponse } from '../api';
 import type { AdminDomainHealth, AdminQuotaAlert, AdminStats, DomainCheckRun, DomainCheckRunsPage, DomainCheckSettings } from '../types';
-import { domainModeLabel, formatDomainExpiry, relativeTime } from '../lib/display';
+import { formatDomainExpiry, relativeTime } from '../lib/display';
 import { notifySuccess } from '../lib/feedback';
 import { useAppStore } from '../store';
 import { currentText, useText } from '../locales';
@@ -182,17 +182,23 @@ export function AdminPage() {
     }
   });
 
-  const disableDomain = useMutation({
-    mutationFn: (domain: AdminDomainHealth) => {
-      if (!window.confirm(text.admin.domainHealth.disableConfirm.replace('{domain}', domain.domain))) {
+  const updateDomainMode = useMutation({
+    mutationFn: ({ domain, mode }: { domain: AdminDomainHealth; mode: AdminDomainHealth['mode'] }) => {
+      const confirmText = mode === 'private'
+        ? text.admin.domainHealth.privateConfirm
+        : text.admin.domainHealth.publicConfirm;
+      if (!window.confirm(confirmText.replace('{domain}', domain.domain))) {
         throw new Error('Canceled');
       }
-      return patchJSON(`/api/domains/${domain.id}`, { active: false });
+      return patchJSON(`/api/domains/${domain.id}`, { mode });
     },
-    onSuccess: () => {
+    onSuccess: (_, variables) => {
       refreshAdminData();
       queryClient.invalidateQueries({ queryKey: ['domains-all'] });
-      notifySuccess(text.admin.domainHealth.disableDone, { origin: domainHealthFeedbackOriginRef.current });
+      const message = variables.mode === 'private'
+        ? text.admin.domainHealth.makePrivateDone
+        : text.admin.domainHealth.makePublicDone;
+      notifySuccess(message, { origin: domainHealthFeedbackOriginRef.current });
       domainHealthFeedbackOriginRef.current = null;
     },
     onError: (error) => {
@@ -201,17 +207,18 @@ export function AdminPage() {
     }
   });
 
-  const makePrivate = useMutation({
+  const deleteDomain = useMutation({
     mutationFn: (domain: AdminDomainHealth) => {
-      if (!window.confirm(text.admin.domainHealth.privateConfirm.replace('{domain}', domain.domain))) {
+      if (!window.confirm(text.admin.domainHealth.deleteConfirm.replace('{domain}', domain.domain))) {
         throw new Error('Canceled');
       }
-      return patchJSON(`/api/domains/${domain.id}`, { mode: 'private' });
+      return api(`/api/domains/${domain.id}`, { method: 'DELETE' });
     },
     onSuccess: () => {
       refreshAdminData();
       queryClient.invalidateQueries({ queryKey: ['domains-all'] });
-      notifySuccess(text.admin.domainHealth.makePrivateDone, { origin: domainHealthFeedbackOriginRef.current });
+      queryClient.invalidateQueries({ queryKey: ['domains-available'] });
+      notifySuccess(text.admin.domainHealth.deleteDone, { origin: domainHealthFeedbackOriginRef.current });
       domainHealthFeedbackOriginRef.current = null;
     },
     onError: (error) => {
@@ -478,11 +485,13 @@ export function AdminPage() {
             emptyLabel={text.admin.domainHealth.empty}
             columns={[
               { key: 'domain', header: text.admin.domainHealth.colDomain, minWidth: '14rem' },
+              { key: 'owner', header: text.admin.domainHealth.colOwner, minWidth: '12rem' },
               { key: 'status', header: text.admin.domainHealth.colStatus, align: 'center', width: '8rem' },
-              { key: 'mode', header: text.admin.domainHealth.colMode, width: '7rem' },
+              { key: 'mode', header: text.admin.domainHealth.colMode, width: '10rem' },
               { key: 'expires', header: text.admin.domainHealth.colExpires, width: '8rem' },
+              { key: 'mailboxes', header: text.admin.domainHealth.colMailboxes, align: 'right', width: '7rem' },
               { key: 'messages', header: text.admin.domainHealth.colMessages, align: 'right', width: '7rem' },
-              { key: 'actions', header: text.admin.domainHealth.colActions, align: 'right', minWidth: '18rem' }
+              { key: 'actions', header: text.admin.domainHealth.colActions, align: 'right', minWidth: '14rem' }
             ]}
             rows={(healthPage?.items || []).map((domain) => ({
               key: domain.id,
@@ -491,9 +500,24 @@ export function AdminPage() {
                   <b>{domain.domain}</b>
                   <small>{domain.last_check_message || domain.last_mx_records || '-'}</small>
                 </div>,
+                domain.owner_email || text.admin.domainHealth.ownerUnknown,
                 <SeverityPill severity={domain.severity}>{domainIssueLabel(domain.issue)}</SeverityPill>,
-                domainModeLabel(domain.mode, language),
+                <div className="segmented-control">
+                  <button type="button" className={`segment-choice ${domain.mode === 'private' ? 'segment-choice-active' : ''}`} style={{ fontSize: '0.75rem' }} disabled={domain.mode === 'private' || updateDomainMode.isPending} onClick={(event) => {
+                    domainHealthFeedbackOriginRef.current = event.currentTarget;
+                    updateDomainMode.mutate({ domain, mode: 'private' });
+                  }}>
+                    {text.domains.modePrivate}
+                  </button>
+                  <button type="button" className={`segment-choice ${domain.mode === 'public' ? 'segment-choice-active' : ''}`} style={{ fontSize: '0.75rem' }} disabled={domain.mode === 'public' || updateDomainMode.isPending} onClick={(event) => {
+                    domainHealthFeedbackOriginRef.current = event.currentTarget;
+                    updateDomainMode.mutate({ domain, mode: 'public' });
+                  }}>
+                    {text.domains.modePublic}
+                  </button>
+                </div>,
                 formatDomainExpiry(domain.domain_expires_at, language),
+                String(domain.mailbox_count ?? domain.mailbox_created_count ?? 0),
                 String(domain.message_count ?? 0),
                 <div className="table-actions">
                   <button className="btn-ghost" onClick={(event) => {
@@ -505,15 +529,10 @@ export function AdminPage() {
                   </button>
                   <button className="btn-ghost" onClick={(event) => {
                     domainHealthFeedbackOriginRef.current = event.currentTarget;
-                    makePrivate.mutate(domain);
-                  }} disabled={domain.mode === 'private' || makePrivate.isPending} aria-label={`${text.admin.domainHealth.makePrivate} ${domain.domain}`}>
-                    {text.admin.domainHealth.makePrivate}
-                  </button>
-                  <button className="btn-ghost" onClick={(event) => {
-                    domainHealthFeedbackOriginRef.current = event.currentTarget;
-                    disableDomain.mutate(domain);
-                  }} disabled={!domain.active || disableDomain.isPending} aria-label={`${text.admin.domainHealth.disable} ${domain.domain}`}>
-                    {text.admin.domainHealth.disable}
+                    deleteDomain.mutate(domain);
+                  }} disabled={deleteDomain.isPending} aria-label={`${text.admin.domainHealth.delete} ${domain.domain}`}>
+                    <Trash2 size={14} aria-hidden="true" />
+                    {text.admin.domainHealth.delete}
                   </button>
                 </div>
               ]

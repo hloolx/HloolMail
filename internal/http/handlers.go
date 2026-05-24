@@ -118,6 +118,10 @@ func (h *Handler) versionInfo(c *gin.Context) {
 }
 
 func (h *Handler) versionCheck(c *gin.Context) {
+	if !h.requireAdmin(c) {
+		return
+	}
+
 	currentVersion := version.Version
 
 	latestVersion := currentVersion
@@ -995,9 +999,8 @@ func (h *Handler) listDomains(c *gin.Context) {
 	if !loggedIn {
 		return
 	}
-	actor := &requestActor{User: user}
 	var domains []models.Domain
-	query := h.scopeDomains(actor).Order("domain asc")
+	query := h.DB.Model(&models.Domain{}).Where("owner_id = ?", user.ID).Order("domain asc")
 	if err := query.Find(&domains).Error; err != nil {
 		fail(c, http.StatusInternalServerError, err.Error())
 		return
@@ -1732,6 +1735,31 @@ func messageCountsByDomain(db *gorm.DB, domains []models.Domain) map[string]int6
 	countMap := make(map[string]int64, len(counts))
 	for _, c := range counts {
 		countMap[c.RootDomain] = c.Count
+	}
+	return countMap
+}
+
+func mailboxCountsByDomainID(db *gorm.DB, domains []models.Domain) map[uint]int64 {
+	if len(domains) == 0 {
+		return map[uint]int64{}
+	}
+	ids := make([]uint, 0, len(domains))
+	for _, d := range domains {
+		ids = append(ids, d.ID)
+	}
+	type countResult struct {
+		DomainID uint
+		Count    int64
+	}
+	var counts []countResult
+	db.Model(&models.Mailbox{}).
+		Select("domain_id, COUNT(*) as count").
+		Where("domain_id IN ?", ids).
+		Group("domain_id").
+		Scan(&counts)
+	countMap := make(map[uint]int64, len(counts))
+	for _, c := range counts {
+		countMap[c.DomainID] = c.Count
 	}
 	return countMap
 }

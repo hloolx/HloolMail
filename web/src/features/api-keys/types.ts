@@ -1,4 +1,4 @@
-export type { APIKey, User } from '../../api';
+export type { APIKey, MailboxStats, User } from '../../api';
 
 import type { APIKey } from '../../api';
 

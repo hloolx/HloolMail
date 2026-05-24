@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -281,6 +282,9 @@ func TestLoginOAuthUserRejectsNewUserWhenRegistrationClosed(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "registration is disabled") {
 		t.Fatalf("expected registration disabled error, got %v", err)
 	}
+	if !errors.Is(err, errOAuthRegistrationDisabled) {
+		t.Fatalf("expected registration disabled sentinel, got %v", err)
+	}
 	if isNew {
 		t.Fatal("closed registration should not report a new OAuth user")
 	}
@@ -294,6 +298,14 @@ func TestLoginOAuthUserRejectsNewUserWhenRegistrationClosed(t *testing.T) {
 	db.Model(&models.OAuthIdentity{}).Where("provider = ? AND provider_uid = ?", oauthProviderGitHub, "github-new-closed").Count(&identityCount)
 	if identityCount != 0 {
 		t.Fatalf("identity count = %d, want 0", identityCount)
+	}
+}
+
+func TestOAuthRegistrationClosedRedirect(t *testing.T) {
+	redirect := oauthRegistrationClosedRedirect(oauthProviderGitHub)
+	want := "/#/login?oauth_error=registration_closed&oauth_provider=github"
+	if redirect != want {
+		t.Fatalf("redirect = %q, want %q", redirect, want)
 	}
 }
 

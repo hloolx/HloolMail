@@ -1249,6 +1249,23 @@ func TestAdminSessionBypassesPublicMailboxDailyQuota(t *testing.T) {
 	}
 	headers := sessionHeaders(login)
 
+	stats := perform(router, http.MethodGet, "/api/mailboxes/stats", nil, headers)
+	if stats.Code != http.StatusOK {
+		t.Fatalf("admin mailbox stats = %d: %s", stats.Code, stats.Body.String())
+	}
+	var statsPayload struct {
+		Data struct {
+			PublicMailboxDailyLimit       int64 `json:"public_mailbox_daily_limit"`
+			APIKeyPublicMailboxDailyLimit int64 `json:"api_key_public_mailbox_daily_limit"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(stats.Body.Bytes(), &statsPayload); err != nil {
+		t.Fatal(err)
+	}
+	if statsPayload.Data.PublicMailboxDailyLimit != 0 || statsPayload.Data.APIKeyPublicMailboxDailyLimit != 1 {
+		t.Fatalf("admin stats limits session/api-key = %d/%d, want 0/1", statsPayload.Data.PublicMailboxDailyLimit, statsPayload.Data.APIKeyPublicMailboxDailyLimit)
+	}
+
 	for _, prefix := range []string{"one", "two"} {
 		resp := perform(router, http.MethodPost, "/api/generate-email", map[string]any{
 			"prefix": prefix,
@@ -1642,6 +1659,18 @@ func TestAdminDomainHealthPaginatesAndAggregatesCurrentPage(t *testing.T) {
 	if err := db.Create(&domains).Error; err != nil {
 		t.Fatal(err)
 	}
+	for i := 0; i < 2; i++ {
+		mailbox := models.Mailbox{
+			OwnerID:   owner.ID,
+			Email:     "box" + strconv.Itoa(i+1) + "@a-critical.test",
+			LocalPart: "box" + strconv.Itoa(i+1),
+			Host:      "a-critical.test",
+			DomainID:  domains[0].ID,
+		}
+		if err := db.Create(&mailbox).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
 	now := time.Now()
 	for i := 0; i < 2; i++ {
 		message := models.Message{
@@ -1687,8 +1716,8 @@ func TestAdminDomainHealthPaginatesAndAggregatesCurrentPage(t *testing.T) {
 	if item.Domain.Domain != "a-critical.test" || item.Severity != "critical" || item.Issue != "mx_failed" {
 		t.Fatalf("unexpected first health item: %+v", item)
 	}
-	if item.MessageCount != 2 || item.OwnerEmail != owner.Email {
-		t.Fatalf("health item aggregates = count %d owner %q, want 2/%q", item.MessageCount, item.OwnerEmail, owner.Email)
+	if item.MessageCount != 2 || item.MailboxCount != 2 || item.OwnerEmail != owner.Email {
+		t.Fatalf("health item aggregates = messages %d mailboxes %d owner %q, want 2/2/%q", item.MessageCount, item.MailboxCount, item.OwnerEmail, owner.Email)
 	}
 }
 
@@ -2115,6 +2144,7 @@ func TestSessionOnlyRoutesIgnoreAPIKeyQuota(t *testing.T) {
 		"/api/user/passkeys":       http.StatusUnauthorized,
 		"/api/admin/stats":         http.StatusForbidden,
 		"/api/users":               http.StatusForbidden,
+		"/api/version/check":       http.StatusForbidden,
 		"/api/oauth/providers":     http.StatusOK,
 		"/api/auth/login-settings": http.StatusOK,
 		"/api/auth/logout":         http.StatusOK,
@@ -2261,7 +2291,7 @@ func TestNextEmailReturnsUnreadMessageAndMarksRead(t *testing.T) {
 	}
 }
 
-func TestListDomainsHidesOtherUsersWaitingDomains(t *testing.T) {
+func TestListDomainsShowsOnlyOwnedDomains(t *testing.T) {
 	db := httpTestDB(t)
 	hash, err := auth.HashSecret("password123")
 	if err != nil {
@@ -2296,6 +2326,7 @@ func TestListDomainsHidesOtherUsersWaitingDomains(t *testing.T) {
 		{Domain: "other-wildcard-pending.test", Mode: models.DomainModePublic, OwnerID: &other.ID, Active: true, MXVerified: true, WildcardRequested: true},
 		{Domain: "other-ready.test", Mode: models.DomainModePublic, OwnerID: &other.ID, Active: true, MXVerified: true},
 		{Domain: "owner-pending.test", Mode: models.DomainModePublic, OwnerID: &owner.ID, Active: true},
+		{Domain: "admin-owned.test", Mode: models.DomainModePublic, OwnerID: &users[2].ID, Active: true, MXVerified: true},
 	}
 	if err := db.Create(&domains).Error; err != nil {
 		t.Fatal(err)
@@ -2320,10 +2351,12 @@ func TestListDomainsHidesOtherUsersWaitingDomains(t *testing.T) {
 		t.Fatalf("owner domains = %d: %s", ownerResponse.Code, ownerResponse.Body.String())
 	}
 	ownerDomains := decodeDomainNames(t, ownerResponse.Body.Bytes())
-	if ownerDomains["other-pending.test"] {
-		t.Fatalf("owner saw another user's waiting domains: %v", ownerDomains)
+	for _, domainName := range []string{"other-pending.test", "other-wildcard-pending.test", "other-ready.test", "admin-owned.test"} {
+		if ownerDomains[domainName] {
+			t.Fatalf("owner saw another user's domain %s: %v", domainName, ownerDomains)
+		}
 	}
-	if !ownerDomains["other-ready.test"] || !ownerDomains["other-wildcard-pending.test"] || !ownerDomains["owner-pending.test"] {
+	if !ownerDomains["owner-pending.test"] || len(ownerDomains) != 1 {
 		t.Fatalf("owner domain visibility missing expected domains: %v", ownerDomains)
 	}
 	ownerAPIResponse := perform(router, http.MethodGet, "/api/domains", nil, map[string]string{"X-API-Key": ownerPlain})
@@ -2351,9 +2384,12 @@ func TestListDomainsHidesOtherUsersWaitingDomains(t *testing.T) {
 	}
 	adminDomains := decodeDomainNames(t, adminResponse.Body.Bytes())
 	for _, domainName := range []string{"other-pending.test", "other-wildcard-pending.test", "other-ready.test", "owner-pending.test"} {
-		if !adminDomains[domainName] {
-			t.Fatalf("admin did not see %s: %v", domainName, adminDomains)
+		if adminDomains[domainName] {
+			t.Fatalf("admin saw another user's domain %s: %v", domainName, adminDomains)
 		}
+	}
+	if !adminDomains["admin-owned.test"] || len(adminDomains) != 1 {
+		t.Fatalf("admin domain visibility missing expected owned domain: %v", adminDomains)
 	}
 }
 

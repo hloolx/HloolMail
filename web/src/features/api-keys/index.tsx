@@ -6,7 +6,8 @@ import { notifySuccess, runDeleteEffect } from '../../lib/feedback';
 import { useText } from '../../locales';
 import { Button, PageHeader, Panel } from '../../components/ui';
 import { EmptyState } from '../../components/shared';
-import { apiKeysQueryKey, deleteApiKeys, useApiKeysQuery } from './queries';
+import { apiKeysQueryKey, deleteApiKeys, useApiKeyMailboxStatsQuery, useApiKeysQuery } from './queries';
+import { buildApiKeyHelperMessages } from './quotaMessages';
 import { ApiKeysTable } from './components/ApiKeysTable';
 import { CreateApiKeyDialog } from './components/CreateApiKeyDialog';
 import { DeleteApiKeysDialog } from './components/DeleteApiKeysDialog';
@@ -22,9 +23,11 @@ export function ApiKeysFeature({ user }: { user: User }) {
   const createTriggerRef = useRef<HTMLButtonElement | null>(null);
   const deleteTriggerRef = useRef<HTMLButtonElement | null>(null);
   const keys = useApiKeysQuery();
+  const mailboxStats = useApiKeyMailboxStatsQuery();
   const keyList = keys.data || [];
   const selectedKeys = keyList.filter((key) => selectedKeyIds.includes(key.id));
   const selectedCount = selectedKeys.length;
+  const helperMessages = buildApiKeyHelperMessages(text, user, mailboxStats.data);
 
   useEffect(() => {
     if (!keys.data) return;
@@ -122,7 +125,7 @@ export function ApiKeysFeature({ user }: { user: User }) {
             </>
           }
         />
-        <p className="api-key-helper">{user.role === 'admin' ? text.apiKeys.adminDesc : text.apiKeys.userDesc}</p>
+        <p className="api-key-helper">{helperMessages.join(' ')}</p>
         {keys.isError ? (
           <EmptyState label={keys.error.message} />
         ) : (
@@ -139,6 +142,7 @@ export function ApiKeysFeature({ user }: { user: User }) {
       {createOpen && (
         <CreateApiKeyDialog
           open={createOpen}
+          mailboxStats={mailboxStats.data}
           onClose={() => {
             setCreateOpen(false);
             createTriggerRef.current?.focus();

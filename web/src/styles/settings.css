@@ -1,7 +1,8 @@
 .settings-menu {
-  --settings-control-width: 7.05rem;
+  --settings-control-width: 8.35rem;
   display: grid;
-  grid-template-columns: max-content var(--settings-control-width);
+  width: min(16.75rem, calc(100vw - 2.75rem));
+  grid-template-columns: max-content minmax(0, 1fr);
   align-items: center;
   column-gap: 0.85rem;
   row-gap: 0.45rem;
@@ -181,6 +182,7 @@
   align-items: center;
   gap: 0.35rem;
   align-self: center;
+  justify-self: start;
 }
 
 .settings-version-value {
@@ -206,21 +208,109 @@
   border-color: var(--focus);
 }
 
+.settings-version-refresh:disabled {
+  cursor: default;
+  opacity: 0.74;
+}
+
 .settings-version-refresh-spin {
   animation: spin 0.8s linear infinite;
 }
 
-.settings-version-update {
-  color: var(--accent);
-  font-size: 0.72rem;
-  font-weight: 600;
-  text-decoration: none;
-  border-bottom: 1px dashed currentColor;
+.settings-version-card {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: start;
+  gap: 0.55rem 0.65rem;
+  margin-top: 0.1rem;
+  border: 1px solid color-mix(in srgb, var(--border) 78%, transparent);
+  border-radius: 0.7rem;
+  background: color-mix(in srgb, var(--soft) 68%, var(--panel));
+  padding: 0.65rem;
 }
 
-.settings-version-update:hover {
+.settings-version-card-available {
+  border-color: color-mix(in srgb, var(--focus) 36%, var(--border));
+  background:
+    linear-gradient(135deg, color-mix(in srgb, var(--focus) 13%, transparent), transparent 62%),
+    color-mix(in srgb, var(--panel) 86%, var(--soft));
+}
+
+.settings-version-card-current {
+  border-color: color-mix(in srgb, var(--good) 30%, var(--border));
+}
+
+.settings-version-card-error {
+  border-color: color-mix(in srgb, var(--bad) 34%, var(--border));
+}
+
+.settings-version-card-icon {
+  display: grid;
+  width: 1.6rem;
+  height: 1.6rem;
+  place-items: center;
+  border: 1px solid var(--border);
+  border-radius: 0.5rem;
+  background: color-mix(in srgb, var(--panel) 78%, transparent);
+  color: var(--muted);
+}
+
+.settings-version-card-available .settings-version-card-icon {
+  border-color: color-mix(in srgb, var(--focus) 32%, var(--border));
+  color: var(--focus);
+}
+
+.settings-version-card-current .settings-version-card-icon {
+  color: var(--good);
+}
+
+.settings-version-card-error .settings-version-card-icon {
+  color: var(--bad);
+}
+
+.settings-version-card-copy {
+  display: grid;
+  min-width: 0;
+  gap: 0.12rem;
+}
+
+.settings-version-card-copy strong {
   color: var(--foreground);
-  border-bottom-style: solid;
+  font-size: 0.79rem;
+  font-weight: 700;
+  line-height: 1.25;
+}
+
+.settings-version-card-copy small {
+  color: var(--muted);
+  font-size: 0.72rem;
+  line-height: 1.35;
+}
+
+.settings-version-card-action {
+  grid-column: 2;
+  display: inline-flex;
+  width: fit-content;
+  align-items: center;
+  gap: 0.32rem;
+  margin-top: 0.12rem;
+  border: 1px solid color-mix(in srgb, var(--focus) 34%, var(--border));
+  border-radius: 0.48rem;
+  background: color-mix(in srgb, var(--focus) 12%, var(--panel));
+  color: var(--foreground);
+  padding: 0.32rem 0.48rem;
+  font-size: 0.72rem;
+  font-weight: 700;
+  line-height: 1;
+  text-decoration: none;
+  transition: background-color 180ms ease, border-color 180ms ease, transform 180ms ease;
+}
+
+.settings-version-card-action:hover {
+  border-color: var(--focus);
+  background: color-mix(in srgb, var(--focus) 18%, var(--panel));
+  transform: translateY(-1px);
 }
 
 @keyframes spin {

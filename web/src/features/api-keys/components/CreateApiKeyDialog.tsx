@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import type { FormEvent } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { Copy, KeyRound, X } from 'lucide-react';
+import { Copy, Gauge, KeyRound, ShieldAlert, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { DialogShell, IconButton, InfoTip, LoadingIndicator } from '../../../components/shared';
 import { Button, Input } from '../../../components/ui';
@@ -9,9 +9,18 @@ import { copy } from '../../../lib/clipboard';
 import { cn } from '../../../lib/utils';
 import { useText } from '../../../locales';
 import { apiKeysQueryKey, createApiKey } from '../queries';
-import type { APIKey, CreateApiKeyPayload } from '../types';
+import { buildApiKeyCreatedNotices } from '../quotaMessages';
+import type { APIKey, CreateApiKeyPayload, MailboxStats } from '../types';
 
-export function CreateApiKeyDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
+export function CreateApiKeyDialog({
+  open,
+  mailboxStats,
+  onClose
+}: {
+  open: boolean;
+  mailboxStats?: MailboxStats;
+  onClose: () => void;
+}) {
   const text = useText();
   const queryClient = useQueryClient();
 
@@ -33,6 +42,7 @@ export function CreateApiKeyDialog({ open, onClose }: { open: boolean; onClose: 
   const hasTotalLimit = totalUnlimited || totalLimit.trim() !== '';
   const hasExpiry = expiresNever || expiresAt.trim() !== '';
   const canCreate = name.trim() !== '' && hasDailyLimit && hasTotalLimit && hasExpiry;
+  const createdNotices = buildApiKeyCreatedNotices(text, mailboxStats);
 
   useEffect(() => {
     if (open) {
@@ -303,6 +313,21 @@ export function CreateApiKeyDialog({ open, onClose }: { open: boolean; onClose: 
             onFocus={(event) => event.currentTarget.select()}
             onClick={(event) => event.currentTarget.select()}
           />
+          {createdNotices.length > 0 && (
+            <div className="created-key-notices">
+              {createdNotices.map((notice) => (
+                <div
+                  key={notice.key}
+                  className={cn('created-key-notice', `created-key-notice-${notice.tone}`)}
+                >
+                  {notice.key === 'public-domain-requirement'
+                    ? <ShieldAlert size={15} />
+                    : <Gauge size={15} />}
+                  <p>{notice.message}</p>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       )}
     </DialogShell>

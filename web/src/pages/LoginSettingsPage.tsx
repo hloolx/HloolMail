@@ -217,6 +217,14 @@ export function LoginSettingsPage() {
 
   const turnstileReplacesTextCaptcha = turnstileForm.enabled;
   const hasRegistrationChanges = registrationChanged(registrationForm, registrationInitial);
+  const registrationStatusLabel = !registrationForm.registration_open
+    ? text.loginSettings.registrationClosed
+    : registrationForm.email_registration_enabled
+      ? text.loginSettings.registrationOpen
+      : text.loginSettings.registrationThirdPartyOnly;
+  const registrationStatusClass = registrationForm.registration_open && registrationForm.email_registration_enabled
+    ? 'severity-ok'
+    : 'severity-warning';
 
   // --- OAuth helpers ---
   const providerRows = useMemo(() => providers.data || [], [providers.data]);
@@ -453,14 +461,22 @@ export function LoginSettingsPage() {
                   {text.loginSettings.registrationTitle}
                 </h2>
               </div>
-              <span className={`severity-pill ${registrationForm.registration_open && registrationForm.email_registration_enabled ? 'severity-ok' : 'severity-warning'}`}>
-                {registrationForm.registration_open ? text.loginSettings.registrationOpen : text.loginSettings.registrationClosed}
+              <span className={`severity-pill ${registrationStatusClass}`}>
+                {registrationStatusLabel}
               </span>
+            </div>
+
+            <div className="admin-registration-note">
+              <Shield size={16} aria-hidden="true" />
+              <p>{text.loginSettings.registrationPolicyNote}</p>
             </div>
 
             <div className="login-config-fields">
               <div className="toggle-row">
-                <span className="toggle-row-label">{text.loginSettings.registrationOpenLabel}</span>
+                <span className="admin-registration-toggle-copy">
+                  <span className="toggle-row-label">{text.loginSettings.registrationOpenLabel}</span>
+                  <span className="admin-registration-toggle-hint">{text.loginSettings.registrationOpenHint}</span>
+                </span>
                 <button
                   type="button"
                   className={`toggle-switch ${registrationForm.registration_open ? 'on' : ''}`}
@@ -472,7 +488,10 @@ export function LoginSettingsPage() {
                 </button>
               </div>
               <div className="toggle-row">
-                <span className="toggle-row-label">{text.loginSettings.emailRegistrationLabel}</span>
+                <span className="admin-registration-toggle-copy">
+                  <span className="toggle-row-label">{text.loginSettings.emailRegistrationLabel}</span>
+                  <span className="admin-registration-toggle-hint">{text.loginSettings.emailRegistrationHint}</span>
+                </span>
                 <button
                   type="button"
                   className={`toggle-switch ${registrationForm.email_registration_enabled ? 'on' : ''}`}

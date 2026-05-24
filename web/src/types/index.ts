@@ -42,6 +42,7 @@ export type AdminStats = {
 
 export type AdminDomainHealth = Domain & {
   message_count: number;
+  mailbox_count: number;
   severity: 'ok' | 'warning' | 'critical';
   issue: string;
   owner_email?: string;

@@ -707,6 +707,41 @@
   gap: 0.75rem;
 }
 
+.admin-registration-note {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: start;
+  gap: 0.55rem;
+  border: 1px solid color-mix(in srgb, var(--focus) 20%, var(--border));
+  border-radius: 0.7rem;
+  background: color-mix(in srgb, var(--focus) 6%, var(--panel));
+  color: var(--muted);
+  padding: 0.65rem 0.7rem;
+}
+
+.admin-registration-note svg {
+  margin-top: 0.08rem;
+  color: var(--focus);
+}
+
+.admin-registration-note p {
+  margin: 0;
+  font-size: 0.78rem;
+  line-height: 1.55;
+}
+
+.admin-registration-toggle-copy {
+  display: grid;
+  gap: 0.18rem;
+  min-width: 0;
+}
+
+.admin-registration-toggle-hint {
+  color: var(--muted);
+  font-size: 0.74rem;
+  line-height: 1.45;
+}
+
 .admin-registration-hint {
   align-self: end;
   margin: 0;

@@ -22,6 +22,7 @@ import (
 type adminDomainHealthItem struct {
 	models.Domain
 	MessageCount int64  `json:"message_count"`
+	MailboxCount int64  `json:"mailbox_count"`
 	Severity     string `json:"severity"`
 	Issue        string `json:"issue"`
 	OwnerEmail   string `json:"owner_email,omitempty"`
@@ -87,6 +88,7 @@ func (h *Handler) adminDomainHealth(c *gin.Context) {
 		return
 	}
 	messageCounts := messageCountsByDomain(h.DB, domains)
+	mailboxCounts := mailboxCountsByDomainID(h.DB, domains)
 	ownerEmails, err := domainOwnerEmails(h.DB, domains)
 	if err != nil {
 		fail(c, http.StatusInternalServerError, err.Error())
@@ -98,6 +100,7 @@ func (h *Handler) adminDomainHealth(c *gin.Context) {
 		items = append(items, adminDomainHealthItem{
 			Domain:       d,
 			MessageCount: messageCounts[d.Domain],
+			MailboxCount: mailboxCounts[d.ID],
 			Severity:     severity,
 			Issue:        issue,
 			OwnerEmail:   ownerEmails[domainOwnerID(d.OwnerID)],
@@ -758,6 +761,7 @@ func (h *Handler) mailboxStats(c *gin.Context) {
 	if user.Role == models.UserRoleAdmin {
 		publicLimit = 0
 	}
+	apiKeyPublicLimit := apiKeyPublicMailboxDailyLimit(user, quotaSettings)
 	hasPublicDomain, err := hasRootReadyPublicDomain(h.DB, ownerID)
 	if err != nil {
 		fail(c, http.StatusInternalServerError, err.Error())
@@ -770,12 +774,13 @@ func (h *Handler) mailboxStats(c *gin.Context) {
 		publicToday = 0
 	}
 	ok(c, gin.H{
-		"public_mailbox_created":     publicTotal,
-		"public_mailbox_today":       publicToday,
-		"public_mailbox_daily_limit": publicLimit,
-		"private_mailbox_created":    privateTotal,
-		"has_public_domain":          hasPublicDomain,
-		"require_public_domain":      quotaSettings.RequirePublicDomainForQuota,
+		"public_mailbox_created":             publicTotal,
+		"public_mailbox_today":               publicToday,
+		"public_mailbox_daily_limit":         publicLimit,
+		"api_key_public_mailbox_daily_limit": apiKeyPublicLimit,
+		"private_mailbox_created":            privateTotal,
+		"has_public_domain":                  hasPublicDomain,
+		"require_public_domain":              quotaSettings.RequirePublicDomainForQuota,
 	})
 }
 
@@ -784,6 +789,14 @@ func isSameLocalDate(dateStr string) bool {
 		return false
 	}
 	return dateStr == time.Now().Format("2006-01-02")
+}
+
+func apiKeyPublicMailboxDailyLimit(user models.User, settings *models.SystemQuotaSettings) int64 {
+	limit := settings.UserDailyPublicMailboxLimit
+	if user.DailyLimit > 0 && (limit == 0 || user.DailyLimit < limit) {
+		limit = user.DailyLimit
+	}
+	return limit
 }
 
 func (h *Handler) adminLoginSettings(c *gin.Context) {

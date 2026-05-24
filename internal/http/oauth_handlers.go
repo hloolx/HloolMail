@@ -34,6 +34,8 @@ const (
 
 var oauthHTTPClient = &http.Client{Timeout: 10 * time.Second}
 
+var errOAuthRegistrationDisabled = errors.New("registration is disabled")
+
 type OAuthUserInfo struct {
 	ProviderUID string
 	Email       string
@@ -308,6 +310,10 @@ func (h *Handler) oauthCallback(c *gin.Context) {
 
 	user, isNew, err := h.loginOAuthUser(provider, info, token)
 	if err != nil {
+		if errors.Is(err, errOAuthRegistrationDisabled) {
+			c.Redirect(http.StatusFound, oauthRegistrationClosedRedirect(provider))
+			return
+		}
 		status := http.StatusBadRequest
 		if strings.Contains(strings.ToLower(err.Error()), "disabled") {
 			status = http.StatusForbidden
@@ -805,7 +811,7 @@ func (h *Handler) loginOAuthUser(provider string, info OAuthUserInfo, token oaut
 				return err
 			}
 			if !settings.RegistrationOpen {
-				return fmt.Errorf("registration is disabled")
+				return errOAuthRegistrationDisabled
 			}
 			password, err := randomURLToken(32)
 			if err != nil {
@@ -897,6 +903,11 @@ func appendOAuthQuery(redirect, key, value string) string {
 		sep = "&"
 	}
 	return redirect + sep + url.QueryEscape(key) + "=" + url.QueryEscape(value)
+}
+
+func oauthRegistrationClosedRedirect(provider string) string {
+	redirect := appendOAuthQuery("/#/login", "oauth_error", "registration_closed")
+	return appendOAuthQuery(redirect, "oauth_provider", provider)
 }
 
 func updateOAuthUserProfile(tx *gorm.DB, user *models.User, info OAuthUserInfo) error {

@@ -39,6 +39,7 @@ export type Domain = {
   last_mx_records?: string;
   last_check_message?: string;
   domain_expires_at?: string;
+  mailbox_created_count?: number;
   health_failure_count?: number;
   health_recovery_count?: number;
   last_health_status?: string;
@@ -290,6 +291,7 @@ export type MailboxStats = {
   public_mailbox_created: number;
   public_mailbox_today: number;
   public_mailbox_daily_limit: number;
+  api_key_public_mailbox_daily_limit: number;
   private_mailbox_created: number;
   has_public_domain: boolean;
   require_public_domain: boolean;
