@@ -230,7 +230,7 @@
 .info-tip-popup {
   position: fixed;
   z-index: 10000;
-  max-width: 260px;
+  max-width: min(360px, calc(100vw - 2rem));
   background: var(--foreground);
   color: var(--background);
   font-size: 0.78rem;

@@ -77,6 +77,7 @@ export function AddDomainDialog({ open, onClose }: { open: boolean; onClose: () 
   );
   const cfg = installStatus.data?.config;
   const mxTarget = (cfg?.expected_mx || 'mail.example.com').replace(/\.$/, '');
+  const wildcardInfo = text.domains.batchWildcardInfo.replace('[[mx]]', mxTarget);
   const submitted = results !== null;
 
   const resetForm = () => {
@@ -252,7 +253,7 @@ export function AddDomainDialog({ open, onClose }: { open: boolean; onClose: () 
 
               {/* MX settings info */}
               <div className="domain-modal-section">
-                <div className="domain-modal-section-title">{text.domains.mxSettings}<InfoTip text={text.domains.batchDNSNote.replace('[[mx]]', mxTarget)} /></div>
+                <div className="domain-modal-section-title">{text.domains.mxSettings}<InfoTip text={wildcardInfo} /></div>
                 <div className="mx-target-card">
                   <span>{text.domains.mxPointTo}</span>
                   <code>{mxTarget}</code>

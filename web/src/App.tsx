@@ -162,7 +162,11 @@ function AppContent() {
                   }}
                 />
               ) : (
-                <LandingPage status={installStatus.data} onDone={() => queryClient.invalidateQueries({ queryKey: ['me'] })} />
+                <LandingPage
+                  status={installStatus.data}
+                  statsLoading={installStatus.isLoading}
+                  onDone={() => queryClient.invalidateQueries({ queryKey: ['me'] })}
+                />
               )
             ) : (
               <Console user={me.data.user} />

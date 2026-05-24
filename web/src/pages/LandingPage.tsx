@@ -1,17 +1,19 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import type { FormEvent, KeyboardEvent } from 'react';
 import { useMutation, useQuery } from '@tanstack/react-query';
-import { ArrowRight, Bot, Check, CircleUserRound, Code2, Fingerprint, Github, Globe2, Home, Inbox, KeyRound, LockKeyhole, MailCheck, MailPlus, Network, PackageCheck, RefreshCcw, Share2, ShieldCheck, Sparkles, Terminal, Users, Zap } from 'lucide-react';
+import { ArrowRight, Bot, Check, CircleUserRound, Code2, Copy as CopyIcon, Fingerprint, Github, Globe2, Home, Inbox, KeyRound, LockKeyhole, MailCheck, MailPlus, Network, PackageCheck, RefreshCcw, Share2, ShieldCheck, Sparkles, Terminal, Users, Zap, type LucideIcon } from 'lucide-react';
 import { toast } from 'sonner';
 import type { InstallStatus, User } from '../api';
 import { api, postJSON } from '../api';
 import type { OAuthProvider, PublicLoginSettings, RegisterCaptcha, RegisterResponse } from '../types';
 import { useText } from '../locales';
 import { useCountUp } from '../hooks/useCountUp';
+import { useCopyState } from '../hooks/useCopyState';
 import { HeaderSettings } from '../components/layout/HeaderSettings';
 import { AppLogo } from '../components/shared/AppLogo';
 import { InfoTip, LoadingIndicator } from '../components/shared';
 import { notifySuccess } from '../lib/feedback';
+import { copy } from '../lib/clipboard';
 import { loginWithPasskey } from '../lib/passkeys';
 
 declare global {
@@ -33,18 +35,17 @@ type LandingPageProps = {
   onDone: () => void;
   authMode?: 'home' | 'auth';
   initialMode?: 'login' | 'register';
+  statsLoading?: boolean;
 };
 
-export function LandingPage({ status, onDone, authMode = 'home', initialMode = 'login' }: LandingPageProps) {
+export function LandingPage({ status, onDone, authMode = 'home', initialMode = 'login', statsLoading = false }: LandingPageProps) {
   const text = useText();
   const isAuthPage = authMode === 'auth';
   const mxTarget = (status?.config?.expected_mx || status?.config?.mail_hostname || 'mail.example.com').replace(/\.$/, '');
   const siteApiCallsToday = status?.site_api_calls_today ?? 0;
   const registeredUsers = status?.registered_users ?? 0;
   const hostedDomains = status?.hosted_domains ?? 0;
-  const animatedUsers = useCountUp(registeredUsers);
-  const animatedDomains = useCountUp(hostedDomains);
-  const animatedApiCalls = useCountUp(siteApiCallsToday);
+  const publicStatsLoading = !isAuthPage && statsLoading;
   const previewDomain = text.login.previewDomain.replace('{mx}', mxTarget);
   const previewApi = text.login.previewApi.replace('{count}', siteApiCallsToday.toLocaleString());
   const proofLine = text.login.proofLine
@@ -55,7 +56,9 @@ export function LandingPage({ status, onDone, authMode = 'home', initialMode = '
   const passkeySubmitRef = useRef<HTMLButtonElement>(null);
   const loginTabRef = useRef<HTMLButtonElement>(null);
   const registerTabRef = useRef<HTMLButtonElement>(null);
+  const pageRef = useRef<HTMLDivElement>(null);
   const [mode, setMode] = useState<'login' | 'register'>(initialMode);
+  const [mxCopied, markMxCopied] = useCopyState();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
@@ -99,6 +102,53 @@ export function LandingPage({ status, onDone, authMode = 'home', initialMode = '
   useEffect(() => {
     setMode(initialMode);
   }, [initialMode]);
+
+  useEffect(() => {
+    if (isAuthPage) return;
+    const page = pageRef.current;
+    if (!page) return;
+
+    const revealTargets = Array.from(page.querySelectorAll<HTMLElement>('[data-landing-reveal]'));
+    if (!revealTargets.length) return;
+
+    const settleTimers: number[] = [];
+    const reveal = (element: HTMLElement) => {
+      element.classList.add('landing-reveal-visible');
+      const timer = window.setTimeout(() => {
+        element.classList.add('landing-reveal-settled');
+      }, 1200);
+      settleTimers.push(timer);
+    };
+
+    page.classList.add('landing-reveal-ready');
+
+    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+      revealTargets.forEach((element) => {
+        element.classList.add('landing-reveal-visible', 'landing-reveal-settled');
+      });
+      return;
+    }
+
+    const observer = new IntersectionObserver((entries) => {
+      entries.forEach((entry) => {
+        if (!entry.isIntersecting) return;
+        const element = entry.target as HTMLElement;
+        reveal(element);
+        observer.unobserve(element);
+      });
+    }, {
+      root: null,
+      rootMargin: '0px 0px -8% 0px',
+      threshold: 0.14
+    });
+
+    revealTargets.forEach((element) => observer.observe(element));
+
+    return () => {
+      observer.disconnect();
+      settleTimers.forEach((timer) => window.clearTimeout(timer));
+    };
+  }, [isAuthPage]);
 
   const refreshCaptcha = useCallback(() => {
     setCaptchaAnswer('');
@@ -381,8 +431,8 @@ export function LandingPage({ status, onDone, authMode = 'home', initialMode = '
   };
 
   return (
-    <div className={`landing-page${isAuthPage ? ' login-page' : ''}`}>
-      <a href="#auth-panel" className="skip-to-content">
+    <div ref={pageRef} className={`landing-page${isAuthPage ? ' login-page' : ''}`}>
+      <a href={isAuthPage ? '#auth-panel' : '#home-main'} className="skip-to-content">
         {text.login.skipToContent ?? '跳到主要内容'}
       </a>
       <header className="landing-header">
@@ -393,6 +443,14 @@ export function LandingPage({ status, onDone, authMode = 'home', initialMode = '
           <span>HLOOL Mail</span>
         </div>
         <nav className="landing-nav">
+          {!isAuthPage && (
+            <div className="landing-nav-sections" aria-label={text.login.featuresSectionTitle}>
+              <a href="#how">{text.login.howTitle}</a>
+              <a href="#features">{text.login.featuresSectionTitle}</a>
+              <a href="#use-cases">{text.login.useCasesTitle}</a>
+              <a href="#deploy">{text.login.deployNav}</a>
+            </div>
+          )}
           {isAuthPage ? (
             <a className="landing-nav-link landing-nav-icon" href="#/" aria-label={text.login.homeLink || 'Home'}>
               <Home size={18} />
@@ -409,72 +467,90 @@ export function LandingPage({ status, onDone, authMode = 'home', initialMode = '
         <HeaderSettings />
       </header>
 
-      <main className={isAuthPage ? 'login-main' : 'landing-main landing-main-public'}>
+      <main id={isAuthPage ? undefined : 'home-main'} className={isAuthPage ? 'login-main' : 'landing-main landing-main-public'}>
         {!isAuthPage && (
         <section className="landing-hero">
-          <div className="landing-kicker">
-            <Sparkles size={14} />
-            {text.login.homeBadge}
+          <div className="landing-hero-top">
+            <div className="landing-hero-copy">
+              <div className="landing-kicker">
+                <Sparkles size={14} />
+                {text.login.homeBadge}
+              </div>
+              <h1>
+                {text.login.homeTitle}
+              </h1>
+              <p className="landing-hero-lead">{text.login.homeSlogan}</p>
+              <p className="landing-hero-desc">{text.login.homeDesc}</p>
+              <div className="landing-actions">
+                {emailRegistrationAvailable && (
+                  <button className="btn-primary" type="button" onClick={() => { window.location.hash = '#/register'; }}>
+                    <MailPlus size={16} />
+                    {text.login.primaryAction}
+                  </button>
+                )}
+                <a className="btn-secondary" href="#features">
+                  <ShieldCheck size={16} />
+                  {text.login.secondaryAction}
+                </a>
+              </div>
+              <div className="landing-hero-proof">
+                <span>{proofLine}</span>
+              </div>
+            </div>
+
+            <aside className="landing-dns-config-card" aria-label={text.login.mxConfigTitle}>
+              <div className="landing-dns-config-head">
+                <span>
+                  <Network size={16} />
+                  {text.login.mxConfigTitle}
+                </span>
+                <div className="landing-mx-address">
+                  <div>
+                    <span>{text.login.mxConfigValue}</span>
+                    <code>{mxTarget}</code>
+                  </div>
+                  <button
+                    type="button"
+                    className="landing-mx-copy-button"
+                    aria-label={mxCopied ? text.common.copied : text.common.copy}
+                    title={mxCopied ? text.common.copied : text.common.copy}
+                    onClick={(event) => {
+                      void copy(mxTarget, { event, celebrate: true, label: text.common.copied }).then((ok) => {
+                        if (ok) markMxCopied();
+                      });
+                    }}
+                  >
+                    {mxCopied ? <Check size={15} /> : <CopyIcon size={15} />}
+                  </button>
+                </div>
+              </div>
+              <div className="landing-dns-config-list">
+                <div className="landing-dns-config-row">
+                  <span>{text.login.mxConfigType}</span>
+                  <b>MX</b>
+                </div>
+                <div className="landing-dns-config-row">
+                  <span className="landing-dns-label-with-tip">
+                    {text.login.mxConfigHost}
+                    <InfoTip text={text.login.mxConfigHostInfo} />
+                  </span>
+                  <b>{text.login.mxConfigHostValue}</b>
+                </div>
+                <div className="landing-dns-config-row">
+                  <span>{text.login.mxConfigPriority}</span>
+                  <b>10</b>
+                </div>
+              </div>
+              <p>{text.login.domainCardDesc}</p>
+            </aside>
           </div>
-          <h1>{text.login.homeTitle}</h1>
-          <p>{text.login.homeSlogan}</p>
-          <p className="landing-hero-desc">{text.login.homeDesc}</p>
-          <div className="landing-actions">
-            {emailRegistrationAvailable && (
-              <button className="btn-primary" type="button" onClick={() => { window.location.hash = '#/register'; }}>
-                <MailPlus size={16} />
-                {text.login.primaryAction}
-              </button>
-            )}
-            <a className="btn-secondary" href="#features">
-              <ShieldCheck size={16} />
-              {text.login.secondaryAction}
-            </a>
-          </div>
-          <aside className="landing-domain-card" aria-label={text.login.domainCardTitle}>
-            <div className="landing-domain-card-top">
-              <span>
-                <Network size={15} />
-                {text.login.domainCardBadge}
-              </span>
-              <code>{text.login.domainCardMx.replace('{mx}', mxTarget)}</code>
+          <section className="landing-stats" aria-label={proofLine}>
+            <div className="landing-stats-grid">
+              <LandingStat icon={Users} value={registeredUsers} label={text.login.statUsers} loading={publicStatsLoading} />
+              <LandingStat icon={Globe2} value={hostedDomains} label={text.login.statHostedDomains} loading={publicStatsLoading} />
+              <LandingStat icon={Zap} value={siteApiCallsToday} label={text.login.statApiToday} loading={publicStatsLoading} />
             </div>
-            <h2>{text.login.domainCardTitle}</h2>
-            <p>{text.login.domainCardDesc}</p>
-            <div className="landing-domain-card-points">
-              <span>
-                <Code2 size={15} />
-                {text.login.domainCardApi}
-              </span>
-              <span>
-                <Share2 size={15} />
-                {text.login.domainCardShare}
-              </span>
-            </div>
-          </aside>
-          <div className="landing-console-preview landing-hero-preview" aria-hidden>
-            <div className="landing-preview-top">
-              <span />
-              <span />
-              <span />
-              <b>{text.login.previewTitle}</b>
-            </div>
-            <div className="landing-preview-row">
-              <Inbox size={15} />
-              <span>{text.login.previewInbox}</span>
-              <Check size={14} />
-            </div>
-            <div className="landing-preview-row">
-              <Globe2 size={15} />
-              <span>{previewDomain}</span>
-              <Check size={14} />
-            </div>
-            <div className="landing-preview-row">
-              <KeyRound size={15} />
-              <span>{previewApi}</span>
-              <ArrowRight size={14} />
-            </div>
-          </div>
+          </section>
         </section>
         )}
 
@@ -696,46 +772,25 @@ export function LandingPage({ status, onDone, authMode = 'home', initialMode = '
 
       {!isAuthPage && (
       <>
-      <section className="landing-stats">
-        <div className="landing-stats-grid">
-          <div className="landing-stat">
-            <Users size={20} />
-            <b>{animatedUsers.toLocaleString()}</b>
-            <span>{text.login.statUsers}</span>
-          </div>
-          <div className="landing-stat">
-            <Globe2 size={20} />
-            <b>{animatedDomains.toLocaleString()}</b>
-            <span>{text.login.statHostedDomains}</span>
-          </div>
-          <div className="landing-stat">
-            <Zap size={20} />
-            <b>{animatedApiCalls.toLocaleString()}</b>
-            <span>{text.login.statApiToday}</span>
-          </div>
-        </div>
-        <p className="landing-stats-proof">{proofLine}</p>
-      </section>
-
       <section className="landing-how" id="how">
-        <div className="landing-section-head">
+        <div className="landing-section-head" data-landing-reveal>
           <h2>{text.login.howTitle}</h2>
           <p>{text.login.howDesc}</p>
         </div>
-        <div className="landing-how-steps">
-          <div className="landing-how-step">
+        <div className="landing-how-steps landing-reveal-stagger">
+          <div className="landing-how-step" data-landing-reveal>
             <span className="landing-how-num">01</span>
             <Network size={20} />
             <b>{text.login.flowDns}</b>
             <span>{text.login.flowDnsDesc.replace('{mx}', mxTarget)}</span>
           </div>
-          <div className="landing-how-step">
+          <div className="landing-how-step" data-landing-reveal>
             <span className="landing-how-num">02</span>
             <Inbox size={20} />
             <b>{text.login.flowMailbox}</b>
             <span>{text.login.flowMailboxDesc}</span>
           </div>
-          <div className="landing-how-step">
+          <div className="landing-how-step" data-landing-reveal>
             <span className="landing-how-num">03</span>
             <Code2 size={20} />
             <b>{text.login.flowApi}</b>
@@ -745,32 +800,32 @@ export function LandingPage({ status, onDone, authMode = 'home', initialMode = '
       </section>
 
       <section className="landing-features" id="features">
-        <div className="landing-section-head">
+        <div className="landing-section-head" data-landing-reveal>
           <h2>{text.login.featuresSectionTitle}</h2>
           <p>{text.login.featuresSectionDesc}</p>
         </div>
-        <div className="landing-features-grid">
-          <article>
+        <div className="landing-features-grid landing-reveal-stagger">
+          <article data-landing-reveal>
             <Zap size={20} />
             <h3>{text.login.featureOneTitle}</h3>
             <p>{text.login.featureOneDesc}</p>
           </article>
-          <article>
+          <article data-landing-reveal>
             <Code2 size={20} />
             <h3>{text.login.featureTwoTitle}</h3>
             <p>{text.login.featureTwoDesc}</p>
           </article>
-          <article>
+          <article data-landing-reveal>
             <Share2 size={20} />
             <h3>{text.login.featureThreeTitle}</h3>
             <p>{text.login.featureThreeDesc}</p>
           </article>
-          <article>
+          <article data-landing-reveal>
             <Terminal size={20} />
             <h3>{text.login.featureFourTitle}</h3>
             <p>{text.login.featureFourDesc}</p>
           </article>
-          <article>
+          <article data-landing-reveal>
             <MailCheck size={20} />
             <h3>{text.login.featureFiveTitle}</h3>
             <p>{text.login.featureFiveDesc}</p>
@@ -779,26 +834,26 @@ export function LandingPage({ status, onDone, authMode = 'home', initialMode = '
       </section>
 
       <section className="landing-use-cases" id="use-cases">
-        <div className="landing-section-head">
+        <div className="landing-section-head" data-landing-reveal>
           <h2>{text.login.useCasesTitle}</h2>
           <p>{text.login.useCasesDesc}</p>
         </div>
-        <div className="landing-use-cases-grid">
-          <article>
+        <div className="landing-use-cases-grid landing-reveal-stagger">
+          <article data-landing-reveal>
             <span className="landing-use-case-icon">
               <Bot size={20} />
             </span>
             <b>{text.login.useCaseBatchTitle}</b>
             <p>{text.login.useCaseBatchDesc}</p>
           </article>
-          <article>
+          <article data-landing-reveal>
             <span className="landing-use-case-icon">
               <PackageCheck size={20} />
             </span>
             <b>{text.login.useCaseAccountTitle}</b>
             <p>{text.login.useCaseAccountDesc}</p>
           </article>
-          <article>
+          <article data-landing-reveal>
             <span className="landing-use-case-icon">
               <LockKeyhole size={20} />
             </span>
@@ -809,12 +864,12 @@ export function LandingPage({ status, onDone, authMode = 'home', initialMode = '
       </section>
 
       <section className="landing-overview">
-        <div className="landing-overview-copy">
+        <div className="landing-overview-copy landing-reveal-copy" data-landing-reveal>
           <span>{text.login.overviewEyebrow}</span>
           <h2>{text.login.overviewTitle}</h2>
           <p>{text.login.overviewDesc}</p>
         </div>
-        <div className="landing-overview-api" aria-hidden>
+        <div className="landing-overview-api landing-reveal-panel" data-landing-reveal aria-hidden>
           <div className="landing-api-line">
             <b>POST</b>
             <code>/api/generate-email</code>
@@ -834,12 +889,12 @@ export function LandingPage({ status, onDone, authMode = 'home', initialMode = '
       </section>
 
       <section className="landing-deploy" id="deploy">
-        <div className="landing-deploy-copy">
+        <div className="landing-deploy-copy landing-reveal-copy" data-landing-reveal>
           <span>{text.login.deployEyebrow}</span>
           <h2>{text.login.deployTitle}</h2>
           <p>{text.login.deployDesc}</p>
         </div>
-        <div className="landing-deploy-panel" aria-label={text.login.deployTitle}>
+        <div className="landing-deploy-panel landing-reveal-panel" data-landing-reveal aria-label={text.login.deployTitle}>
           <a href="https://github.com/hloolx/HloolMail" target="_blank" rel="noopener noreferrer">
             <Github size={17} />
             <span>{text.login.deployGithub}</span>
@@ -885,6 +940,28 @@ export function LandingPage({ status, onDone, authMode = 'home', initialMode = '
       </footer>
       </>
       )}
+    </div>
+  );
+}
+
+type LandingStatProps = {
+  icon: LucideIcon;
+  value: number;
+  label: string;
+  loading: boolean;
+};
+
+function LandingStat({ icon: Icon, value, label, loading }: LandingStatProps) {
+  const animatedValue = useCountUp(loading ? 0 : value);
+  const displayValue = loading ? 0 : animatedValue;
+
+  return (
+    <div className={`landing-stat ${loading ? 'landing-stat-loading' : 'landing-stat-ready'}`}>
+      <Icon size={20} />
+      <b className="landing-stat-number" key={`${loading ? 'loading' : 'ready'}-${label}-${value}`} aria-busy={loading}>
+        {displayValue.toLocaleString()}
+      </b>
+      <span>{label}</span>
     </div>
   );
 }
