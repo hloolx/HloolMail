@@ -105,14 +105,53 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
       - name: Download artifacts
         uses: actions/download-artifact@v4
         with:
           path: dist
           merge-multiple: true
 
+      - name: Generate release notes
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          tag="${GITHUB_REF_NAME}"
+          previous_tag="$(git tag --sort=-v:refname --merged HEAD | grep -v "^${tag}$" | head -n 1 || true)"
+
+          if [ -n "${previous_tag}" ]; then
+            range="${previous_tag}..${tag}"
+          else
+            range="${tag}"
+          fi
+
+          {
+            echo "## What's Changed"
+            echo
+            if git log --format=%s "${range}" | grep -q .; then
+              git log --reverse --format='- %s ([%h](https://github.com/${{ github.repository }}/commit/%H))' "${range}"
+            else
+              echo "- Release maintenance update."
+            fi
+            echo
+            echo "## Assets"
+            echo
+            echo "- Linux amd64 / arm64 / armv7"
+            echo "- macOS Apple Silicon"
+            echo "- Windows amd64"
+            if [ -n "${previous_tag}" ]; then
+              echo
+              echo "Full changelog: https://github.com/${{ github.repository }}/compare/${previous_tag}...${tag}"
+            fi
+          } > release-notes.md
+
       - name: Publish GitHub release
         uses: softprops/action-gh-release@v2
         with:
           files: dist/*
-          generate_release_notes: true
+          body_path: release-notes.md
