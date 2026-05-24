@@ -1,8 +1,9 @@
 .settings-menu {
   --settings-control-width: 8.35rem;
   display: grid;
-  width: min(16.75rem, calc(100vw - 2.75rem));
-  grid-template-columns: max-content minmax(0, 1fr);
+  width: max-content;
+  max-width: calc(100vw - 2.75rem);
+  grid-template-columns: max-content var(--settings-control-width);
   align-items: center;
   column-gap: 0.85rem;
   row-gap: 0.45rem;
@@ -177,15 +178,35 @@
   font-weight: 700;
 }
 
+.settings-version-control {
+  display: grid;
+  width: var(--settings-control-width);
+  min-width: 0;
+  justify-self: start;
+  gap: 0.38rem;
+}
+
 .settings-version-row {
   display: flex;
+  width: 100%;
+  min-width: 0;
+  min-height: 2.25rem;
   align-items: center;
-  gap: 0.35rem;
+  justify-content: space-between;
+  gap: 0.45rem;
   align-self: center;
   justify-self: start;
+  border: 1px solid var(--border);
+  border-radius: 0.65rem;
+  background: color-mix(in srgb, var(--panel) 82%, var(--soft));
+  padding: 0.12rem 0.42rem 0.12rem 0.72rem;
 }
 
 .settings-version-value {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   color: var(--muted);
   font-size: 0.78rem;
   font-weight: 500;
@@ -193,6 +214,7 @@
 
 .settings-version-refresh {
   display: grid;
+  flex: 0 0 auto;
   width: 1.4rem;
   height: 1.4rem;
   place-items: center;
@@ -218,16 +240,16 @@
 }
 
 .settings-version-card {
-  grid-column: 1 / -1;
   display: grid;
   grid-template-columns: auto minmax(0, 1fr);
-  align-items: start;
-  gap: 0.55rem 0.65rem;
-  margin-top: 0.1rem;
+  width: 100%;
+  min-width: 0;
+  align-items: center;
+  gap: 0.42rem 0.5rem;
   border: 1px solid color-mix(in srgb, var(--border) 78%, transparent);
-  border-radius: 0.7rem;
+  border-radius: 0.65rem;
   background: color-mix(in srgb, var(--soft) 68%, var(--panel));
-  padding: 0.65rem;
+  padding: 0.46rem 0.5rem;
 }
 
 .settings-version-card-available {
@@ -247,11 +269,11 @@
 
 .settings-version-card-icon {
   display: grid;
-  width: 1.6rem;
-  height: 1.6rem;
+  width: 1.35rem;
+  height: 1.35rem;
   place-items: center;
   border: 1px solid var(--border);
-  border-radius: 0.5rem;
+  border-radius: 0.42rem;
   background: color-mix(in srgb, var(--panel) 78%, transparent);
   color: var(--muted);
 }
@@ -277,29 +299,23 @@
 
 .settings-version-card-copy strong {
   color: var(--foreground);
-  font-size: 0.79rem;
+  font-size: 0.75rem;
   font-weight: 700;
-  line-height: 1.25;
-}
-
-.settings-version-card-copy small {
-  color: var(--muted);
-  font-size: 0.72rem;
-  line-height: 1.35;
+  line-height: 1.2;
 }
 
 .settings-version-card-action {
-  grid-column: 2;
+  grid-column: 1 / -1;
   display: inline-flex;
-  width: fit-content;
+  width: 100%;
   align-items: center;
+  justify-content: center;
   gap: 0.32rem;
-  margin-top: 0.12rem;
   border: 1px solid color-mix(in srgb, var(--focus) 34%, var(--border));
   border-radius: 0.48rem;
   background: color-mix(in srgb, var(--focus) 12%, var(--panel));
   color: var(--foreground);
-  padding: 0.32rem 0.48rem;
+  padding: 0.36rem 0.48rem;
   font-size: 0.72rem;
   font-weight: 700;
   line-height: 1;

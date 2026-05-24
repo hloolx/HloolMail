@@ -5,7 +5,7 @@ import { ArrowRight, Bot, Check, CircleAlert, CircleUserRound, Code2, Copy as Co
 import { toast } from 'sonner';
 import type { InstallStatus, User } from '../api';
 import { api, postJSON } from '../api';
-import type { OAuthProvider, PublicLoginSettings, RegisterCaptcha, RegisterResponse } from '../types';
+import type { PublicLoginSettings, RegisterCaptcha, RegisterResponse } from '../types';
 import { useText } from '../locales';
 import { useCountUp } from '../hooks/useCountUp';
 import { useCopyState } from '../hooks/useCopyState';
@@ -53,6 +53,7 @@ export function LandingPage({ status, onDone, authMode = 'home', initialMode = '
     .replace('{domains}', hostedDomains.toLocaleString());
   const authPanelRef = useRef<HTMLElement>(null);
   const authSubmitRef = useRef<HTMLButtonElement>(null);
+  const verificationRequestRef = useRef<HTMLButtonElement>(null);
   const passkeySubmitRef = useRef<HTMLButtonElement>(null);
   const loginTabRef = useRef<HTMLButtonElement>(null);
   const registerTabRef = useRef<HTMLButtonElement>(null);
@@ -66,12 +67,6 @@ export function LandingPage({ status, onDone, authMode = 'home', initialMode = '
   const [verificationCode, setVerificationCode] = useState('');
   const [captchaAnswer, setCaptchaAnswer] = useState('');
   const [authFieldErrors, setAuthFieldErrors] = useState<AuthFieldErrors>({});
-  const oauthProviders = useQuery({
-    queryKey: ['oauth-providers'],
-    queryFn: () => api<OAuthProvider[]>('/api/oauth/providers'),
-    retry: false,
-    staleTime: 60_000
-  });
   const loginSettings = useQuery({
     queryKey: ['login-settings'],
     queryFn: () => api<PublicLoginSettings>('/api/auth/login-settings'),
@@ -86,14 +81,19 @@ export function LandingPage({ status, onDone, authMode = 'home', initialMode = '
   const turnstileEnabled = Boolean(loginSettings.data?.turnstile_enabled && loginSettings.data?.turnstile_site_key);
   const turnstileSiteKey = loginSettings.data?.turnstile_site_key || '';
   const passkeyEnabled = !!loginSettings.data?.passkey_enabled;
-  const oauthRegistrationOpen = loginSettings.data ? loginSettings.data.registration_open !== false : true;
-  const emailRegistrationAvailable = loginSettings.data
-    ? loginSettings.data.registration_open !== false && loginSettings.data.email_registration_enabled !== false
-    : true;
+  const authSettingsResolved = loginSettings.isSuccess || loginSettings.isError;
+  const oauthProviderRows = loginSettings.data?.oauth_providers ?? [];
+  const registrationOpen = loginSettings.data?.registration_open === true;
+  const emailRegistrationAvailable = loginSettings.isSuccess && registrationOpen && loginSettings.data.email_registration_enabled === true;
+  const oauthRegistrationAvailable = loginSettings.isSuccess && registrationOpen && oauthProviderRows.length > 0;
+  const registrationAvailable = emailRegistrationAvailable || oauthRegistrationAvailable;
+  const registerModeSelectable = !authSettingsResolved || registrationAvailable;
+  const oauthRegistrationOpen = loginSettings.isSuccess && registrationOpen;
   const oauthError = isAuthPage ? oauthErrorFromLocation() : null;
   const isRegister = mode === 'register';
-  const isVerificationStep = isRegister && verification !== null;
-  const captchaRequired = isRegister && !isVerificationStep && loginSettings.isSuccess && !turnstileEnabled;
+  const registrationSettingsPending = isRegister && !authSettingsResolved;
+  const oauthOnlyRegistration = isRegister && authSettingsResolved && !emailRegistrationAvailable && oauthRegistrationAvailable;
+  const captchaRequired = isRegister && emailRegistrationAvailable && loginSettings.isSuccess && !turnstileEnabled;
   const registerCaptcha = useQuery({
     queryKey: ['register-captcha'],
     queryFn: () => postJSON<RegisterCaptcha>('/api/auth/register/captcha', {}),
@@ -169,13 +169,13 @@ export function LandingPage({ status, onDone, authMode = 'home', initialMode = '
   }, []);
 
   const selectAuthMode = useCallback((nextMode: 'login' | 'register') => {
-    if (nextMode === 'register' && !emailRegistrationAvailable) return;
+    if (nextMode === 'register' && !registerModeSelectable) return;
     setMode(nextMode);
     setVerification(null);
     setVerificationCode('');
     setAuthFieldErrors({});
     resetTurnstile();
-  }, [emailRegistrationAvailable, resetTurnstile]);
+  }, [registerModeSelectable, resetTurnstile]);
 
   const clearOAuthError = useCallback(() => {
     window.location.hash = '#/login';
@@ -190,12 +190,12 @@ export function LandingPage({ status, onDone, authMode = 'home', initialMode = '
     let nextMode: 'login' | 'register' | null = null;
 
     if (event.key === 'ArrowRight' || event.key === 'ArrowDown') {
-      nextMode = mode === 'login' && emailRegistrationAvailable ? 'register' : 'login';
+      nextMode = mode === 'login' && registerModeSelectable ? 'register' : 'login';
     } else if (event.key === 'ArrowLeft' || event.key === 'ArrowUp') {
-      nextMode = mode === 'register' || !emailRegistrationAvailable ? 'login' : 'register';
+      nextMode = mode === 'register' || !registerModeSelectable ? 'login' : 'register';
     } else if (event.key === 'Home') {
       nextMode = 'login';
-    } else if (event.key === 'End') {
+    } else if (event.key === 'End' && registerModeSelectable) {
       nextMode = 'register';
     }
 
@@ -203,17 +203,16 @@ export function LandingPage({ status, onDone, authMode = 'home', initialMode = '
     event.preventDefault();
     selectAuthMode(nextMode);
     focusAuthTab(nextMode);
-  }, [emailRegistrationAvailable, focusAuthTab, mode, selectAuthMode]);
+  }, [focusAuthTab, mode, registerModeSelectable, selectAuthMode]);
 
   useEffect(() => {
-    if (!emailRegistrationAvailable && mode === 'register') {
-      setMode('login');
+    if (authSettingsResolved && !registrationAvailable && mode === 'register') {
       setVerification(null);
       setVerificationCode('');
       setCaptchaAnswer('');
       setAuthFieldErrors({});
     }
-  }, [emailRegistrationAvailable, mode]);
+  }, [authSettingsResolved, mode, registrationAvailable]);
 
   useEffect(() => {
     if (!turnstileEnabled) {
@@ -352,7 +351,8 @@ export function LandingPage({ status, onDone, authMode = 'home', initialMode = '
       setVerificationCode('');
       setCaptchaAnswer('');
       resetTurnstile();
-      notifySuccess(text.login.verificationSent, { origin: authSubmitRef.current });
+      if (!turnstileEnabled) refreshCaptcha();
+      notifySuccess(text.login.verificationSent, { origin: verificationRequestRef.current });
     },
     onError: (error) => {
       resetTurnstile();
@@ -388,7 +388,19 @@ export function LandingPage({ status, onDone, authMode = 'home', initialMode = '
   });
   const pending = login.isPending || register.isPending || verifyRegister.isPending || passkeyLogin.isPending;
   const registerCaptchaBlocked = captchaRequired && (registerCaptcha.isLoading || !registerCaptcha.data?.captcha_id);
+  const verificationRequestBlocked = register.isPending || (turnstileEnabled && !turnstileToken) || registerCaptchaBlocked;
+  const authSubmitBlocked = pending ||
+    (!isRegister && !!turnstileEnabled && !turnstileToken) ||
+    (isRegister && emailRegistrationAvailable && (!verification?.verification_id || !verificationCode.trim()));
   const oauthErrorProviderName = oauthError?.provider ? oauthProviderDisplayName(oauthError.provider) : text.oauth.title;
+  const registrationUnavailableResolved = isRegister && authSettingsResolved && !registrationAvailable;
+  const visibleOAuthProviderRows = isRegister
+    ? (oauthRegistrationAvailable ? oauthProviderRows : [])
+    : oauthProviderRows;
+  const passwordDescription = [
+    isRegister ? 'auth-password-hint' : '',
+    authFieldErrors.password ? 'auth-password-error' : ''
+  ].filter(Boolean).join(' ') || undefined;
   const focusAuthField = (field: keyof AuthFieldErrors) => {
     const idByField: Record<keyof AuthFieldErrors, string> = {
       email: 'auth-email',
@@ -409,13 +421,11 @@ export function LandingPage({ status, onDone, authMode = 'home', initialMode = '
   };
   const validateAuthFields = () => {
     const nextErrors: AuthFieldErrors = {};
-    if (isVerificationStep) {
+    if (isRegister) {
+      if (!verification?.verification_id) nextErrors.verificationCode = text.login.verificationRequestRequired || text.login.verificationMissing;
       if (!verificationCode.trim()) nextErrors.verificationCode = text.login.verificationCodeRequired;
     } else {
       if (!email.trim()) nextErrors.email = text.login.emailRequired;
-      if (isRegister && password.length < 8) nextErrors.password = text.login.passwordTooShort;
-      if (isRegister && password !== confirmPassword) nextErrors.confirmPassword = text.login.passwordMismatch;
-      if (captchaRequired && !captchaAnswer.trim()) nextErrors.captchaAnswer = text.login.captchaAnswerRequired;
     }
     setAuthFieldErrors(nextErrors);
     const firstInvalid = (['email', 'password', 'confirmPassword', 'captchaAnswer', 'verificationCode'] as (keyof AuthFieldErrors)[])
@@ -423,15 +433,27 @@ export function LandingPage({ status, onDone, authMode = 'home', initialMode = '
     if (firstInvalid) focusAuthField(firstInvalid);
     return Object.keys(nextErrors).length === 0;
   };
+  const validateRegistrationRequestFields = () => {
+    const nextErrors: AuthFieldErrors = {};
+    if (!email.trim()) nextErrors.email = text.login.emailRequired;
+    if (password.length < 8) nextErrors.password = text.login.passwordTooShort;
+    if (password !== confirmPassword) nextErrors.confirmPassword = text.login.passwordMismatch;
+    if (captchaRequired && !captchaAnswer.trim()) nextErrors.captchaAnswer = text.login.captchaAnswerRequired;
+    setAuthFieldErrors(nextErrors);
+    const firstInvalid = (['email', 'password', 'confirmPassword', 'captchaAnswer'] as (keyof AuthFieldErrors)[])
+      .find((field) => nextErrors[field]);
+    if (firstInvalid) focusAuthField(firstInvalid);
+    return Object.keys(nextErrors).length === 0;
+  };
+  const requestRegistrationVerification = () => {
+    if (!validateRegistrationRequestFields()) return;
+    register.mutate();
+  };
   const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (!validateAuthFields()) return;
-    if (isVerificationStep) {
-      verifyRegister.mutate();
-      return;
-    }
     if (isRegister) {
-      register.mutate();
+      verifyRegister.mutate();
       return;
     }
     login.mutate();
@@ -489,7 +511,7 @@ export function LandingPage({ status, onDone, authMode = 'home', initialMode = '
               <p className="landing-hero-lead">{text.login.homeSlogan}</p>
               <p className="landing-hero-desc">{text.login.homeDesc}</p>
               <div className="landing-actions">
-                {emailRegistrationAvailable && (
+                {registrationAvailable && (
                   <button className="btn-primary" type="button" onClick={() => { window.location.hash = '#/register'; }}>
                     <MailPlus size={16} />
                     {text.login.primaryAction}
@@ -567,15 +589,15 @@ export function LandingPage({ status, onDone, authMode = 'home', initialMode = '
             <button ref={loginTabRef} className={!isRegister ? 'auth-tab-active' : ''} type="button" role="tab" aria-selected={!isRegister} tabIndex={!isRegister ? 0 : -1} onClick={() => selectAuthMode('login')}>
               {text.login.loginTab}
             </button>
-            {emailRegistrationAvailable && (
+            {(registerModeSelectable || isRegister) && (
               <button ref={registerTabRef} className={isRegister ? 'auth-tab-active' : ''} type="button" role="tab" aria-selected={isRegister} tabIndex={isRegister ? 0 : -1} onClick={() => selectAuthMode('register')}>
                 {text.login.registerTab}
               </button>
             )}
           </div>
           <div className="auth-heading">
-            <h2>{isVerificationStep ? text.login.verificationTitle : isRegister ? text.login.registerTitle : text.login.title}</h2>
-            <p>{isVerificationStep ? text.login.verificationDesc.replace('{email}', email.trim()) : isRegister ? text.login.registerDesc : text.login.desc}</p>
+            <h2>{isRegister ? text.login.registerTitle : text.login.title}</h2>
+            <p>{registrationUnavailableResolved ? text.login.registrationUnavailableAdmin : isRegister && oauthOnlyRegistration ? text.login.oauthOnlyRegisterDesc : isRegister ? text.login.registerDesc : text.login.desc}</p>
           </div>
           {oauthError?.code === 'registration_closed' && (
             <div className="oauth-error-alert" role="alert">
@@ -592,87 +614,166 @@ export function LandingPage({ status, onDone, authMode = 'home', initialMode = '
               </div>
             </div>
           )}
-          <form className="auth-form" onSubmit={submit}>
-            {isVerificationStep ? (
-              <>
-                <label htmlFor="auth-verification-code" className="sr-only">{text.login.verificationCode}</label>
-                <input
-                  id="auth-verification-code"
-                  className="input"
-                  value={verificationCode}
-                  onChange={(event) => {
-                    setVerificationCode(event.target.value);
-                    clearAuthFieldError('verificationCode');
-                  }}
-                  placeholder={text.login.verificationCode}
-                  inputMode="numeric"
-                  autoComplete="one-time-code"
-                  aria-invalid={Boolean(authFieldErrors.verificationCode)}
-                  aria-describedby={authFieldErrors.verificationCode ? 'auth-verification-code-error' : undefined}
-                />
-                {authFieldErrors.verificationCode && <span id="auth-verification-code-error" className="field-error" role="alert">{authFieldErrors.verificationCode}</span>}
-                <button className="btn-secondary auth-submit" type="button" disabled={pending} onClick={() => selectAuthMode('register')}>
-                  {text.login.backToRegister}
+          {registrationUnavailableResolved && (
+            <div className="oauth-error-alert" role="alert">
+              <span className="oauth-error-alert-icon">
+                <CircleAlert size={18} aria-hidden="true" />
+              </span>
+              <div className="oauth-error-alert-content">
+                <h3>{text.login.registrationUnavailableTitle}</h3>
+                <p>{text.login.registrationUnavailableAdmin}</p>
+                <button className="btn-secondary" type="button" onClick={() => selectAuthMode('login')}>
+                  <Home size={15} aria-hidden="true" />
+                  {text.login.oauthRegistrationClosedAction}
                 </button>
-              </>
-            ) : (
+              </div>
+            </div>
+          )}
+          {registrationSettingsPending ? (
+            <div className="auth-loading-state">
+              <LoadingIndicator label={text.common.loading} size={18} />
+            </div>
+          ) : (!isRegister || emailRegistrationAvailable) && (
+          <form className="auth-form" onSubmit={submit}>
+            <label htmlFor="auth-email" className="sr-only">{text.login.email}</label>
+            <input
+              id="auth-email"
+              className="input"
+              value={email}
+              onChange={(event) => {
+                setEmail(event.target.value);
+                clearAuthFieldError('email');
+                if (isRegister) {
+                  setVerification(null);
+                  setVerificationCode('');
+                }
+              }}
+              placeholder={text.login.email}
+              type="email"
+              autoComplete="email"
+              aria-invalid={Boolean(authFieldErrors.email)}
+              aria-describedby={authFieldErrors.email ? 'auth-email-error' : undefined}
+            />
+            {authFieldErrors.email && <span id="auth-email-error" className="field-error" role="alert">{authFieldErrors.email}</span>}
+            <label htmlFor="auth-password" className="sr-only">{text.login.password}</label>
+            <input
+              id="auth-password"
+              className="input"
+              value={password}
+              onChange={(event) => {
+                setPassword(event.target.value);
+                clearAuthFieldError('password');
+                if (isRegister) {
+                  setVerification(null);
+                  setVerificationCode('');
+                }
+              }}
+              placeholder={text.login.password}
+              type="password"
+              autoComplete={isRegister ? 'new-password' : 'current-password'}
+              aria-invalid={Boolean(authFieldErrors.password)}
+              aria-describedby={passwordDescription}
+            />
+            {isRegister && <p id="auth-password-hint" className="auth-password-hint">{text.login.passwordHint}</p>}
+            {authFieldErrors.password && <span id="auth-password-error" className="field-error" role="alert">{authFieldErrors.password}</span>}
+            {isRegister && (
               <>
-                <label htmlFor="auth-email" className="sr-only">{text.login.email}</label>
-                <input
-                  id="auth-email"
-                  className="input"
-                  value={email}
-                  onChange={(event) => {
-                    setEmail(event.target.value);
-                    clearAuthFieldError('email');
-                  }}
-                  placeholder={text.login.email}
-                  type="email"
-                  autoComplete="email"
-                  aria-invalid={Boolean(authFieldErrors.email)}
-                  aria-describedby={authFieldErrors.email ? 'auth-email-error' : undefined}
-                />
-                {authFieldErrors.email && <span id="auth-email-error" className="field-error" role="alert">{authFieldErrors.email}</span>}
-                <label htmlFor="auth-password" className="sr-only">{text.login.password}</label>
-                <input
-                  id="auth-password"
-                  className="input"
-                  value={password}
-                  onChange={(event) => {
-                    setPassword(event.target.value);
-                    clearAuthFieldError('password');
-                  }}
-                  placeholder={text.login.password}
-                  type="password"
-                  autoComplete={isRegister ? 'new-password' : 'current-password'}
-                  aria-invalid={Boolean(authFieldErrors.password)}
-                  aria-describedby={authFieldErrors.password ? 'auth-password-error' : undefined}
-                />
-                {authFieldErrors.password && <span id="auth-password-error" className="field-error" role="alert">{authFieldErrors.password}</span>}
-                {isRegister && <InfoTip text={text.login.passwordHint} />}
-                {isRegister && (
-                  <div className="auth-confirm-wrapper">
-                    <label htmlFor="auth-confirm-password" className="sr-only">{text.login.confirmPassword}</label>
+                <div className="auth-confirm-wrapper">
+                  <label htmlFor="auth-confirm-password" className="sr-only">{text.login.confirmPassword}</label>
+                  <input
+                    id="auth-confirm-password"
+                    className="input"
+                    value={confirmPassword}
+                    onChange={(event) => {
+                      setConfirmPassword(event.target.value);
+                      clearAuthFieldError('confirmPassword');
+                      setVerification(null);
+                      setVerificationCode('');
+                    }}
+                    placeholder={text.login.confirmPassword}
+                    type="password"
+                    autoComplete="new-password"
+                    aria-invalid={Boolean(authFieldErrors.confirmPassword)}
+                    aria-describedby={authFieldErrors.confirmPassword ? 'auth-confirm-password-error' : undefined}
+                  />
+                  {authFieldErrors.confirmPassword && <span id="auth-confirm-password-error" className="field-error" role="alert">{authFieldErrors.confirmPassword}</span>}
+                </div>
+                {turnstileEnabled && (
+                  <>
+                    <div ref={turnstileContainerRef} className="auth-turnstile-widget" />
+                    {turnstileLoadError && (
+                      <p className="auth-turnstile-error" role="status">
+                        {text.login.turnstileLoadError}
+                      </p>
+                    )}
+                  </>
+                )}
+                {captchaRequired && (
+                  <div className="auth-captcha-box">
+                    <div className="auth-captcha-challenge">
+                      <span>{registerCaptcha.isLoading ? text.login.captchaLoading : registerCaptcha.data?.challenge || text.login.captchaLoadError}</span>
+                      <button className="icon-button" type="button" onClick={refreshCaptcha} disabled={pending || registerCaptcha.isFetching} aria-label={text.login.captchaRefresh}>
+                        <RefreshCcw size={15} />
+                      </button>
+                    </div>
+                    <label htmlFor="auth-captcha-answer" className="sr-only">{text.login.captchaAnswer}</label>
                     <input
-                      id="auth-confirm-password"
+                      id="auth-captcha-answer"
                       className="input"
-                      value={confirmPassword}
+                      value={captchaAnswer}
                       onChange={(event) => {
-                        setConfirmPassword(event.target.value);
-                        clearAuthFieldError('confirmPassword');
+                        setCaptchaAnswer(event.target.value);
+                        clearAuthFieldError('captchaAnswer');
                       }}
-                      placeholder={text.login.confirmPassword}
-                      type="password"
-                      autoComplete="new-password"
-                      aria-invalid={Boolean(authFieldErrors.confirmPassword)}
-                      aria-describedby={authFieldErrors.confirmPassword ? 'auth-confirm-password-error' : undefined}
+                      placeholder={text.login.captchaAnswer}
+                      autoComplete="off"
+                      aria-invalid={Boolean(authFieldErrors.captchaAnswer)}
+                      aria-describedby={authFieldErrors.captchaAnswer ? 'auth-captcha-answer-error' : undefined}
                     />
-                    {authFieldErrors.confirmPassword && <span id="auth-confirm-password-error" className="field-error" role="alert">{authFieldErrors.confirmPassword}</span>}
+                    {authFieldErrors.captchaAnswer && <span id="auth-captcha-answer-error" className="field-error" role="alert">{authFieldErrors.captchaAnswer}</span>}
                   </div>
+                )}
+                <div className="auth-verification-row">
+                  <label htmlFor="auth-verification-code" className="sr-only">{text.login.verificationCode}</label>
+                  <input
+                    id="auth-verification-code"
+                    className="input"
+                    value={verificationCode}
+                    onChange={(event) => {
+                      setVerificationCode(event.target.value);
+                      clearAuthFieldError('verificationCode');
+                    }}
+                    placeholder={text.login.verificationCode}
+                    inputMode="numeric"
+                    autoComplete="one-time-code"
+                    aria-invalid={Boolean(authFieldErrors.verificationCode)}
+                    aria-describedby={authFieldErrors.verificationCode ? 'auth-verification-code-error' : verification?.verification_id ? 'auth-verification-code-hint' : undefined}
+                  />
+                  <button
+                    ref={verificationRequestRef}
+                    className="btn-secondary auth-verification-request"
+                    type="button"
+                    disabled={verificationRequestBlocked}
+                    onClick={requestRegistrationVerification}
+                  >
+                    {register.isPending ? (
+                      <LoadingIndicator className="auth-submit-loading" label={text.login.verificationRequestPending} />
+                    ) : verification?.verification_id ? (
+                      text.login.resendVerificationCode
+                    ) : (
+                      text.login.requestVerificationCode
+                    )}
+                  </button>
+                </div>
+                {authFieldErrors.verificationCode && <span id="auth-verification-code-error" className="field-error" role="alert">{authFieldErrors.verificationCode}</span>}
+                {verification?.verification_id && (
+                  <p id="auth-verification-code-hint" className="auth-verification-hint">
+                    {text.login.verificationDesc.replace('{email}', email.trim())}
+                  </p>
                 )}
               </>
             )}
-            {!isVerificationStep && turnstileEnabled && (
+            {!isRegister && turnstileEnabled && (
               <>
                 <div ref={turnstileContainerRef} className="auth-turnstile-widget" />
                 {turnstileLoadError && (
@@ -682,36 +783,11 @@ export function LandingPage({ status, onDone, authMode = 'home', initialMode = '
                 )}
               </>
             )}
-            {captchaRequired && (
-              <div className="auth-captcha-box">
-                <div className="auth-captcha-challenge">
-                  <span>{registerCaptcha.isLoading ? text.login.captchaLoading : registerCaptcha.data?.challenge || text.login.captchaLoadError}</span>
-                  <button className="icon-button" type="button" onClick={refreshCaptcha} disabled={pending || registerCaptcha.isFetching} aria-label={text.login.captchaRefresh}>
-                    <RefreshCcw size={15} />
-                  </button>
-                </div>
-                <label htmlFor="auth-captcha-answer" className="sr-only">{text.login.captchaAnswer}</label>
-                <input
-                  id="auth-captcha-answer"
-                  className="input"
-                  value={captchaAnswer}
-                  onChange={(event) => {
-                    setCaptchaAnswer(event.target.value);
-                    clearAuthFieldError('captchaAnswer');
-                  }}
-                  placeholder={text.login.captchaAnswer}
-                  autoComplete="off"
-                  aria-invalid={Boolean(authFieldErrors.captchaAnswer)}
-                  aria-describedby={authFieldErrors.captchaAnswer ? 'auth-captcha-answer-error' : undefined}
-                />
-                {authFieldErrors.captchaAnswer && <span id="auth-captcha-answer-error" className="field-error" role="alert">{authFieldErrors.captchaAnswer}</span>}
-              </div>
-            )}
-            <button ref={authSubmitRef} className="btn-primary auth-submit" type="submit" disabled={pending || (!isVerificationStep && !!turnstileEnabled && !turnstileToken) || registerCaptchaBlocked}>
-              {pending ? (
-                <LoadingIndicator className="auth-submit-loading" label={isVerificationStep ? text.login.verificationPending : isRegister ? text.login.registerPending : text.login.loginPending} />
+            <button ref={authSubmitRef} className="btn-primary auth-submit" type="submit" disabled={authSubmitBlocked}>
+              {verifyRegister.isPending || login.isPending ? (
+                <LoadingIndicator className="auth-submit-loading" label={isRegister ? text.login.verificationPending : text.login.loginPending} />
               ) : (
-                <>{isVerificationStep ? text.login.verificationSubmit : isRegister ? text.login.registerSubmit : text.login.submit}{isVerificationStep ? <MailCheck size={16} /> : <ArrowRight size={16} />}</>
+                <>{isRegister ? text.login.verificationSubmit : text.login.submit}{isRegister ? <MailCheck size={16} /> : <ArrowRight size={16} />}</>
               )}
             </button>
             {!isRegister && passkeyEnabled && (
@@ -726,11 +802,12 @@ export function LandingPage({ status, onDone, authMode = 'home', initialMode = '
               </button>
             )}
           </form>
-          {(oauthProviders.data || []).length > 0 && (
-            <div className="oauth-login-box">
-              <div className="oauth-login-divider"><span>{text.oauth.title}</span></div>
+          )}
+          {visibleOAuthProviderRows.length > 0 && (
+            <div className={`oauth-login-box${oauthOnlyRegistration ? ' oauth-login-box-primary' : ''}`}>
+              {!oauthOnlyRegistration && <div className="oauth-login-divider"><span>{text.oauth.title}</span></div>}
               <div className="oauth-login-actions">
-                {(oauthProviders.data || []).map((provider) => {
+                {visibleOAuthProviderRows.map((provider) => {
                   const Icon = provider.provider === 'github' ? Github : CircleUserRound;
                   const actionTemplate = isRegister
                     ? text.oauth.register_with
@@ -754,7 +831,7 @@ export function LandingPage({ status, onDone, authMode = 'home', initialMode = '
               </div>
             </div>
           )}
-          {oauthProviders.isError && (
+          {loginSettings.isError && (
             <p className="oauth-error-fallback">{text.oauth.load_error}</p>
           )}
           {isAuthPage && (

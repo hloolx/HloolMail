@@ -229,6 +229,9 @@ export type LoginSettings = {
   smtp_password: string;
   smtp_from_name: string;
   smtp_from_email: string;
+  email_delivery_ready?: boolean;
+  email_delivery_tested_at?: string;
+  email_delivery_test_recipient?: string;
   turnstile_enabled: boolean;
   turnstile_site_key: string;
   turnstile_secret_key: string;
@@ -241,6 +244,7 @@ export type PublicLoginSettings = {
   registration_open?: boolean;
   email_registration_enabled?: boolean;
   email_verification_mode?: 'internal' | 'smtp';
+  email_delivery_ready?: boolean;
   turnstile_enabled?: boolean;
   turnstile_site_key?: string;
   passkey_enabled?: boolean;

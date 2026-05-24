@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"gptmail/internal/config"
 	"gptmail/internal/db"
 	"gptmail/internal/jobs"
 	"gptmail/internal/mailer"
@@ -59,6 +60,24 @@ type domainHealthListResponse struct {
 	TotalPages int                     `json:"total_pages"`
 }
 
+type adminLoginSettingsInput struct {
+	TurnstileEnabled         *bool   `json:"turnstile_enabled"`
+	TurnstileSiteKey         *string `json:"turnstile_site_key"`
+	TurnstileSecretKey       *string `json:"turnstile_secret_key"`
+	PasskeyEnabled           *bool   `json:"passkey_enabled"`
+	RegistrationOpen         *bool   `json:"registration_open"`
+	EmailRegistrationEnabled *bool   `json:"email_registration_enabled"`
+	EmailVerificationMode    *string `json:"email_verification_mode"`
+	InternalSenderPrefix     *string `json:"internal_sender_prefix"`
+	SMTPHost                 *string `json:"smtp_host"`
+	SMTPPort                 *int    `json:"smtp_port"`
+	SMTPSecurity             *string `json:"smtp_security"`
+	SMTPUsername             *string `json:"smtp_username"`
+	SMTPPassword             *string `json:"smtp_password"`
+	SMTPFromName             *string `json:"smtp_from_name"`
+	SMTPFromEmail            *string `json:"smtp_from_email"`
+}
+
 func (h *Handler) adminDomainHealth(c *gin.Context) {
 	if !h.requireAdmin(c) {
 		return
@@ -67,9 +86,9 @@ func (h *Handler) adminDomainHealth(c *gin.Context) {
 	perPage := parseLimit(c.Query("per_page"), 10, 100)
 	now := time.Now()
 
-	query := h.DB.Model(&models.Domain{})
+	query := applyAdminDomainHealthFilters(h.DB.Model(&models.Domain{}), c, now)
 	var total int64
-	if err := query.Count(&total).Error; err != nil {
+	if err := query.Session(&gorm.Session{}).Count(&total).Error; err != nil {
 		fail(c, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -116,18 +135,74 @@ func (h *Handler) adminDomainHealth(c *gin.Context) {
 	})
 }
 
+func applyAdminDomainHealthFilters(query *gorm.DB, c *gin.Context, now time.Time) *gorm.DB {
+	if search := strings.TrimSpace(strings.ToLower(c.Query("q"))); search != "" {
+		like := "%" + search + "%"
+		query = query.Joins("LEFT JOIN users ON users.id = domains.owner_id").
+			Where("(LOWER(domains.domain) LIKE ? OR LOWER(users.email) LIKE ?)", like, like)
+	}
+
+	switch mode := strings.TrimSpace(c.Query("mode")); mode {
+	case models.DomainModePublic, models.DomainModePrivate:
+		query = query.Where("domains.mode = ?", mode)
+	}
+
+	switch strings.TrimSpace(c.Query("status")) {
+	case "active":
+		query = query.Where("domains.active = ?", true)
+	case "inactive":
+		query = query.Where("domains.active = ?", false)
+	}
+
+	switch strings.TrimSpace(c.Query("mx")) {
+	case "verified":
+		query = query.Where("domains.mx_verified = ?", true)
+	case "failed":
+		query = query.Where("domains.active = ? AND domains.mx_verified = ?", true, false)
+	case "wildcard_failed":
+		query = query.Where("domains.active = ? AND domains.wildcard_requested = ? AND domains.wildcard_enabled = ?", true, true, false)
+	case "unchecked":
+		query = query.Where("domains.last_mx_check_at IS NULL")
+	case "stale":
+		query = query.Where("(domains.last_mx_check_at IS NULL OR domains.last_mx_check_at < ?)", now.Add(-24*time.Hour))
+	}
+
+	switch strings.TrimSpace(c.Query("severity")) {
+	case "critical":
+		query = query.Where("domains.active = ? AND (domains.mx_verified = ? OR domains.domain_expires_at < ?)", true, false, now)
+	case "warning":
+		query = query.Where(`(domains.active = ? OR (
+			domains.active = ?
+			AND domains.mx_verified = ?
+			AND (
+				(domains.domain_expires_at IS NOT NULL AND domains.domain_expires_at >= ? AND domains.domain_expires_at < ?)
+				OR domains.last_mx_check_at IS NULL
+				OR domains.last_mx_check_at < ?
+			)
+		))`, false, true, true, now, now.AddDate(0, 0, 30), now.Add(-24*time.Hour))
+	case "ok":
+		query = query.Where(`domains.active = ?
+			AND domains.mx_verified = ?
+			AND (domains.domain_expires_at IS NULL OR domains.domain_expires_at >= ?)
+			AND domains.last_mx_check_at IS NOT NULL
+			AND domains.last_mx_check_at >= ?`, true, true, now.AddDate(0, 0, 30), now.Add(-24*time.Hour))
+	}
+
+	return query
+}
+
 func domainHealthOrder(now time.Time) clause.OrderBy {
 	return clause.OrderBy{
 		Expression: clause.Expr{
 			SQL: `CASE
-				WHEN active = ? THEN ?
-				WHEN mx_verified = ? THEN ?
-				WHEN domain_expires_at IS NOT NULL AND domain_expires_at < ? THEN ?
-				WHEN domain_expires_at IS NOT NULL AND domain_expires_at < ? THEN ?
-				WHEN last_mx_check_at IS NULL THEN ?
-				WHEN last_mx_check_at < ? THEN ?
+				WHEN domains.active = ? THEN ?
+				WHEN domains.mx_verified = ? THEN ?
+				WHEN domains.domain_expires_at IS NOT NULL AND domains.domain_expires_at < ? THEN ?
+				WHEN domains.domain_expires_at IS NOT NULL AND domains.domain_expires_at < ? THEN ?
+				WHEN domains.last_mx_check_at IS NULL THEN ?
+				WHEN domains.last_mx_check_at < ? THEN ?
 				ELSE ?
-			END DESC, domain ASC`,
+			END DESC, domains.domain ASC`,
 			Vars: []interface{}{
 				false, severityRank("warning"),
 				false, severityRank("critical"),
@@ -808,7 +883,7 @@ func (h *Handler) adminLoginSettings(c *gin.Context) {
 		fail(c, http.StatusInternalServerError, err.Error())
 		return
 	}
-	ok(c, loginSettingsDTO(settings))
+	ok(c, loginSettingsDTO(h.Config, settings))
 }
 
 func (h *Handler) patchAdminLoginSettings(c *gin.Context) {
@@ -820,37 +895,96 @@ func (h *Handler) patchAdminLoginSettings(c *gin.Context) {
 		fail(c, http.StatusInternalServerError, err.Error())
 		return
 	}
+	var input adminLoginSettingsInput
+	if err := c.ShouldBindJSON(&input); err != nil {
+		fail(c, http.StatusBadRequest, "invalid json")
+		return
+	}
+	applyAdminLoginSettingsInput(settings, input)
+	if settings.TurnstileEnabled && (settings.TurnstileSiteKey == "" || settings.TurnstileSecretKey == "") {
+		fail(c, http.StatusBadRequest, "turnstile site key and secret key are required when turnstile is enabled")
+		return
+	}
+	if err := validateLoginEmailSettings(settings); err != nil {
+		fail(c, http.StatusBadRequest, err.Error())
+		return
+	}
+	if settings.EmailRegistrationEnabled && !loginEmailDeliveryReady(h.Config, settings) {
+		fail(c, http.StatusBadRequest, "send a test email successfully before enabling email registration")
+		return
+	}
+	if err := h.DB.Save(settings).Error; err != nil {
+		fail(c, http.StatusInternalServerError, err.Error())
+		return
+	}
+	h.audit("login_settings.patch", actor(c), "login-settings", "")
+	ok(c, loginSettingsDTO(h.Config, settings))
+}
+
+func (h *Handler) testAdminLoginSettingsEmail(c *gin.Context) {
+	if !h.requireAdmin(c) {
+		return
+	}
 	var input struct {
-		TurnstileEnabled         *bool   `json:"turnstile_enabled"`
-		TurnstileSiteKey         *string `json:"turnstile_site_key"`
-		TurnstileSecretKey       *string `json:"turnstile_secret_key"`
-		PasskeyEnabled           *bool   `json:"passkey_enabled"`
-		RegistrationOpen         *bool   `json:"registration_open"`
-		EmailRegistrationEnabled *bool   `json:"email_registration_enabled"`
-		EmailVerificationMode    *string `json:"email_verification_mode"`
-		InternalSenderPrefix     *string `json:"internal_sender_prefix"`
-		SMTPHost                 *string `json:"smtp_host"`
-		SMTPPort                 *int    `json:"smtp_port"`
-		SMTPSecurity             *string `json:"smtp_security"`
-		SMTPUsername             *string `json:"smtp_username"`
-		SMTPPassword             *string `json:"smtp_password"`
-		SMTPFromName             *string `json:"smtp_from_name"`
-		SMTPFromEmail            *string `json:"smtp_from_email"`
+		Recipient string                   `json:"recipient"`
+		Settings  *adminLoginSettingsInput `json:"settings"`
 	}
 	if err := c.ShouldBindJSON(&input); err != nil {
 		fail(c, http.StatusBadRequest, "invalid json")
 		return
 	}
+	recipient := strings.ToLower(strings.TrimSpace(input.Recipient))
+	if !strings.Contains(recipient, "@") {
+		fail(c, http.StatusBadRequest, "valid recipient is required")
+		return
+	}
+	settings, err := db.EnsureLoginSettings(h.DB)
+	if err != nil {
+		fail(c, http.StatusInternalServerError, err.Error())
+		return
+	}
+	candidate := *settings
+	if input.Settings != nil {
+		applyAdminLoginSettingsInput(&candidate, *input.Settings)
+	}
+	if err := validateLoginEmailSendSettings(&candidate); err != nil {
+		fail(c, http.StatusBadRequest, err.Error())
+		return
+	}
+	err = h.mailSender().Send(c.Request.Context(), mailerSettingsFromLoginSettings(h.Config, &candidate), mailer.Message{
+		To:      recipient,
+		Subject: "HloolMail test email",
+		Text:    "This is a test email from HloolMail.",
+		HTML:    "<p>This is a test email from HloolMail.</p>",
+	})
+	if err != nil {
+		fail(c, http.StatusBadGateway, err.Error())
+		return
+	}
+	now := time.Now()
+	settings.EmailDeliveryTestedAt = &now
+	settings.EmailDeliveryTestHash = loginEmailSettingsFingerprint(h.Config, &candidate)
+	settings.EmailDeliveryTestRecipient = recipient
+	if err := h.DB.Save(settings).Error; err != nil {
+		fail(c, http.StatusInternalServerError, err.Error())
+		return
+	}
+	h.audit("login_settings.test_email", actor(c), "login-settings", recipient)
+	response := loginSettingsDTO(h.Config, settings)
+	response["sent"] = true
+	response["tested_mode"] = strings.ToLower(strings.TrimSpace(candidate.EmailVerificationMode))
+	ok(c, response)
+}
+
+func applyAdminLoginSettingsInput(settings *models.LoginSettings, input adminLoginSettingsInput) {
 	if input.TurnstileEnabled != nil {
 		settings.TurnstileEnabled = *input.TurnstileEnabled
 	}
 	if input.TurnstileSiteKey != nil {
 		settings.TurnstileSiteKey = strings.TrimSpace(*input.TurnstileSiteKey)
 	}
-	if input.TurnstileSecretKey != nil {
-		if *input.TurnstileSecretKey != "***" {
-			settings.TurnstileSecretKey = strings.TrimSpace(*input.TurnstileSecretKey)
-		}
+	if input.TurnstileSecretKey != nil && *input.TurnstileSecretKey != "***" {
+		settings.TurnstileSecretKey = strings.TrimSpace(*input.TurnstileSecretKey)
 	}
 	if input.PasskeyEnabled != nil {
 		settings.PasskeyEnabled = *input.PasskeyEnabled
@@ -879,10 +1013,8 @@ func (h *Handler) patchAdminLoginSettings(c *gin.Context) {
 	if input.SMTPUsername != nil {
 		settings.SMTPUsername = strings.TrimSpace(*input.SMTPUsername)
 	}
-	if input.SMTPPassword != nil {
-		if *input.SMTPPassword != "***" {
-			settings.SMTPPassword = strings.TrimSpace(*input.SMTPPassword)
-		}
+	if input.SMTPPassword != nil && *input.SMTPPassword != "***" {
+		settings.SMTPPassword = strings.TrimSpace(*input.SMTPPassword)
 	}
 	if input.SMTPFromName != nil {
 		settings.SMTPFromName = strings.TrimSpace(*input.SMTPFromName)
@@ -890,59 +1022,6 @@ func (h *Handler) patchAdminLoginSettings(c *gin.Context) {
 	if input.SMTPFromEmail != nil {
 		settings.SMTPFromEmail = strings.TrimSpace(*input.SMTPFromEmail)
 	}
-	if settings.TurnstileEnabled && (settings.TurnstileSiteKey == "" || settings.TurnstileSecretKey == "") {
-		fail(c, http.StatusBadRequest, "turnstile site key and secret key are required when turnstile is enabled")
-		return
-	}
-	if err := validateLoginEmailSettings(settings); err != nil {
-		fail(c, http.StatusBadRequest, err.Error())
-		return
-	}
-	if err := h.DB.Save(settings).Error; err != nil {
-		fail(c, http.StatusInternalServerError, err.Error())
-		return
-	}
-	h.audit("login_settings.patch", actor(c), "login-settings", "")
-	ok(c, loginSettingsDTO(settings))
-}
-
-func (h *Handler) testAdminLoginSettingsEmail(c *gin.Context) {
-	if !h.requireAdmin(c) {
-		return
-	}
-	var input struct {
-		Recipient string `json:"recipient"`
-	}
-	if err := c.ShouldBindJSON(&input); err != nil {
-		fail(c, http.StatusBadRequest, "invalid json")
-		return
-	}
-	recipient := strings.ToLower(strings.TrimSpace(input.Recipient))
-	if !strings.Contains(recipient, "@") {
-		fail(c, http.StatusBadRequest, "valid recipient is required")
-		return
-	}
-	settings, err := db.EnsureLoginSettings(h.DB)
-	if err != nil {
-		fail(c, http.StatusInternalServerError, err.Error())
-		return
-	}
-	if err := validateLoginEmailSendSettings(settings); err != nil {
-		fail(c, http.StatusBadRequest, err.Error())
-		return
-	}
-	err = h.mailSender().Send(c.Request.Context(), mailerSettingsFromLoginSettings(h.Config, settings), mailer.Message{
-		To:      recipient,
-		Subject: "HloolMail test email",
-		Text:    "This is a test email from HloolMail.",
-		HTML:    "<p>This is a test email from HloolMail.</p>",
-	})
-	if err != nil {
-		fail(c, http.StatusBadGateway, err.Error())
-		return
-	}
-	h.audit("login_settings.test_email", actor(c), "login-settings", recipient)
-	ok(c, gin.H{"sent": true})
 }
 
 func validateLoginEmailSettings(settings *models.LoginSettings) error {
@@ -991,7 +1070,7 @@ func validateLoginEmailSettingsForUse(settings *models.LoginSettings) error {
 	return nil
 }
 
-func loginSettingsDTO(settings *models.LoginSettings) gin.H {
+func loginSettingsDTO(cfg config.Config, settings *models.LoginSettings) gin.H {
 	secretKey := ""
 	if settings.TurnstileSecretKey != "" {
 		secretKey = "***"
@@ -1000,23 +1079,27 @@ func loginSettingsDTO(settings *models.LoginSettings) gin.H {
 	if settings.SMTPPassword != "" {
 		smtpPassword = "***"
 	}
+	emailDeliveryReady := loginEmailDeliveryReady(cfg, settings)
 	return gin.H{
-		"id":                         settings.ID,
-		"turnstile_enabled":          settings.TurnstileEnabled,
-		"turnstile_site_key":         settings.TurnstileSiteKey,
-		"turnstile_secret_key":       secretKey,
-		"passkey_enabled":            settings.PasskeyEnabled,
-		"registration_open":          settings.RegistrationOpen,
-		"email_registration_enabled": settings.EmailRegistrationEnabled,
-		"email_verification_mode":    settings.EmailVerificationMode,
-		"internal_sender_prefix":     settings.InternalSenderPrefix,
-		"smtp_host":                  settings.SMTPHost,
-		"smtp_port":                  settings.SMTPPort,
-		"smtp_security":              settings.SMTPSecurity,
-		"smtp_username":              settings.SMTPUsername,
-		"smtp_password":              smtpPassword,
-		"smtp_from_name":             settings.SMTPFromName,
-		"smtp_from_email":            settings.SMTPFromEmail,
-		"updated_at":                 settings.UpdatedAt,
+		"id":                            settings.ID,
+		"turnstile_enabled":             settings.TurnstileEnabled,
+		"turnstile_site_key":            settings.TurnstileSiteKey,
+		"turnstile_secret_key":          secretKey,
+		"passkey_enabled":               settings.PasskeyEnabled,
+		"registration_open":             settings.RegistrationOpen,
+		"email_registration_enabled":    settings.EmailRegistrationEnabled,
+		"email_verification_mode":       settings.EmailVerificationMode,
+		"internal_sender_prefix":        settings.InternalSenderPrefix,
+		"smtp_host":                     settings.SMTPHost,
+		"smtp_port":                     settings.SMTPPort,
+		"smtp_security":                 settings.SMTPSecurity,
+		"smtp_username":                 settings.SMTPUsername,
+		"smtp_password":                 smtpPassword,
+		"smtp_from_name":                settings.SMTPFromName,
+		"smtp_from_email":               settings.SMTPFromEmail,
+		"email_delivery_ready":          emailDeliveryReady,
+		"email_delivery_tested_at":      settings.EmailDeliveryTestedAt,
+		"email_delivery_test_recipient": settings.EmailDeliveryTestRecipient,
+		"updated_at":                    settings.UpdatedAt,
 	}
 }

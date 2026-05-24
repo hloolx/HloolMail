@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -273,7 +274,7 @@ func (h *Handler) registrationCaptcha(c *gin.Context) {
 		fail(c, http.StatusInternalServerError, err.Error())
 		return
 	}
-	if !settings.RegistrationOpen || !settings.EmailRegistrationEnabled {
+	if !settings.RegistrationOpen || !loginEmailRegistrationReady(h.Config, settings) {
 		fail(c, http.StatusForbidden, "email registration is disabled")
 		return
 	}
@@ -340,7 +341,7 @@ func (h *Handler) register(c *gin.Context) {
 		fail(c, http.StatusInternalServerError, err.Error())
 		return
 	}
-	if !settings.RegistrationOpen || !settings.EmailRegistrationEnabled {
+	if !settings.RegistrationOpen || !loginEmailRegistrationReady(h.Config, settings) {
 		fail(c, http.StatusForbidden, "email registration is disabled")
 		return
 	}
@@ -654,6 +655,38 @@ func mailerSettingsFromLoginSettings(cfg config.Config, settings *models.LoginSe
 	}
 }
 
+func loginEmailRegistrationReady(cfg config.Config, settings *models.LoginSettings) bool {
+	return settings != nil && settings.EmailRegistrationEnabled && loginEmailDeliveryReady(cfg, settings)
+}
+
+func loginEmailDeliveryReady(cfg config.Config, settings *models.LoginSettings) bool {
+	if settings == nil || settings.EmailDeliveryTestedAt == nil {
+		return false
+	}
+	return settings.EmailDeliveryTestHash != "" && settings.EmailDeliveryTestHash == loginEmailSettingsFingerprint(cfg, settings)
+}
+
+func loginEmailSettingsFingerprint(cfg config.Config, settings *models.LoginSettings) string {
+	if settings == nil {
+		return ""
+	}
+	snapshot := map[string]any{
+		"mode":                   strings.ToLower(strings.TrimSpace(settings.EmailVerificationMode)),
+		"mail_hostname":          strings.ToLower(strings.TrimSpace(cfg.MailHostname)),
+		"internal_sender_prefix": strings.ToLower(strings.TrimSpace(settings.InternalSenderPrefix)),
+		"smtp_host":              strings.ToLower(strings.TrimSpace(settings.SMTPHost)),
+		"smtp_port":              settings.SMTPPort,
+		"smtp_security":          strings.ToLower(strings.TrimSpace(settings.SMTPSecurity)),
+		"smtp_username":          strings.TrimSpace(settings.SMTPUsername),
+		"smtp_password":          settings.SMTPPassword,
+		"smtp_from_name":         strings.TrimSpace(settings.SMTPFromName),
+		"smtp_from_email":        strings.ToLower(strings.TrimSpace(settings.SMTPFromEmail)),
+	}
+	data, _ := json.Marshal(snapshot)
+	sum := sha256.Sum256(data)
+	return fmt.Sprintf("%x", sum[:])
+}
+
 func randomVerificationCode() (string, error) {
 	n, err := rand.Int(rand.Reader, big.NewInt(1000000))
 	if err != nil {
@@ -711,7 +744,8 @@ func (h *Handler) loginSettings(c *gin.Context) {
 	response["turnstile_site_key"] = settings.TurnstileSiteKey
 	response["passkey_enabled"] = settings.PasskeyEnabled
 	response["registration_open"] = settings.RegistrationOpen
-	response["email_registration_enabled"] = settings.EmailRegistrationEnabled
+	response["email_registration_enabled"] = settings.RegistrationOpen && loginEmailRegistrationReady(h.Config, settings)
+	response["email_delivery_ready"] = loginEmailDeliveryReady(h.Config, settings)
 
 	providers := make([]oauthProviderDTO, 0, len(oauthProviderMetas()))
 	for _, meta := range oauthProviderMetas() {

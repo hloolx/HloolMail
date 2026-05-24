@@ -65,6 +65,8 @@ export function HeaderSettings({ user }: { user?: User }) {
   }, [open, isAdmin, versionInfo]);
 
   const checkUpdate = useCallback(async () => {
+    if (!isAdmin) return;
+
     setCheckingUpdate(true);
     setUpdateCheckFailed(false);
     try {
@@ -75,7 +77,7 @@ export function HeaderSettings({ user }: { user?: User }) {
     } finally {
       setCheckingUpdate(false);
     }
-  }, []);
+  }, [isAdmin]);
 
   return (
     <div className="header-settings" ref={menuRef}>
@@ -120,55 +122,48 @@ export function HeaderSettings({ user }: { user?: User }) {
               <>
                 <div className="settings-row">
                   <span className="settings-label">{text.settings.version}</span>
-                  <span className="settings-version-row">
-                    <span className="settings-version-value">{currentVersionLabel}</span>
-                    <button
-                      className="settings-version-refresh"
-                      title={text.settings.checkUpdate}
-                      aria-label={text.settings.checkUpdate}
-                      disabled={checkingUpdate}
-                      onClick={checkUpdate}
-                    >
-                      <RefreshCw className={checkingUpdate ? 'settings-version-refresh-spin' : undefined} size={12} />
-                    </button>
-                  </span>
-                </div>
-                {updateStatus !== 'idle' && (
-                  <div className={`settings-version-card settings-version-card-${updateStatus}`}>
-                    <span className="settings-version-card-icon" aria-hidden>
-                      {updateStatus === 'available' ? <Sparkles size={15} /> : updateStatus === 'error' ? <AlertCircle size={15} /> : <CheckCircle2 size={15} />}
-                    </span>
-                    <span className="settings-version-card-copy">
-                      <strong>
-                        {updateStatus === 'available'
-                          ? text.settings.updateReadyTitle.replace('{version}', latestVersionLabel)
-                          : updateStatus === 'error'
-                            ? text.settings.updateCheckFailed
-                            : text.settings.updateCurrentTitle}
-                      </strong>
-                      <small>
-                        {updateStatus === 'available'
-                          ? text.settings.updateReadyDesc
-                              .replace('{current}', currentVersionLabel)
-                              .replace('{latest}', latestVersionLabel)
-                          : updateStatus === 'error'
-                            ? text.settings.updateCheckFailedDesc
-                            : text.settings.updateCurrentDesc.replace('{version}', currentVersionLabel)}
-                      </small>
-                    </span>
-                    {updateStatus === 'available' && (
-                      <a
-                        className="settings-version-card-action"
-                        href={updateInfo?.releaseURL || 'https://github.com/hloolx/HloolMail/releases'}
-                        target="_blank"
-                        rel="noopener noreferrer"
+                  <div className="settings-version-control">
+                    <div className="settings-version-row">
+                      <span className="settings-version-value">{currentVersionLabel}</span>
+                      <button
+                        className="settings-version-refresh"
+                        title={text.settings.checkUpdate}
+                        aria-label={text.settings.checkUpdate}
+                        disabled={checkingUpdate}
+                        onClick={checkUpdate}
                       >
-                        <span>{text.settings.viewRelease}</span>
-                        <ExternalLink size={13} />
-                      </a>
+                        <RefreshCw className={checkingUpdate ? 'settings-version-refresh-spin' : undefined} size={12} />
+                      </button>
+                    </div>
+                    {updateStatus !== 'idle' && (
+                      <div className={`settings-version-card settings-version-card-${updateStatus}`}>
+                        <span className="settings-version-card-icon" aria-hidden>
+                          {updateStatus === 'available' ? <Sparkles size={14} /> : updateStatus === 'error' ? <AlertCircle size={14} /> : <CheckCircle2 size={14} />}
+                        </span>
+                        <span className="settings-version-card-copy">
+                          <strong>
+                            {updateStatus === 'available'
+                              ? text.settings.updateReadyTitle.replace('{version}', latestVersionLabel)
+                              : updateStatus === 'error'
+                                ? text.settings.updateCheckFailed
+                                : text.settings.updateCurrentTitle}
+                          </strong>
+                        </span>
+                        {updateStatus === 'available' && (
+                          <a
+                            className="settings-version-card-action"
+                            href={updateInfo?.releaseURL || 'https://github.com/hloolx/HloolMail/releases'}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                          >
+                            <span>{text.settings.viewRelease}</span>
+                            <ExternalLink size={13} />
+                          </a>
+                        )}
+                      </div>
                     )}
                   </div>
-                )}
+                </div>
               </>
             )}
           </div>

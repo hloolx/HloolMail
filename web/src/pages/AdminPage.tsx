@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Database, Globe2, Inbox, KeyRound, Play, RefreshCw, Save, ShieldAlert, Trash2, Users } from 'lucide-react';
+import { Database, Globe2, Inbox, KeyRound, Play, RefreshCw, Save, Search, ShieldAlert, Trash2, Users } from 'lucide-react';
 import { toast } from 'sonner';
 import { api, patchJSON, postJSON } from '../api';
 import type { PaginatedResponse } from '../api';
@@ -10,12 +10,31 @@ import { notifySuccess } from '../lib/feedback';
 import { useAppStore } from '../store';
 import { currentText, useText } from '../locales';
 import { useHashSearchState, useTableUrlState } from '../hooks/useTableUrlState';
-import { DataTable, InfoTip, Metric, PaginationControls, SegmentedTabs, StatusPill } from '../components/shared';
+import { DataTable, DataTableToolbar, DataTableViewOptions, InfoTip, Metric, PaginationControls, SegmentedTabs, StatusPill } from '../components/shared';
+import type { DataTableColumn } from '../components/shared';
 import { AdminAuditLog } from './AdminAuditLog';
 
 const ADMIN_TAB_OPTIONS = ['dns', 'domainHealth', 'quotaAlerts', 'audit'] as const;
+const DOMAIN_HEALTH_PAGE_SIZE_OPTIONS = [10, 20, 50, 100];
+const DOMAIN_HEALTH_MODE_OPTIONS = ['all', 'public', 'private'] as const;
+const DOMAIN_HEALTH_STATUS_OPTIONS = ['all', 'active', 'inactive'] as const;
+const DOMAIN_HEALTH_MX_OPTIONS = ['all', 'verified', 'failed', 'wildcard_failed', 'unchecked', 'stale'] as const;
+const DOMAIN_HEALTH_SEVERITY_OPTIONS = ['all', 'critical', 'warning', 'ok'] as const;
 
 type AdminTab = (typeof ADMIN_TAB_OPTIONS)[number];
+type DomainHealthFilters = {
+  mode: string;
+  status: string;
+  mx: string;
+  severity: string;
+};
+
+const DEFAULT_DOMAIN_HEALTH_FILTERS: DomainHealthFilters = {
+  mode: 'all',
+  status: 'all',
+  mx: 'all',
+  severity: 'all'
+};
 
 export function AdminPage() {
   const queryClient = useQueryClient();
@@ -30,9 +49,25 @@ export function AdminPage() {
     pageSizeOptions: [10, 20, 50]
   });
   const domainHealthUrlState = useTableUrlState({
+    defaultPageSize: 20,
+    defaultSearch: '',
+    defaultFilters: DEFAULT_DOMAIN_HEALTH_FILTERS,
     pageParam: 'healthPage',
     pageSizeParam: 'healthPageSize',
-    pageSizeOptions: [10, 20, 50]
+    searchParam: 'domainSearch',
+    filterParams: {
+      mode: 'domainMode',
+      status: 'domainStatus',
+      mx: 'domainMx',
+      severity: 'domainSeverity'
+    },
+    filterOptions: {
+      mode: DOMAIN_HEALTH_MODE_OPTIONS,
+      status: DOMAIN_HEALTH_STATUS_OPTIONS,
+      mx: DOMAIN_HEALTH_MX_OPTIONS,
+      severity: DOMAIN_HEALTH_SEVERITY_OPTIONS
+    },
+    pageSizeOptions: DOMAIN_HEALTH_PAGE_SIZE_OPTIONS
   });
   const quotaAlertsUrlState = useTableUrlState({
     defaultPageSize: 8,
@@ -44,6 +79,8 @@ export function AdminPage() {
   const dnsCheckPerPage = dnsRunsUrlState.pageSize;
   const domainHealthPage = domainHealthUrlState.page;
   const domainHealthPerPage = domainHealthUrlState.pageSize;
+  const domainHealthSearch = domainHealthUrlState.search;
+  const domainHealthFilters = domainHealthUrlState.filters;
   const quotaAlertsPage = quotaAlertsUrlState.page;
   const quotaAlertsPerPage = quotaAlertsUrlState.pageSize;
   const setActiveAdminTab = (nextTab: string) => {
@@ -62,8 +99,8 @@ export function AdminPage() {
 
   const stats = useQuery({ queryKey: ['admin-stats'], queryFn: () => api<AdminStats>('/api/admin/stats'), retry: false, staleTime: 30_000 });
   const domainHealth = useQuery({
-    queryKey: ['admin-domain-health', domainHealthPage, domainHealthPerPage],
-    queryFn: () => api<PaginatedResponse<AdminDomainHealth>>(`/api/admin/domain-health?page=${domainHealthPage}&per_page=${domainHealthPerPage}`),
+    queryKey: ['admin-domain-health', domainHealthPage, domainHealthPerPage, domainHealthSearch, domainHealthFilters],
+    queryFn: () => api<PaginatedResponse<AdminDomainHealth>>(`/api/admin/domain-health?${buildDomainHealthQuery(domainHealthFilters, domainHealthSearch, domainHealthPage, domainHealthPerPage)}`),
     retry: false,
     staleTime: 30_000
   });
@@ -228,6 +265,7 @@ export function AdminPage() {
   });
 
   const healthPage = domainHealth.data;
+  const healthItems = healthPage?.items || [];
   const quotaPage = quotaAlerts.data;
   const risks = useMemo(
     () => stats.data ? configRisks(stats.data) : [],
@@ -238,6 +276,20 @@ export function AdminPage() {
   const lastRun = domainCheckSettings.data?.last_run;
   const hasRunningCheck = runRows.some((run) => run.status === 'running') || lastRun?.status === 'running';
   const isLoading = stats.isLoading || domainHealth.isLoading || quotaAlerts.isLoading || domainCheckSettings.isLoading || domainCheckRuns.isLoading;
+  const [domainHealthHiddenColumnKeys, setDomainHealthHiddenColumnKeys] = useState<string[]>([]);
+  const domainHealthColumns = useMemo<DataTableColumn[]>(() => [
+    { key: 'domain', header: text.admin.domainHealth.colDomain, minWidth: '14rem', hideable: false, mobileTitle: true },
+    { key: 'owner', header: text.admin.domainHealth.colOwner, minWidth: '12rem', mobileSubtitle: true },
+    { key: 'status', header: text.admin.domainHealth.colStatus, align: 'center', width: '8rem', mobileBadge: true },
+    { key: 'mode', header: text.admin.domainHealth.colMode, width: '10rem', mobilePriority: 1 },
+    { key: 'expires', header: text.admin.domainHealth.colExpires, width: '8rem', mobilePriority: 3 },
+    { key: 'mailboxes', header: text.admin.domainHealth.colMailboxes, align: 'right', width: '7rem', mobilePriority: 2 },
+    { key: 'messages', header: text.admin.domainHealth.colMessages, align: 'right', width: '7rem', mobilePriority: 2 },
+    { key: 'actions', header: text.admin.domainHealth.colActions, align: 'right', minWidth: '14rem', hideable: false }
+  ], [text]);
+  const domainHealthCountLabel = text.admin.domainHealth.resultCount
+    .replace('{shown}', String(healthItems.length))
+    .replace('{total}', String(healthPage?.total ?? 0));
 
   return (
     <div className="admin-page grid gap-4" id="admin-top">
@@ -478,22 +530,75 @@ export function AdminPage() {
               <h2>{text.admin.domainHealth.title}</h2>
               <p>{text.admin.domainHealth.desc.replace('{failed}', String(stats.data?.failed_domains ?? 0)).replace('{stale}', String(stats.data?.stale_domains ?? 0))}</p>
             </div>
-            <button className="btn-ghost" onClick={() => setPage('domain-management')} aria-label={text.admin.domainHealth.goToDomains}>{text.admin.domainHealth.goToDomains}</button>
           </div>
+          <DataTableToolbar
+            className="admin-domain-health-toolbar"
+            search={(
+              <label className="admin-domain-health-search" aria-label={text.admin.domainHealth.search}>
+                <Search size={15} aria-hidden="true" />
+                <input
+                  value={domainHealthSearch}
+                  onChange={(event) => domainHealthUrlState.setSearch(event.target.value, 'replace')}
+                  placeholder={text.admin.domainHealth.searchPlaceholder}
+                />
+              </label>
+            )}
+            filters={(
+              <div className="admin-domain-health-filters">
+                <select className="input" value={domainHealthFilters.mode} aria-label={text.admin.domainHealth.filterMode} onChange={(event) => domainHealthUrlState.setFilter('mode', event.target.value)}>
+                  <option value="all">{text.admin.domainHealth.filterModeAll}</option>
+                  <option value="public">{text.domains.modePublic}</option>
+                  <option value="private">{text.domains.modePrivate}</option>
+                </select>
+                <select className="input" value={domainHealthFilters.status} aria-label={text.admin.domainHealth.filterStatus} onChange={(event) => domainHealthUrlState.setFilter('status', event.target.value)}>
+                  <option value="all">{text.admin.domainHealth.filterStatusAll}</option>
+                  <option value="active">{text.domains.enabled}</option>
+                  <option value="inactive">{text.domains.inactive}</option>
+                </select>
+                <select className="input" value={domainHealthFilters.mx} aria-label={text.admin.domainHealth.filterMx} onChange={(event) => domainHealthUrlState.setFilter('mx', event.target.value)}>
+                  <option value="all">{text.admin.domainHealth.filterMxAll}</option>
+                  <option value="verified">{text.admin.domainHealth.mxVerified}</option>
+                  <option value="failed">{text.admin.domainHealth.mxFailed}</option>
+                  <option value="wildcard_failed">{text.admin.domainHealth.mxWildcardFailed}</option>
+                  <option value="unchecked">{text.admin.domainHealth.mxUnchecked}</option>
+                  <option value="stale">{text.admin.domainHealth.mxStale}</option>
+                </select>
+                <select className="input" value={domainHealthFilters.severity} aria-label={text.admin.domainHealth.filterSeverity} onChange={(event) => domainHealthUrlState.setFilter('severity', event.target.value)}>
+                  <option value="all">{text.admin.domainHealth.filterSeverityAll}</option>
+                  <option value="critical">{text.admin.domainHealth.severityCritical}</option>
+                  <option value="warning">{text.admin.domainHealth.severityWarning}</option>
+                  <option value="ok">{text.admin.domainHealth.severityOk}</option>
+                </select>
+              </div>
+            )}
+            state={<span className="admin-domain-health-count">{domainHealthCountLabel}</span>}
+            viewOptions={(
+              <DataTableViewOptions
+                columns={domainHealthColumns}
+                hiddenColumnKeys={domainHealthHiddenColumnKeys}
+                onHiddenColumnKeysChange={setDomainHealthHiddenColumnKeys}
+                label={text.common.view}
+                menuLabel={text.common.toggleColumns}
+                resetLabel={text.common.reset}
+                emptyLabel={text.common.noToggleColumns}
+              />
+            )}
+          />
+          {domainHealth.isError && (
+            <div className="admin-risk admin-risk-warning" role="alert">
+              <ShieldAlert size={16} />
+              <span><small>{domainHealth.error instanceof Error && domainHealth.error.message ? domainHealth.error.message : text.admin.domainHealth.empty}</small></span>
+            </div>
+          )}
           <DataTable
             ariaLabel={text.admin.domainHealth.title}
-            emptyLabel={text.admin.domainHealth.empty}
-            columns={[
-              { key: 'domain', header: text.admin.domainHealth.colDomain, minWidth: '14rem' },
-              { key: 'owner', header: text.admin.domainHealth.colOwner, minWidth: '12rem' },
-              { key: 'status', header: text.admin.domainHealth.colStatus, align: 'center', width: '8rem' },
-              { key: 'mode', header: text.admin.domainHealth.colMode, width: '10rem' },
-              { key: 'expires', header: text.admin.domainHealth.colExpires, width: '8rem' },
-              { key: 'mailboxes', header: text.admin.domainHealth.colMailboxes, align: 'right', width: '7rem' },
-              { key: 'messages', header: text.admin.domainHealth.colMessages, align: 'right', width: '7rem' },
-              { key: 'actions', header: text.admin.domainHealth.colActions, align: 'right', minWidth: '14rem' }
-            ]}
-            rows={(healthPage?.items || []).map((domain) => ({
+            emptyLabel={domainHealth.isLoading ? text.common.loading : text.admin.domainHealth.empty}
+            columns={domainHealthColumns}
+            hiddenColumnKeys={domainHealthHiddenColumnKeys}
+            onHiddenColumnKeysChange={setDomainHealthHiddenColumnKeys}
+            hiddenLabel={text.common.noColumnsSelected}
+            showAllColumnsLabel={text.common.showAllColumns}
+            rows={healthItems.map((domain) => ({
               key: domain.id,
               cells: [
                 <div className="admin-domain-cell">
@@ -543,7 +648,7 @@ export function AdminPage() {
             totalPages={healthPage?.total_pages || 1}
             onPageChange={domainHealthUrlState.setPage}
             rowsPerPage={domainHealthPerPage}
-            rowsPerPageOptions={[10, 20, 50]}
+            rowsPerPageOptions={DOMAIN_HEALTH_PAGE_SIZE_OPTIONS}
             onRowsPerPageChange={(nextRowsPerPage) => {
               domainHealthUrlState.setPageSize(nextRowsPerPage);
             }}
@@ -621,6 +726,29 @@ function splitResolvers(value: string) {
 function toPositiveInt(value: string, fallback: number) {
   const parsed = Number.parseInt(value, 10);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+function buildDomainHealthQuery(filters: DomainHealthFilters, search: string, page: number, perPage: number) {
+  const params = new URLSearchParams({
+    page: String(page),
+    per_page: String(perPage)
+  });
+  if (search.trim()) {
+    params.set('q', search.trim());
+  }
+  if (filters.mode !== 'all') {
+    params.set('mode', filters.mode);
+  }
+  if (filters.status !== 'all') {
+    params.set('status', filters.status);
+  }
+  if (filters.mx !== 'all') {
+    params.set('mx', filters.mx);
+  }
+  if (filters.severity !== 'all') {
+    params.set('severity', filters.severity);
+  }
+  return params.toString();
 }
 
 function domainCheckStatusLabel(status: string) {

@@ -1721,6 +1721,60 @@ func TestAdminDomainHealthPaginatesAndAggregatesCurrentPage(t *testing.T) {
 	}
 }
 
+func TestAdminDomainHealthFiltersAcrossOwners(t *testing.T) {
+	db := httpTestDB(t)
+	hash, err := auth.HashSecret("password123")
+	if err != nil {
+		t.Fatal(err)
+	}
+	users := []models.User{
+		{Email: "admin@example.com", PasswordHash: hash, Role: models.UserRoleAdmin, Enabled: true},
+		{Email: "alice@example.com", PasswordHash: hash, Role: models.UserRoleUser, Enabled: true},
+		{Email: "bob@example.com", PasswordHash: hash, Role: models.UserRoleUser, Enabled: true},
+	}
+	if err := db.Create(&users).Error; err != nil {
+		t.Fatal(err)
+	}
+	alice := users[1]
+	bob := users[2]
+	now := time.Now()
+	domains := []models.Domain{
+		{Domain: "alice-broken.test", Mode: models.DomainModePrivate, OwnerID: &alice.ID, Active: true, MXVerified: false, VerificationToken: "alice-token"},
+		{Domain: "alice-public.test", Mode: models.DomainModePublic, OwnerID: &alice.ID, Active: true, MXVerified: true, LastMXCheckAt: &now, VerificationToken: "alice-public-token"},
+		{Domain: "bob-broken.test", Mode: models.DomainModePrivate, OwnerID: &bob.ID, Active: true, MXVerified: false, VerificationToken: "bob-token"},
+	}
+	if err := db.Create(&domains).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	router := testRouter(t, db)
+	login := perform(router, http.MethodPost, "/api/auth/login", map[string]any{
+		"email":    "admin@example.com",
+		"password": "password123",
+	}, nil)
+	if login.Code != http.StatusOK {
+		t.Fatalf("login = %d: %s", login.Code, login.Body.String())
+	}
+	response := perform(router, http.MethodGet, "/api/admin/domain-health?q=alice%40example.com&mode=private&status=active&mx=failed&severity=critical&per_page=10", nil, sessionHeaders(login))
+	if response.Code != http.StatusOK {
+		t.Fatalf("domain health = %d: %s", response.Code, response.Body.String())
+	}
+	var body struct {
+		Success bool                     `json:"success"`
+		Data    domainHealthListResponse `json:"data"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if body.Data.Total != 1 || len(body.Data.Items) != 1 {
+		t.Fatalf("unexpected filtered domain health response: %+v", body.Data)
+	}
+	item := body.Data.Items[0]
+	if item.Domain.Domain != "alice-broken.test" || item.OwnerEmail != alice.Email || item.Severity != "critical" {
+		t.Fatalf("unexpected filtered health item: %+v", item)
+	}
+}
+
 func TestAvailableDomainsRequiresActorAndSeparatesModes(t *testing.T) {
 	db := httpTestDB(t)
 	hash, err := auth.HashSecret("password123")

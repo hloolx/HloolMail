@@ -55,6 +55,14 @@
   gap: 0.65rem;
 }
 
+.auth-loading-state {
+  display: flex;
+  min-height: 9rem;
+  align-items: center;
+  justify-content: center;
+  color: var(--muted);
+}
+
 .auth-submit {
   width: 100%;
 }
@@ -105,10 +113,34 @@
   overflow-wrap: anywhere;
 }
 
+.auth-verification-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(7rem, auto);
+  gap: 0.5rem;
+  align-items: start;
+}
+
+.auth-verification-request {
+  min-height: 2.55rem;
+  white-space: nowrap;
+}
+
+.auth-verification-hint {
+  margin: -0.3rem 0 0 0.25rem;
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 650;
+  line-height: 1.45;
+}
+
 .oauth-login-box {
   display: grid;
   gap: 0.65rem;
   margin-top: 0.8rem;
+}
+
+.oauth-login-box-primary {
+  margin-top: 0;
 }
 
 .oauth-login-divider {
@@ -136,6 +168,12 @@
 @media (min-width: 460px) {
   .oauth-login-actions {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 459px) {
+  .auth-verification-row {
+    grid-template-columns: minmax(0, 1fr);
   }
 }
 
@@ -200,16 +238,19 @@
 }
 
 .auth-confirm-wrapper .input {
+  width: 100%;
+  box-sizing: border-box;
   margin: 0;
 }
 
 /* ── Password hint ── */
 
 .auth-password-hint {
-  margin: -0.35rem 0 0 0.25rem;
+  margin: -0.35rem 0 -0.1rem 0.2rem;
   color: var(--muted);
   font-size: 0.72rem;
   font-weight: 600;
+  line-height: 1.45;
   animation: landing-rise 250ms cubic-bezier(0.22, 1, 0.36, 1) both;
 }
 

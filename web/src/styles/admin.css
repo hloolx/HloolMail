@@ -545,6 +545,70 @@
   color: var(--bad);
 }
 
+.admin-domain-health-toolbar {
+  align-items: center;
+}
+
+.admin-domain-health-search {
+  display: inline-flex;
+  flex: 1 1 16rem;
+  height: 2.25rem;
+  max-width: 24rem;
+  min-width: 0;
+  align-items: center;
+  gap: 0.45rem;
+  border: 1px solid var(--border);
+  border-radius: 0.5rem;
+  background: var(--panel);
+  color: var(--muted);
+  padding: 0 0.65rem;
+  transition: border-color 180ms ease, box-shadow 180ms ease, background-color 180ms ease;
+}
+
+.admin-domain-health-search:focus-within {
+  border-color: var(--foreground);
+  box-shadow: 0 0 0 3px var(--focus-soft);
+}
+
+.admin-domain-health-search input {
+  width: 100%;
+  min-width: 0;
+  border: 0;
+  outline: none;
+  background: transparent;
+  color: var(--foreground);
+}
+
+.admin-domain-health-filters {
+  display: flex;
+  flex: 1 1 auto;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  min-width: 0;
+}
+
+.admin-domain-health-filters .input {
+  width: auto;
+  max-width: 11.5rem;
+}
+
+.admin-domain-health-count {
+  color: var(--muted);
+  font-size: 0.78rem;
+  white-space: nowrap;
+}
+
+@media (max-width: 720px) {
+  .admin-domain-health-toolbar .data-table-toolbar-main,
+  .admin-domain-health-toolbar .data-table-toolbar-actions,
+  .admin-domain-health-search,
+  .admin-domain-health-filters,
+  .admin-domain-health-filters .input {
+    width: 100%;
+    max-width: none;
+  }
+}
+
 .admin-code {
   border-radius: 0.35rem;
   background: var(--soft);
@@ -755,6 +819,10 @@
 .admin-registration-test .btn-secondary {
   align-self: end;
   justify-self: start;
+}
+
+.admin-registration-test .field-hint {
+  grid-column: 1 / -1;
 }
 
 @media (min-width: 720px) {

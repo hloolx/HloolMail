@@ -118,6 +118,7 @@ export function LoginSettingsPage() {
   const [registrationForm, setRegistrationForm] = useState<RegistrationForm>(emptyRegistrationForm());
   const [registrationInitial, setRegistrationInitial] = useState<RegistrationForm>(emptyRegistrationForm());
   const [testRecipient, setTestRecipient] = useState('');
+  const [lastTestedRegistrationKey, setLastTestedRegistrationKey] = useState('');
 
   useEffect(() => {
     if (!loginSettings.data) return;
@@ -166,9 +167,14 @@ export function LoginSettingsPage() {
     mutationFn: () => {
       const recipient = testRecipient.trim();
       if (!recipient) throw new Error(text.loginSettings.testEmailRequired);
-      return postJSON('/api/admin/login-settings/test-email', { recipient });
+      return postJSON<LoginSettings>('/api/admin/login-settings/test-email', {
+        recipient,
+        settings: registrationPayload(registrationForm)
+      });
     },
     onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['login-settings'] });
+      setLastTestedRegistrationKey(registrationTestKey(registrationForm));
       notifySuccess(text.loginSettings.testEmailSent);
     },
     onError: (error) => {
@@ -217,13 +223,21 @@ export function LoginSettingsPage() {
 
   const turnstileReplacesTextCaptcha = turnstileForm.enabled;
   const hasRegistrationChanges = registrationChanged(registrationForm, registrationInitial);
+  const currentRegistrationKey = registrationTestKey(registrationForm);
+  const initialRegistrationKey = registrationTestKey(registrationInitial);
+  const currentFormEmailTested = Boolean(
+    lastTestedRegistrationKey === currentRegistrationKey ||
+    (loginSettings.data?.email_delivery_ready && currentRegistrationKey === initialRegistrationKey)
+  );
   const registrationStatusLabel = !registrationForm.registration_open
     ? text.loginSettings.registrationClosed
     : registrationForm.email_registration_enabled
-      ? text.loginSettings.registrationOpen
+      ? currentFormEmailTested
+        ? text.loginSettings.registrationOpen
+        : text.loginSettings.emailDeliveryNotReady
       : text.loginSettings.registrationThirdPartyOnly;
   const registrationStatusClass = registrationForm.registration_open && registrationForm.email_registration_enabled
-    ? 'severity-ok'
+    ? currentFormEmailTested ? 'severity-ok' : 'severity-critical'
     : 'severity-warning';
 
   // --- OAuth helpers ---
@@ -495,7 +509,13 @@ export function LoginSettingsPage() {
                 <button
                   type="button"
                   className={`toggle-switch ${registrationForm.email_registration_enabled ? 'on' : ''}`}
-                  onClick={() => setRegistrationForm((form) => ({ ...form, email_registration_enabled: !form.email_registration_enabled }))}
+                  onClick={() => {
+                    if (!registrationForm.email_registration_enabled && !currentFormEmailTested) {
+                      toast.error(text.loginSettings.testEmailBeforeEnable);
+                      return;
+                    }
+                    setRegistrationForm((form) => ({ ...form, email_registration_enabled: !form.email_registration_enabled }));
+                  }}
                   role="switch"
                   aria-checked={registrationForm.email_registration_enabled}
                 >
@@ -576,18 +596,23 @@ export function LoginSettingsPage() {
                     <span>{text.loginSettings.smtpFromEmail}</span>
                     <input className="input" value={registrationForm.smtp_from_email} onChange={(event) => setRegistrationForm((form) => ({ ...form, smtp_from_email: event.target.value }))} type="email" />
                   </label>
-                  <div className="admin-registration-test admin-oauth-wide">
-                    <label className="user-form-field">
-                      <span>{text.loginSettings.testRecipient}</span>
-                      <input className="input" value={testRecipient} onChange={(event) => setTestRecipient(event.target.value)} type="email" placeholder="you@example.com" />
-                    </label>
-                    <button className="btn-secondary" type="button" onClick={() => testEmail.mutate()} disabled={testEmail.isPending}>
-                      {testEmail.isPending ? <LoadingIndicator size={14} /> : <Send size={14} />}
-                      {text.loginSettings.testEmail}
-                    </button>
-                  </div>
                 </div>
               )}
+              <div className="admin-registration-test admin-oauth-wide">
+                <label className="user-form-field">
+                  <span>{text.loginSettings.testRecipient}</span>
+                  <input className="input" value={testRecipient} onChange={(event) => setTestRecipient(event.target.value)} type="email" placeholder="you@example.com" />
+                </label>
+                <button className="btn-secondary" type="button" onClick={() => testEmail.mutate()} disabled={testEmail.isPending}>
+                  {testEmail.isPending ? <LoadingIndicator size={14} /> : <Send size={14} />}
+                  {text.loginSettings.testEmail}
+                </button>
+                <p className="field-hint admin-registration-hint">
+                  {currentFormEmailTested
+                    ? text.loginSettings.emailDeliveryReady
+                    : text.loginSettings.emailDeliveryNeedsTest}
+                </p>
+              </div>
             </div>
 
             <div className="admin-oauth-form-actions">
@@ -789,6 +814,20 @@ function registrationPayload(form: RegistrationForm): Record<string, unknown> {
     smtp_from_name: form.smtp_from_name.trim(),
     smtp_from_email: form.smtp_from_email.trim()
   };
+}
+
+function registrationTestKey(form: RegistrationForm): string {
+  return JSON.stringify({
+    email_verification_mode: form.email_verification_mode,
+    internal_sender_prefix: form.internal_sender_prefix.trim(),
+    smtp_host: form.smtp_host.trim(),
+    smtp_port: Number.parseInt(form.smtp_port, 10) || 0,
+    smtp_security: form.smtp_security,
+    smtp_username: form.smtp_username.trim(),
+    smtp_password: form.smtp_password.trim(),
+    smtp_from_name: form.smtp_from_name.trim(),
+    smtp_from_email: form.smtp_from_email.trim()
+  });
 }
 
 function registrationChanged(form: RegistrationForm, initial: RegistrationForm): boolean {

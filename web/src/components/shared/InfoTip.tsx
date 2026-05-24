@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState, useCallback, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent } from 'react';
+import { useEffect, useId, useLayoutEffect, useRef, useState, useCallback, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent } from 'react';
 import { Info } from 'lucide-react';
 import { createPortal } from 'react-dom';
 
@@ -6,24 +6,58 @@ interface InfoTipProps {
   text: string;
 }
 
+type InfoTipPlacement = 'top' | 'bottom';
+type InfoTipPosition = CSSProperties & {
+  '--info-tip-arrow-x'?: string;
+};
+
+const TOOLTIP_GAP = 8;
+const VIEWPORT_MARGIN = 12;
+const FALLBACK_TOOLTIP_WIDTH = 220;
+const FALLBACK_TOOLTIP_HEIGHT = 36;
+
 export function InfoTip({ text }: InfoTipProps) {
   const [visible, setVisible] = useState(false);
   const [pinned, setPinned] = useState(false);
-  const [pos, setPos] = useState<CSSProperties>({});
+  const [pos, setPos] = useState<InfoTipPosition>({});
+  const [placement, setPlacement] = useState<InfoTipPlacement>('top');
   const iconRef = useRef<HTMLSpanElement | null>(null);
+  const popupRef = useRef<HTMLDivElement | null>(null);
   const hoverRef = useRef(false);
   const tooltipId = useId();
 
   const recalc = useCallback(() => {
     if (!iconRef.current) return;
     const rect = iconRef.current.getBoundingClientRect();
+    const popupRect = popupRef.current?.getBoundingClientRect();
+    const popupWidth = popupRect?.width || FALLBACK_TOOLTIP_WIDTH;
+    const popupHeight = popupRect?.height || FALLBACK_TOOLTIP_HEIGHT;
+    const idealLeft = rect.left + rect.width / 2;
+    const minLeft = VIEWPORT_MARGIN + popupWidth / 2;
+    const maxLeft = window.innerWidth - VIEWPORT_MARGIN - popupWidth / 2;
+    const left = Math.min(Math.max(idealLeft, minLeft), Math.max(minLeft, maxLeft));
+    const spaceAbove = rect.top;
+    const spaceBelow = window.innerHeight - rect.bottom;
+    const nextPlacement = spaceAbove < popupHeight + TOOLTIP_GAP + VIEWPORT_MARGIN && spaceBelow > spaceAbove
+      ? 'bottom'
+      : 'top';
+    const arrowLimit = Math.max(0, popupWidth / 2 - 14);
+    const arrowOffset = Math.min(Math.max(idealLeft - left, -arrowLimit), arrowLimit);
+
+    setPlacement(nextPlacement);
     setPos({
       position: 'fixed',
-      left: Math.round(rect.left + rect.width / 2),
-      top: Math.round(rect.top - 6),
-      transform: 'translateX(-50%) translateY(-100%)'
+      left: Math.round(left),
+      top: Math.round(nextPlacement === 'bottom' ? rect.bottom + TOOLTIP_GAP : rect.top - TOOLTIP_GAP),
+      transform: nextPlacement === 'bottom' ? 'translateX(-50%)' : 'translateX(-50%) translateY(-100%)',
+      '--info-tip-arrow-x': `${Math.round(arrowOffset)}px`
     });
   }, []);
+
+  useLayoutEffect(() => {
+    if (!visible && !pinned) return;
+    recalc();
+  }, [visible, pinned, recalc, text]);
 
   useEffect(() => {
     if (!visible && !pinned) return;
@@ -39,10 +73,10 @@ export function InfoTip({ text }: InfoTipProps) {
   useEffect(() => {
     if (!pinned) return;
     const dismiss = (event: MouseEvent) => {
-      if (iconRef.current && !iconRef.current.contains(event.target as Node)) {
-        setPinned(false);
-        if (!hoverRef.current) setVisible(false);
-      }
+      const target = event.target as Node;
+      if (iconRef.current?.contains(target) || popupRef.current?.contains(target)) return;
+      setPinned(false);
+      if (!hoverRef.current) setVisible(false);
     };
     const key = (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
@@ -92,7 +126,14 @@ export function InfoTip({ text }: InfoTipProps) {
     >
       <Info size={14} />
       {show && createPortal(
-        <div id={tooltipId} role="tooltip" className={`info-tip-popup ${pinned ? 'info-tip-popup-pinned' : ''}`} style={pos}>
+        <div
+          ref={popupRef}
+          id={tooltipId}
+          role="tooltip"
+          className={`info-tip-popup ${pinned ? 'info-tip-popup-pinned' : ''}`}
+          data-placement={placement}
+          style={pos}
+        >
           {text}
         </div>,
         document.body

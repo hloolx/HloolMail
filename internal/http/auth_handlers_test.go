@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"gptmail/internal/auth"
+	"gptmail/internal/config"
 	appdb "gptmail/internal/db"
 	"gptmail/internal/mailer"
 	"gptmail/internal/models"
@@ -34,6 +35,88 @@ func TestRegisterClosedReturnsForbidden(t *testing.T) {
 	}
 }
 
+func TestRegisterRequiresSuccessfulEmailDeliveryTest(t *testing.T) {
+	database := httpTestDB(t)
+	createInstalledAdmin(t, database)
+	settings, err := appdb.EnsureLoginSettings(database)
+	if err != nil {
+		t.Fatal(err)
+	}
+	settings.RegistrationOpen = true
+	settings.EmailRegistrationEnabled = true
+	settings.EmailVerificationMode = models.EmailVerificationModeInternal
+	settings.InternalSenderPrefix = "no-reply"
+	if err := database.Save(settings).Error; err != nil {
+		t.Fatal(err)
+	}
+	router := testRouterWithMailer(t, database, &capturingMailer{})
+
+	response := perform(router, http.MethodPost, "/api/auth/register/captcha", nil, nil)
+	if response.Code != http.StatusForbidden {
+		t.Fatalf("captcha = %d, want %d: %s", response.Code, http.StatusForbidden, response.Body.String())
+	}
+	publicSettings := perform(router, http.MethodGet, "/api/auth/login-settings", nil, nil)
+	if publicSettings.Code != http.StatusOK {
+		t.Fatalf("login settings = %d: %s", publicSettings.Code, publicSettings.Body.String())
+	}
+	var payload testEnvelope[map[string]any]
+	if err := json.Unmarshal(publicSettings.Body.Bytes(), &payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload.Data["email_registration_enabled"] != false || payload.Data["email_delivery_ready"] != false {
+		t.Fatalf("unverified email delivery leaked as enabled: %s", publicSettings.Body.String())
+	}
+}
+
+func TestAdminMustTestEmailBeforeEnablingEmailRegistration(t *testing.T) {
+	database := httpTestDB(t)
+	createInstalledAdmin(t, database)
+	sender := &capturingMailer{}
+	router := testRouterWithMailer(t, database, sender)
+	login := perform(router, http.MethodPost, "/api/auth/login", map[string]any{
+		"email":    "admin@example.com",
+		"password": "password123",
+	}, nil)
+	headers := sessionHeaders(login)
+	settingsPayload := map[string]any{
+		"registration_open":          true,
+		"email_registration_enabled": true,
+		"email_verification_mode":    models.EmailVerificationModeSMTP,
+		"smtp_host":                  "smtp.example.com",
+		"smtp_port":                  587,
+		"smtp_security":              models.SMTPSecuritySTARTTLS,
+		"smtp_username":              "mailer",
+		"smtp_password":              "secret",
+		"smtp_from_email":            "no-reply@example.com",
+	}
+
+	blocked := perform(router, http.MethodPatch, "/api/admin/login-settings", settingsPayload, headers)
+	if blocked.Code != http.StatusBadRequest {
+		t.Fatalf("patch without test = %d, want %d: %s", blocked.Code, http.StatusBadRequest, blocked.Body.String())
+	}
+	tested := perform(router, http.MethodPost, "/api/admin/login-settings/test-email", map[string]any{
+		"recipient": "owner@example.com",
+		"settings":  settingsPayload,
+	}, headers)
+	if tested.Code != http.StatusOK {
+		t.Fatalf("test email = %d, want %d: %s", tested.Code, http.StatusOK, tested.Body.String())
+	}
+	if len(sender.settings) != 1 || sender.settings[0].Mode != models.EmailVerificationModeSMTP || sender.settings[0].SMTPHost != "smtp.example.com" {
+		t.Fatalf("test email did not use draft SMTP settings: %+v", sender.settings)
+	}
+	saved := perform(router, http.MethodPatch, "/api/admin/login-settings", settingsPayload, headers)
+	if saved.Code != http.StatusOK {
+		t.Fatalf("patch after test = %d, want %d: %s", saved.Code, http.StatusOK, saved.Body.String())
+	}
+	var payload testEnvelope[map[string]any]
+	if err := json.Unmarshal(saved.Body.Bytes(), &payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload.Data["email_delivery_ready"] != true {
+		t.Fatalf("saved settings were not marked delivery-ready: %s", saved.Body.String())
+	}
+}
+
 func TestPublicLoginSettingsExposeRegistrationFlagsOnly(t *testing.T) {
 	database := httpTestDB(t)
 	createInstalledAdmin(t, database)
@@ -47,6 +130,7 @@ func TestPublicLoginSettingsExposeRegistrationFlagsOnly(t *testing.T) {
 	settings.SMTPHost = "smtp.example.com"
 	settings.SMTPPassword = "super-secret-password"
 	settings.SMTPFromEmail = "no-reply@example.com"
+	markEmailDeliveryTested(settings)
 	if err := database.Save(settings).Error; err != nil {
 		t.Fatal(err)
 	}
@@ -541,6 +625,7 @@ type testEnvelope[T any] struct {
 }
 
 type capturingMailer struct {
+	err      error
 	settings []mailer.Settings
 	messages []mailer.Message
 }
@@ -552,6 +637,9 @@ func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
 }
 
 func (m *capturingMailer) Send(_ context.Context, settings mailer.Settings, message mailer.Message) error {
+	if m.err != nil {
+		return m.err
+	}
 	m.settings = append(m.settings, settings)
 	m.messages = append(m.messages, message)
 	return nil
@@ -597,9 +685,17 @@ func enableEmailRegistration(t *testing.T, database *gorm.DB) {
 	settings.EmailRegistrationEnabled = true
 	settings.EmailVerificationMode = models.EmailVerificationModeInternal
 	settings.InternalSenderPrefix = "no-reply"
+	markEmailDeliveryTested(settings)
 	if err := database.Save(settings).Error; err != nil {
 		t.Fatal(err)
 	}
+}
+
+func markEmailDeliveryTested(settings *models.LoginSettings) {
+	now := time.Now()
+	settings.EmailDeliveryTestedAt = &now
+	settings.EmailDeliveryTestHash = loginEmailSettingsFingerprint(config.Config{MailHostname: "mail.example.com"}, settings)
+	settings.EmailDeliveryTestRecipient = "admin@example.com"
 }
 
 func registerForVerification(t *testing.T, router http.Handler, email, password string) registrationResponse {
