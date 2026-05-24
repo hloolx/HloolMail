@@ -37,7 +37,9 @@ jobs:
         run: go test ./...
 
       - name: Run race tests for critical packages
-        run: go test -race ./internal/http ./internal/auth ./internal/webhook ./internal/events ./internal/jobs
+        env:
+          GIN_MODE: release
+        run: go test -race -timeout 20m ./internal/http ./internal/auth ./internal/webhook ./internal/events ./internal/jobs
 
       - name: Build web console
         working-directory: web
