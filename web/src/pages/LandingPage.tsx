@@ -5,7 +5,7 @@ import { ArrowRight, Bot, Check, CircleAlert, CircleUserRound, Code2, Copy as Co
 import { toast } from 'sonner';
 import type { InstallStatus, User } from '../api';
 import { api, postJSON } from '../api';
-import type { PublicLoginSettings, RegisterCaptcha, RegisterResponse } from '../types';
+import type { EmailDelivery, EmailDeliveryStatus, PublicLoginSettings, RegisterCaptcha, RegisterResponse } from '../types';
 import { useText } from '../locales';
 import { useCountUp } from '../hooks/useCountUp';
 import { useCopyState } from '../hooks/useCopyState';
@@ -15,6 +15,7 @@ import { InfoTip, LoadingIndicator } from '../components/shared';
 import { notifySuccess } from '../lib/feedback';
 import { copy } from '../lib/clipboard';
 import { loginWithPasskey } from '../lib/passkeys';
+import { normalizeNicknameInput, validateNicknameInput } from '../lib/userDisplay';
 
 declare global {
   interface Window {
@@ -28,7 +29,7 @@ declare global {
 
 const TURNSTILE_SCRIPT_SRC = 'https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit';
 
-type AuthFieldErrors = Partial<Record<'email' | 'password' | 'confirmPassword' | 'captchaAnswer' | 'verificationCode', string>>;
+type AuthFieldErrors = Partial<Record<'nickname' | 'email' | 'password' | 'confirmPassword' | 'captchaAnswer' | 'verificationCode', string>>;
 
 type LandingPageProps = {
   status?: InstallStatus;
@@ -58,8 +59,10 @@ export function LandingPage({ status, onDone, authMode = 'home', initialMode = '
   const loginTabRef = useRef<HTMLButtonElement>(null);
   const registerTabRef = useRef<HTMLButtonElement>(null);
   const pageRef = useRef<HTMLDivElement>(null);
+  const completedVerificationDeliveryRef = useRef('');
   const [mode, setMode] = useState<'login' | 'register'>(initialMode);
   const [mxCopied, markMxCopied] = useCopyState();
+  const [nickname, setNickname] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
@@ -94,6 +97,7 @@ export function LandingPage({ status, onDone, authMode = 'home', initialMode = '
   const registrationSettingsPending = isRegister && !authSettingsResolved;
   const oauthOnlyRegistration = isRegister && authSettingsResolved && !emailRegistrationAvailable && oauthRegistrationAvailable;
   const captchaRequired = isRegister && emailRegistrationAvailable && loginSettings.isSuccess && !turnstileEnabled;
+  const turnstileVisible = isAuthPage && turnstileEnabled && (!isRegister || emailRegistrationAvailable);
   const registerCaptcha = useQuery({
     queryKey: ['register-captcha'],
     queryFn: () => postJSON<RegisterCaptcha>('/api/auth/register/captcha', {}),
@@ -215,7 +219,7 @@ export function LandingPage({ status, onDone, authMode = 'home', initialMode = '
   }, [authSettingsResolved, mode, registrationAvailable]);
 
   useEffect(() => {
-    if (!turnstileEnabled) {
+    if (!turnstileVisible) {
       setTurnstileToken('');
       setTurnstileLoadError(false);
       return;
@@ -305,7 +309,7 @@ export function LandingPage({ status, onDone, authMode = 'home', initialMode = '
         turnstileWidgetId.current = null;
       }
     };
-  }, [turnstileEnabled, turnstileSiteKey]);
+  }, [mode, turnstileSiteKey, turnstileVisible]);
 
   const login = useMutation({
     mutationFn: () => {
@@ -333,7 +337,14 @@ export function LandingPage({ status, onDone, authMode = 'home', initialMode = '
         throw new Error(text.login.passwordMismatch);
       }
       if (!emailRegistrationAvailable) throw new Error(text.login.registrationUnavailable);
-      const body: Record<string, string> = { email: normalizedEmail, password };
+      const normalizedNickname = normalizeNicknameInput(nickname);
+      const nicknameError = validateNicknameInput(normalizedNickname, {
+        required: text.login.nicknameRequired,
+        tooLong: text.login.nicknameTooLong,
+        invalid: text.login.nicknameInvalid
+      });
+      if (nicknameError) throw new Error(nicknameError);
+      const body: Record<string, string> = { email: normalizedEmail, nickname: normalizedNickname, password };
       if (turnstileEnabled) {
         body.turnstile_token = turnstileToken;
       } else {
@@ -350,9 +361,19 @@ export function LandingPage({ status, onDone, authMode = 'home', initialMode = '
       setVerification(response);
       setVerificationCode('');
       setCaptchaAnswer('');
+      completedVerificationDeliveryRef.current = isEmailDeliveryDone(response.email_delivery_status)
+        ? String(response.delivery_id ?? '')
+        : '';
       resetTurnstile();
       if (!turnstileEnabled) refreshCaptcha();
-      notifySuccess(text.login.verificationSent, { origin: verificationRequestRef.current });
+      const hasDeliveryResult = response.delivery_id !== undefined || response.email_delivery_status !== undefined;
+      if (isEmailDeliveryInProgress(response.email_delivery_status)) {
+        notifySuccess(text.login.verificationQueued, { origin: verificationRequestRef.current });
+      } else if (isEmailDeliveryFailed(response.email_delivery_status)) {
+        toast.error(response.email_delivery_error || text.login.verificationDeliveryFailed);
+      } else if (!hasDeliveryResult || isEmailDeliverySucceeded(response.email_delivery_status)) {
+        notifySuccess(text.login.verificationSent, { origin: verificationRequestRef.current });
+      }
     },
     onError: (error) => {
       resetTurnstile();
@@ -386,12 +407,41 @@ export function LandingPage({ status, onDone, authMode = 'home', initialMode = '
     },
     onError: (error) => toast.error(error.message),
   });
+  const verificationDeliveryId = verification?.delivery_id ?? null;
+  const verificationDelivery = useQuery({
+    queryKey: ['login-settings', 'email-delivery', verificationDeliveryId],
+    queryFn: () => api<EmailDelivery>(`/api/email-deliveries/${encodeURIComponent(String(verificationDeliveryId))}`),
+    enabled: verificationDeliveryId !== null,
+    retry: false,
+    refetchInterval: (query) => isEmailDeliveryInProgress(query.state.data?.status) ? 2000 : false
+  });
+  const verificationDeliveryStatus = verificationDelivery.isError ? undefined : (verificationDelivery.data?.status || verification?.email_delivery_status);
+  const verificationDeliveryError = verificationDelivery.data?.error || verification?.email_delivery_error;
+  const verificationDeliveryInProgress = isEmailDeliveryInProgress(verificationDeliveryStatus);
+  const verificationDeliveryFailed = isEmailDeliveryFailed(verificationDeliveryStatus);
+  const verificationDeliveryStatusLoadError = Boolean(verificationDeliveryId && verificationDelivery.isError);
+  useEffect(() => {
+    const delivery = verificationDelivery.data;
+    if (!delivery || !isEmailDeliveryDone(delivery.status)) return;
+    const deliveryKey = String(delivery.id);
+    if (completedVerificationDeliveryRef.current === deliveryKey) return;
+    completedVerificationDeliveryRef.current = deliveryKey;
+
+    if (isEmailDeliverySucceeded(delivery.status)) {
+      notifySuccess(text.login.verificationSent, { origin: verificationRequestRef.current });
+    } else {
+      toast.error(delivery.error || text.login.verificationDeliveryFailed);
+    }
+  }, [text.login.verificationDeliveryFailed, text.login.verificationSent, verificationDelivery.data]);
   const pending = login.isPending || register.isPending || verifyRegister.isPending || passkeyLogin.isPending;
   const registerCaptchaBlocked = captchaRequired && (registerCaptcha.isLoading || !registerCaptcha.data?.captcha_id);
-  const verificationRequestBlocked = register.isPending || (turnstileEnabled && !turnstileToken) || registerCaptchaBlocked;
+  const verificationRequestBlocked = register.isPending || verificationDeliveryInProgress || (turnstileEnabled && !turnstileToken) || registerCaptchaBlocked;
   const authSubmitBlocked = pending ||
     (!isRegister && !!turnstileEnabled && !turnstileToken) ||
-    (isRegister && emailRegistrationAvailable && (!verification?.verification_id || !verificationCode.trim()));
+    (isRegister && emailRegistrationAvailable && (
+      !verification?.verification_id ||
+      !verificationCode.trim()
+    ));
   const oauthErrorProviderName = oauthError?.provider ? oauthProviderDisplayName(oauthError.provider) : text.oauth.title;
   const registrationUnavailableResolved = isRegister && authSettingsResolved && !registrationAvailable;
   const visibleOAuthProviderRows = isRegister
@@ -401,8 +451,18 @@ export function LandingPage({ status, onDone, authMode = 'home', initialMode = '
     isRegister ? 'auth-password-hint' : '',
     authFieldErrors.password ? 'auth-password-error' : ''
   ].filter(Boolean).join(' ') || undefined;
+  const verificationHint = verificationDeliveryInProgress
+    ? text.login.verificationDeliverySendingHint
+    : verificationDeliveryFailed
+      ? formatDeliveryError(text.login.verificationDeliveryFailedWithError, verificationDeliveryError || text.login.verificationDeliveryFailed)
+      : verificationDeliveryStatusLoadError
+        ? text.login.verificationDeliveryStatusLoadError
+        : verification?.verification_id
+          ? text.login.verificationDesc.replace('{email}', email.trim())
+          : '';
   const focusAuthField = (field: keyof AuthFieldErrors) => {
     const idByField: Record<keyof AuthFieldErrors, string> = {
+      nickname: 'auth-nickname',
       email: 'auth-email',
       password: 'auth-password',
       confirmPassword: 'auth-confirm-password',
@@ -422,25 +482,34 @@ export function LandingPage({ status, onDone, authMode = 'home', initialMode = '
   const validateAuthFields = () => {
     const nextErrors: AuthFieldErrors = {};
     if (isRegister) {
-      if (!verification?.verification_id) nextErrors.verificationCode = text.login.verificationRequestRequired || text.login.verificationMissing;
-      if (!verificationCode.trim()) nextErrors.verificationCode = text.login.verificationCodeRequired;
+      if (!verification?.verification_id) {
+        nextErrors.verificationCode = text.login.verificationRequestRequired || text.login.verificationMissing;
+      } else if (!verificationCode.trim()) {
+        nextErrors.verificationCode = text.login.verificationCodeRequired;
+      }
     } else {
       if (!email.trim()) nextErrors.email = text.login.emailRequired;
     }
     setAuthFieldErrors(nextErrors);
-    const firstInvalid = (['email', 'password', 'confirmPassword', 'captchaAnswer', 'verificationCode'] as (keyof AuthFieldErrors)[])
+    const firstInvalid = (['nickname', 'email', 'password', 'confirmPassword', 'captchaAnswer', 'verificationCode'] as (keyof AuthFieldErrors)[])
       .find((field) => nextErrors[field]);
     if (firstInvalid) focusAuthField(firstInvalid);
     return Object.keys(nextErrors).length === 0;
   };
   const validateRegistrationRequestFields = () => {
     const nextErrors: AuthFieldErrors = {};
+    const nicknameError = validateNicknameInput(nickname, {
+      required: text.login.nicknameRequired,
+      tooLong: text.login.nicknameTooLong,
+      invalid: text.login.nicknameInvalid
+    });
+    if (nicknameError) nextErrors.nickname = nicknameError;
     if (!email.trim()) nextErrors.email = text.login.emailRequired;
     if (password.length < 8) nextErrors.password = text.login.passwordTooShort;
     if (password !== confirmPassword) nextErrors.confirmPassword = text.login.passwordMismatch;
     if (captchaRequired && !captchaAnswer.trim()) nextErrors.captchaAnswer = text.login.captchaAnswerRequired;
     setAuthFieldErrors(nextErrors);
-    const firstInvalid = (['email', 'password', 'confirmPassword', 'captchaAnswer'] as (keyof AuthFieldErrors)[])
+    const firstInvalid = (['nickname', 'email', 'password', 'confirmPassword', 'captchaAnswer'] as (keyof AuthFieldErrors)[])
       .find((field) => nextErrors[field]);
     if (firstInvalid) focusAuthField(firstInvalid);
     return Object.keys(nextErrors).length === 0;
@@ -635,6 +704,28 @@ export function LandingPage({ status, onDone, authMode = 'home', initialMode = '
             </div>
           ) : (!isRegister || emailRegistrationAvailable) && (
           <form className="auth-form" onSubmit={submit}>
+            {isRegister && (
+              <>
+                <label htmlFor="auth-nickname" className="sr-only">{text.login.nickname}</label>
+                <input
+                  id="auth-nickname"
+                  className="input"
+                  value={nickname}
+                  onChange={(event) => {
+                    setNickname(event.target.value);
+                    clearAuthFieldError('nickname');
+                    setVerification(null);
+                    setVerificationCode('');
+                  }}
+                  placeholder={text.login.nicknamePlaceholder}
+                  autoComplete="nickname"
+                  maxLength={80}
+                  aria-invalid={Boolean(authFieldErrors.nickname)}
+                  aria-describedby={authFieldErrors.nickname ? 'auth-nickname-error' : undefined}
+                />
+                {authFieldErrors.nickname && <span id="auth-nickname-error" className="field-error" role="alert">{authFieldErrors.nickname}</span>}
+              </>
+            )}
             <label htmlFor="auth-email" className="sr-only">{text.login.email}</label>
             <input
               id="auth-email"
@@ -747,7 +838,7 @@ export function LandingPage({ status, onDone, authMode = 'home', initialMode = '
                     inputMode="numeric"
                     autoComplete="one-time-code"
                     aria-invalid={Boolean(authFieldErrors.verificationCode)}
-                    aria-describedby={authFieldErrors.verificationCode ? 'auth-verification-code-error' : verification?.verification_id ? 'auth-verification-code-hint' : undefined}
+                    aria-describedby={authFieldErrors.verificationCode ? 'auth-verification-code-error' : verificationHint ? 'auth-verification-code-hint' : undefined}
                   />
                   <button
                     ref={verificationRequestRef}
@@ -756,8 +847,8 @@ export function LandingPage({ status, onDone, authMode = 'home', initialMode = '
                     disabled={verificationRequestBlocked}
                     onClick={requestRegistrationVerification}
                   >
-                    {register.isPending ? (
-                      <LoadingIndicator className="auth-submit-loading" label={text.login.verificationRequestPending} />
+                    {register.isPending || verificationDeliveryInProgress ? (
+                      <LoadingIndicator className="auth-submit-loading" label={verificationDeliveryInProgress ? text.login.verificationDeliverySending : text.login.verificationRequestPending} />
                     ) : verification?.verification_id ? (
                       text.login.resendVerificationCode
                     ) : (
@@ -766,9 +857,9 @@ export function LandingPage({ status, onDone, authMode = 'home', initialMode = '
                   </button>
                 </div>
                 {authFieldErrors.verificationCode && <span id="auth-verification-code-error" className="field-error" role="alert">{authFieldErrors.verificationCode}</span>}
-                {verification?.verification_id && (
+                {verificationHint && (
                   <p id="auth-verification-code-hint" className="auth-verification-hint">
-                    {text.login.verificationDesc.replace('{email}', email.trim())}
+                    {verificationHint}
                   </p>
                 )}
               </>
@@ -1077,6 +1168,26 @@ function oauthProviderDisplayName(provider: string) {
   if (provider === 'github') return 'GitHub';
   if (provider === 'linuxdo') return 'Linux.do';
   return provider;
+}
+
+function isEmailDeliveryInProgress(status?: EmailDeliveryStatus) {
+  return status === 'pending' || status === 'delivering' || status === 'retry';
+}
+
+function isEmailDeliverySucceeded(status?: EmailDeliveryStatus) {
+  return status === 'succeeded';
+}
+
+function isEmailDeliveryFailed(status?: EmailDeliveryStatus) {
+  return status === 'failed';
+}
+
+function isEmailDeliveryDone(status?: EmailDeliveryStatus) {
+  return isEmailDeliverySucceeded(status) || isEmailDeliveryFailed(status);
+}
+
+function formatDeliveryError(template: string, error: string) {
+  return template.replace('{error}', error);
 }
 
 type LandingStatProps = {

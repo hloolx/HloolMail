@@ -56,6 +56,10 @@ export function CreateUserDialog({
             {emailError && <span className="field-error">{emailError}</span>}
           </label>
           <label className="user-form-field">
+            <span>{text.users.nickname}</span>
+            <input className="input" value={form.nickname} onChange={(event) => set('nickname', event.target.value)} placeholder={text.users.nicknamePlaceholder} autoComplete="nickname" />
+          </label>
+          <label className="user-form-field">
             <span>{text.users.password}</span>
             <input className="input" value={form.password} onChange={(event) => set('password', event.target.value)} placeholder={text.users.passwordPlaceholder} type="password" />
           </label>

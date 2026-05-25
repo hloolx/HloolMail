@@ -564,7 +564,7 @@ func fetchGitHubUserInfo(ctx context.Context, accessToken string) (OAuthUserInfo
 		ProviderUID: strconv.FormatInt(out.ID, 10),
 		Email:       email,
 		Name:        name,
-		AvatarURL:   strings.TrimSpace(out.AvatarURL),
+		AvatarURL:   sanitizeOAuthAvatarURL(out.AvatarURL),
 	}, nil
 }
 
@@ -685,19 +685,31 @@ func linuxDoInfoFromJWT(token string) (OAuthUserInfo, error) {
 }
 
 func linuxDoInfoFromMap(payload map[string]any) OAuthUserInfo {
-	avatar := firstString(payload, "picture", "avatar_url", "avatar_template")
-	if strings.Contains(avatar, "{size}") {
-		avatar = strings.ReplaceAll(avatar, "{size}", "96")
-	}
-	if strings.HasPrefix(avatar, "/") {
-		avatar = "https://connect.linux.do" + avatar
-	}
 	return OAuthUserInfo{
 		ProviderUID: firstString(payload, "sub", "id", "user_id"),
 		Email:       firstString(payload, "email"),
 		Name:        firstString(payload, "name", "username", "login"),
-		AvatarURL:   avatar,
+		AvatarURL:   linuxDoAvatarURL(payload),
 	}
+}
+
+func linuxDoAvatarURL(payload map[string]any) string {
+	if avatar := sanitizeOAuthAvatarURL(firstString(payload, "picture", "avatar_url")); avatar != "" {
+		return avatar
+	}
+	template := firstString(payload, "avatar_template")
+	if template == "" {
+		return ""
+	}
+	template = strings.ReplaceAll(template, "{size}", "96")
+	if strings.HasPrefix(template, "/") {
+		template = "https://connect.linux.do" + template
+	}
+	return sanitizeOAuthAvatarURL(template)
+}
+
+func sanitizeOAuthAvatarURL(value string) string {
+	return models.SanitizeAvatarURL(value)
 }
 
 func firstString(payload map[string]any, keys ...string) string {
@@ -765,7 +777,8 @@ func doOAuthRequest(req *http.Request) ([]byte, string, error) {
 func (h *Handler) loginOAuthUser(provider string, info OAuthUserInfo, token oauthToken) (*models.User, bool, error) {
 	info.ProviderUID = strings.TrimSpace(info.ProviderUID)
 	info.Email = strings.ToLower(strings.TrimSpace(info.Email))
-	info.AvatarURL = strings.TrimSpace(info.AvatarURL)
+	info.Name = strings.TrimSpace(info.Name)
+	info.AvatarURL = sanitizeOAuthAvatarURL(info.AvatarURL)
 	if info.ProviderUID == "" {
 		return nil, false, fmt.Errorf("oauth provider did not return a user id")
 	}
@@ -823,8 +836,9 @@ func (h *Handler) loginOAuthUser(provider string, info OAuthUserInfo, token oaut
 			}
 			user = models.User{
 				Email:         info.Email,
-				PasswordHash:  hash,
+				Nickname:      oauthNickname(info.Name, info.Email),
 				AvatarURL:     info.AvatarURL,
+				PasswordHash:  hash,
 				EmailVerified: true,
 				Role:          models.UserRoleUser,
 				Enabled:       true,
@@ -856,6 +870,8 @@ func (h *Handler) loginOAuthUser(provider string, info OAuthUserInfo, token oaut
 func (h *Handler) bindOAuthIdentity(userID uint, provider string, info OAuthUserInfo, token oauthToken) (*models.User, error) {
 	info.ProviderUID = strings.TrimSpace(info.ProviderUID)
 	info.Email = strings.ToLower(strings.TrimSpace(info.Email))
+	info.Name = strings.TrimSpace(info.Name)
+	info.AvatarURL = sanitizeOAuthAvatarURL(info.AvatarURL)
 	if info.ProviderUID == "" {
 		return nil, fmt.Errorf("oauth provider did not return a user id")
 	}
@@ -913,9 +929,15 @@ func oauthRegistrationClosedRedirect(provider string) string {
 func updateOAuthUserProfile(tx *gorm.DB, user *models.User, info OAuthUserInfo) error {
 	updates := map[string]any{"email_verified": true}
 	user.EmailVerified = true
-	if info.AvatarURL != "" && user.AvatarURL != info.AvatarURL {
-		updates["avatar_url"] = info.AvatarURL
-		user.AvatarURL = info.AvatarURL
+	if strings.TrimSpace(user.Nickname) == "" {
+		if nickname := oauthNickname(info.Name, info.Email); nickname != "" {
+			updates["nickname"] = nickname
+			user.Nickname = nickname
+		}
+	}
+	if avatarURL := sanitizeOAuthAvatarURL(info.AvatarURL); avatarURL != "" && avatarURL != user.AvatarURL {
+		updates["avatar_url"] = avatarURL
+		user.AvatarURL = avatarURL
 	}
 	return tx.Model(user).Updates(updates).Error
 }
@@ -1005,10 +1027,9 @@ func sanitizeOAuthRedirect(value string) string {
 }
 
 type oauthIdentityDTO struct {
-	Provider  string `json:"provider"`
-	Name      string `json:"name"`
-	AvatarURL string `json:"avatar_url"`
-	BoundAt   string `json:"bound_at"`
+	Provider string `json:"provider"`
+	Name     string `json:"name"`
+	BoundAt  string `json:"bound_at"`
 }
 
 func (h *Handler) listUserOAuthIdentities(c *gin.Context) {
@@ -1032,12 +1053,10 @@ func (h *Handler) listUserOAuthIdentities(c *gin.Context) {
 		if name == "" {
 			name = idt.Provider
 		}
-		avatar := user.AvatarURL
 		result = append(result, oauthIdentityDTO{
-			Provider:  idt.Provider,
-			Name:      name,
-			AvatarURL: avatar,
-			BoundAt:   idt.CreatedAt.Format(time.RFC3339),
+			Provider: idt.Provider,
+			Name:     name,
+			BoundAt:  idt.CreatedAt.Format(time.RFC3339),
 		})
 	}
 	ok(c, result)

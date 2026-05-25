@@ -55,6 +55,19 @@ jobs:
             type=ref,event=tag
             type=sha,prefix=sha-
 
+      - name: Resolve build metadata
+        id: buildmeta
+        shell: bash
+        run: |
+          version="${GITHUB_REF_NAME}"
+          version="${version#v}"
+          if [ "${version}" = "main" ]; then
+            version="dev"
+          fi
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+          echo "commit=${GITHUB_SHA:0:8}" >> "$GITHUB_OUTPUT"
+          echo "build_time=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
+
       - name: Build and push image
         uses: docker/build-push-action@v6
         with:
@@ -63,5 +76,9 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            VERSION=${{ steps.buildmeta.outputs.version }}
+            COMMIT=${{ steps.buildmeta.outputs.commit }}
+            BUILD_TIME=${{ steps.buildmeta.outputs.build_time }}
           cache-from: type=gha
           cache-to: type=gha,mode=max

@@ -1,12 +1,11 @@
 import { useRef, useState, useEffect, useCallback, type FormEvent } from 'react';
 import type { ReactNode } from 'react';
 import { useMutation } from '@tanstack/react-query';
-import { Check, Clipboard, Database, ExternalLink, Globe2, Lock, RefreshCw, Server, Shield } from 'lucide-react';
+import { Check, Database, ExternalLink, Globe2, Lock, RefreshCw, Server, Shield } from 'lucide-react';
 import { toast } from 'sonner';
 import type { InstallDNSCheckResult, InstallResult, InstallStatus, User } from '../api';
 import { postJSON } from '../api';
 import { useText } from '../locales';
-import { copy } from '../lib/clipboard';
 import { notifySuccess } from '../lib/feedback';
 import { AppLogo, CodeBlock, Field, LoadingIndicator, StatusPill } from '../components/shared';
 import { StepIndicator } from './InstallStepIndicator';
@@ -261,10 +260,6 @@ export function InstallPage({ status, onDone }: { status?: InstallStatus; onDone
                 {installResult.env_error ? `。${text.install.envWriteFailed}：${installResult.env_error}` : ''}
               </span>
             </div>
-            <button className="btn-secondary" onClick={(event) => copy(installResult.env_content, { event, celebrate: true, label: text.install.envCopied })}>
-              <Clipboard size={16} />
-              {text.install.copyEnvBtn}
-            </button>
           </div>
 
           {installResult.deployment_kind === 'docker' && (
@@ -272,13 +267,6 @@ export function InstallPage({ status, onDone }: { status?: InstallStatus; onDone
               {text.install.dockerCompleteNote.replace('{path}', installResult.env_path || '.env')}
             </p>
           )}
-
-          <div className="install-env-warning">
-            <Shield size={16} />
-            <span>{text.install.envSecurityWarning}</span>
-          </div>
-
-          <pre className="install-env-output">{installResult.env_content}</pre>
 
           <div className="install-actions">
             <button className="btn-primary" onClick={onDone}>

@@ -191,6 +191,8 @@ func classifyAuditAction(action string) auditProfile {
 		return auditProfile{category: auditCategorySecurity, severity: auditSeverityWarning, targetType: "domain"}
 	case "domain.request", "domain.patch":
 		return auditProfile{category: auditCategorySecurity, severity: auditSeverityInfo, targetType: "domain"}
+	case "share_link.delete", "share_link.revoke":
+		return auditProfile{category: auditCategorySecurity, severity: auditSeverityWarning, targetType: "share_link"}
 	default:
 		return auditProfile{category: auditCategorySecurity, severity: auditSeverityInfo, targetType: auditTargetTypeFromAction(action)}
 	}

@@ -1,9 +1,11 @@
 import { AnimatePresence, motion, useReducedMotion } from 'framer-motion';
 import { lazy, Suspense, useEffect } from 'react';
+import { toast } from 'sonner';
 import type { User } from '../../api';
 import { useText } from '../../locales';
 import type { Page } from '../../store';
 import { useAppStore } from '../../store';
+import { normalizeNicknameInput } from '../../lib/userDisplay';
 import { LoadingState } from '../shared';
 import { ErrorBoundary } from '../shared/ErrorBoundary';
 const Dashboard = lazy(() => import('../../pages/Dashboard').then(m => ({ default: m.Dashboard })));
@@ -35,6 +37,16 @@ export function Console({ user }: { user: User }) {
       setPage(visiblePage);
     }
   }, [page, setPage, visiblePage]);
+
+  useEffect(() => {
+    if (normalizeNicknameInput(user.nickname || '')) return;
+    const key = `hlool_nickname_prompt_${user.id}`;
+    if (sessionStorage.getItem(key) === '1') return;
+    sessionStorage.setItem(key, '1');
+    toast.info(text.profile.completeNicknameTitle, {
+      description: text.profile.completeNicknameDesc
+    });
+  }, [text, user.id, user.nickname]);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {

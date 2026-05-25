@@ -77,6 +77,25 @@ type ShareLinkDTO struct {
 	UpdatedAt      time.Time  `json:"updated_at"`
 }
 
+type AdminShareLinkDTO struct {
+	ID             uint       `json:"id"`
+	ResourceType   string     `json:"resource_type"`
+	MailboxID      *uint      `json:"mailbox_id,omitempty"`
+	TokenPrefix    string     `json:"token_prefix"`
+	KeySet         bool       `json:"key_set"`
+	ExpiresAt      *time.Time `json:"expires_at,omitempty"`
+	RevokedAt      *time.Time `json:"revoked_at,omitempty"`
+	AccessCount    int64      `json:"access_count"`
+	LastAccessedAt *time.Time `json:"last_accessed_at,omitempty"`
+	CreatedAt      time.Time  `json:"created_at"`
+	UpdatedAt      time.Time  `json:"updated_at"`
+	OwnerID        uint       `json:"owner_id"`
+	OwnerEmail     string     `json:"owner_email,omitempty"`
+	OwnerRole      string     `json:"owner_role,omitempty"`
+	MailboxEmail   string     `json:"mailbox_email,omitempty"`
+	MailboxOwnerID uint       `json:"mailbox_owner_id,omitempty"`
+}
+
 type WebhookEndpointDTO struct {
 	ID            uint       `json:"id"`
 	Name          string     `json:"name"`
@@ -88,6 +107,28 @@ type WebhookEndpointDTO struct {
 	Scope         string     `json:"scope"`
 	DomainID      *uint      `json:"domain_id,omitempty"`
 	MailboxID     *uint      `json:"mailbox_id,omitempty"`
+	LastSuccessAt *time.Time `json:"last_success_at,omitempty"`
+	LastFailureAt *time.Time `json:"last_failure_at,omitempty"`
+	FailureCount  int        `json:"failure_count"`
+	DisabledAt    *time.Time `json:"disabled_at,omitempty"`
+	CreatedAt     time.Time  `json:"created_at"`
+	UpdatedAt     time.Time  `json:"updated_at"`
+}
+
+type AdminWebhookEndpointDTO struct {
+	ID            uint       `json:"id"`
+	OwnerID       uint       `json:"owner_id"`
+	OwnerEmail    string     `json:"owner_email,omitempty"`
+	OwnerRole     string     `json:"owner_role,omitempty"`
+	Name          string     `json:"name"`
+	URL           string     `json:"url"`
+	Enabled       bool       `json:"enabled"`
+	Events        []string   `json:"events"`
+	Scope         string     `json:"scope"`
+	DomainID      *uint      `json:"domain_id,omitempty"`
+	DomainName    string     `json:"domain_name,omitempty"`
+	MailboxID     *uint      `json:"mailbox_id,omitempty"`
+	MailboxEmail  string     `json:"mailbox_email,omitempty"`
 	LastSuccessAt *time.Time `json:"last_success_at,omitempty"`
 	LastFailureAt *time.Time `json:"last_failure_at,omitempty"`
 	FailureCount  int        `json:"failure_count"`
@@ -112,6 +153,26 @@ type WebhookDeliveryDTO struct {
 	Error          string     `json:"error,omitempty"`
 	CreatedAt      time.Time  `json:"created_at"`
 	UpdatedAt      time.Time  `json:"updated_at"`
+}
+
+type UserDTO struct {
+	ID                    uint       `json:"id"`
+	Email                 string     `json:"email"`
+	Nickname              string     `json:"nickname"`
+	EmailVerified         bool       `json:"email_verified"`
+	Role                  string     `json:"role"`
+	Enabled               bool       `json:"enabled"`
+	DailyLimit            int64      `json:"daily_limit"`
+	TotalLimit            int64      `json:"total_limit"`
+	UsedToday             int64      `json:"used_today"`
+	TotalUsed             int64      `json:"total_used"`
+	LastUsedAt            *time.Time `json:"last_used_at,omitempty"`
+	PublicMailboxCreated  int64      `json:"public_mailbox_created"`
+	PublicMailboxToday    int64      `json:"public_mailbox_today"`
+	PublicMailboxDate     string     `json:"public_mailbox_date,omitempty"`
+	PrivateMailboxCreated int64      `json:"private_mailbox_created"`
+	CreatedAt             time.Time  `json:"created_at"`
+	UpdatedAt             time.Time  `json:"updated_at"`
 }
 
 type nextEmailMessageDTO struct {
@@ -200,6 +261,36 @@ func publicSharedMailboxMessageDTO(msg models.Message, attachments []AttachmentM
 
 func webhookMessagePayloadDTO(msg models.Message, attachments []AttachmentMetadata) WebhookMessagePayloadDTO {
 	return messagekit.WebhookMessagePayload(msg, attachments)
+}
+
+func userDTO(user models.User) UserDTO {
+	return UserDTO{
+		ID:                    user.ID,
+		Email:                 user.Email,
+		Nickname:              user.Nickname,
+		EmailVerified:         user.EmailVerified,
+		Role:                  user.Role,
+		Enabled:               user.Enabled,
+		DailyLimit:            user.DailyLimit,
+		TotalLimit:            user.TotalLimit,
+		UsedToday:             user.UsedToday,
+		TotalUsed:             user.TotalUsed,
+		LastUsedAt:            user.LastUsedAt,
+		PublicMailboxCreated:  user.PublicMailboxCreated,
+		PublicMailboxToday:    user.PublicMailboxToday,
+		PublicMailboxDate:     user.PublicMailboxDate,
+		PrivateMailboxCreated: user.PrivateMailboxCreated,
+		CreatedAt:             user.CreatedAt,
+		UpdatedAt:             user.UpdatedAt,
+	}
+}
+
+func userDTOs(users []models.User) []UserDTO {
+	out := make([]UserDTO, 0, len(users))
+	for _, user := range users {
+		out = append(out, userDTO(user))
+	}
+	return out
 }
 
 func attachmentsOrEmpty(attachments []AttachmentMetadata) []AttachmentMetadata {

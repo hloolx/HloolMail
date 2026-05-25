@@ -11,6 +11,7 @@ export type DataTableSortState = {
 
 export type DataTableColumn = {
   key: string;
+  role?: 'actions';
   header: ReactNode;
   viewLabel?: ReactNode;
   align?: 'left' | 'center' | 'right';
@@ -87,7 +88,7 @@ export function DataTable({
     .filter(({ column }) => !hiddenColumnSet.has(column.key));
   const visibleColumnCount = Math.max(visibleColumns.length, 1);
   const lastColumn = visibleColumns[visibleColumns.length - 1]?.column;
-  const shouldStickLastColumn = visibleColumns.length > 0 && (stickyLastColumn || (stickyActions && lastColumn?.key === 'actions'));
+  const shouldStickLastColumn = visibleColumns.length > 0 && (stickyLastColumn || (stickyActions && Boolean(lastColumn && isActionColumn(lastColumn))));
   const shellClassName = [
     'table-wrap',
     'data-table-shell',
@@ -120,12 +121,14 @@ export function DataTable({
           <tr>
             {visibleColumns.length > 0 ? visibleColumns.map(({ column }) => {
               const columnSortDirection = sortState?.key === column.key ? sortState.direction : undefined;
+              const columnRole = isActionColumn(column) ? 'actions' : undefined;
               return (
                 <th
                   key={column.key}
                   className={[column.className, column.headerClassName].filter(Boolean).join(' ') || undefined}
                   data-align={column.align || 'left'}
                   data-column-key={column.key}
+                  data-column-role={columnRole}
                   data-sortable={column.sortable ? 'true' : undefined}
                   data-sort-state={columnSortDirection || undefined}
                   aria-sort={ariaSortValue(column, columnSortDirection)}
@@ -223,6 +226,7 @@ function renderMobileCard(
     return {
       column,
       cell,
+      isAction: isActionColumn(column),
       visibleIndex,
       align: cell.align || column.align || 'left',
       label: mobileColumnLabel(column)
@@ -242,14 +246,16 @@ function renderMobileCard(
   }
 
   const mobileItems = items.filter((item) => !item.column.mobileHidden);
-  const titleItem = mobileItems.find((item) => item.column.mobileTitle) || mobileItems.find((item) => item.column.key !== 'actions') || mobileItems[0];
-  const subtitleItems = mobileItems.filter((item) => item.column.mobileSubtitle && item !== titleItem);
-  const badgeItems = mobileItems.filter((item) => item.column.mobileBadge && item !== titleItem && !subtitleItems.includes(item));
-  const actionItems = mobileItems.filter((item) => item.column.key === 'actions');
+  const contentItems = mobileItems.filter((item) => !item.isAction);
+  const titleItem = contentItems.find((item) => item.column.mobileTitle) || contentItems[0];
+  const subtitleItems = contentItems.filter((item) => item.column.mobileSubtitle && item !== titleItem);
+  const badgeItems = contentItems.filter((item) => item.column.mobileBadge && item !== titleItem && !subtitleItems.includes(item));
+  const actionItems = mobileItems.filter((item) => item.isAction);
   const summaryItems = new Set([...subtitleItems, ...badgeItems, ...actionItems, titleItem].filter(Boolean));
   const detailItems = mobileItems
     .filter((item) => !summaryItems.has(item))
     .sort((a, b) => (a.column.mobilePriority ?? a.visibleIndex) - (b.column.mobilePriority ?? b.visibleIndex));
+  const hasHeader = Boolean(titleItem || subtitleItems.length || badgeItems.length);
 
   return (
     <article
@@ -257,27 +263,29 @@ function renderMobileCard(
       data-selected={row.selected ? 'true' : undefined}
       key={row.key}
     >
-      <div className="data-table-mobile-card-head">
-        <div className="data-table-mobile-card-title-group">
-          {titleItem ? (
-            <div className="data-table-mobile-card-title">{titleItem.cell.content}</div>
-          ) : null}
-          {subtitleItems.length > 0 ? (
-            <div className="data-table-mobile-card-subtitle">
-              {subtitleItems.map((item) => (
+      {hasHeader ? (
+        <div className="data-table-mobile-card-head">
+          <div className="data-table-mobile-card-title-group">
+            {titleItem ? (
+              <div className="data-table-mobile-card-title">{titleItem.cell.content}</div>
+            ) : null}
+            {subtitleItems.length > 0 ? (
+              <div className="data-table-mobile-card-subtitle">
+                {subtitleItems.map((item) => (
+                  <span key={item.column.key}>{item.cell.content}</span>
+                ))}
+              </div>
+            ) : null}
+          </div>
+          {badgeItems.length > 0 ? (
+            <div className="data-table-mobile-card-badges">
+              {badgeItems.map((item) => (
                 <span key={item.column.key}>{item.cell.content}</span>
               ))}
             </div>
           ) : null}
         </div>
-        {badgeItems.length > 0 ? (
-          <div className="data-table-mobile-card-badges">
-            {badgeItems.map((item) => (
-              <span key={item.column.key}>{item.cell.content}</span>
-            ))}
-          </div>
-        ) : null}
-      </div>
+      ) : null}
       {detailItems.length > 0 ? (
         <dl className="data-table-mobile-card-fields">
           {detailItems.map((item) => (
@@ -315,14 +323,18 @@ function renderRowCells(
     const align = cell.align || column.align || 'left';
     const classNames = [column.className, column.cellClassName, cell.className].filter(Boolean).join(' ');
     const colSpan = Math.max(1, Math.min(cell.colSpan || 1, visibleColumns.length - visibleIndex));
+    const style = colSpan === 1 ? columnStyle(column) : undefined;
+    const columnRole = colSpan === 1 && isActionColumn(column) ? 'actions' : undefined;
     cells.push(
       <td
         key={column.key}
         className={classNames || undefined}
         data-align={align}
         data-column-key={column.key}
+        data-column-role={columnRole}
         title={cell.title}
         colSpan={colSpan > 1 ? colSpan : undefined}
+        style={style}
       >
         {cell.content}
       </td>
@@ -345,11 +357,16 @@ function normalizeCell(cell: ReactNode | DataTableCell | undefined): DataTableCe
 }
 
 function columnStyle(column: DataTableColumn): CSSProperties | undefined {
-  if (!column.width && !column.minWidth) return undefined;
+  const isAction = isActionColumn(column);
+  if (!column.width && !column.minWidth && !isAction) return undefined;
   return {
-    width: column.width,
+    width: column.width || (isAction ? '1%' : undefined),
     minWidth: column.minWidth
   };
+}
+
+function isActionColumn(column: DataTableColumn) {
+  return column.role === 'actions';
 }
 
 function mobileColumnLabel(column: DataTableColumn) {

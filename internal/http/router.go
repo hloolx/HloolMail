@@ -14,6 +14,7 @@ import (
 	"gptmail/internal/auth"
 	"gptmail/internal/config"
 	"gptmail/internal/domain"
+	"gptmail/internal/emaildelivery"
 	"gptmail/internal/events"
 	"gptmail/internal/frontend"
 	"gptmail/internal/jobs"
@@ -53,6 +54,7 @@ type Handler struct {
 	RateLimiter  *rateLimiter
 	AuditLogger  *AuditLogger
 	Mailer       mailer.Sender
+	EmailWorker  *emaildelivery.Worker
 
 	rateLimiterOnce sync.Once
 }
@@ -65,6 +67,9 @@ func NewRouter(h *Handler) *gin.Engine {
 	}
 	router := gin.New()
 	router.Use(gin.Recovery(), h.securityHeaders(), h.cors(), h.loadSession(), h.optionalAPIKey(), h.requireSameOriginSessionWrite())
+
+	router.GET("/robots.txt", h.perIPRateLimit(1, 10), h.robotsTXT)
+	router.GET("/sitemap.xml", h.perIPRateLimit(1, 10), h.sitemapXML)
 
 	api := router.Group("/api")
 	api.GET("/health", h.perIPRateLimit(2, 5), h.health)
@@ -80,6 +85,7 @@ func NewRouter(h *Handler) *gin.Engine {
 	api.POST("/auth/register/captcha", h.perIPRateLimit(1.0/3, 5), h.registrationCaptcha)
 	api.POST("/auth/register", h.perIPRateLimit(1.0/3, 5), h.register)
 	api.POST("/auth/register/verify", h.perIPRateLimit(1.0/3, 5), h.verifyRegistration)
+	api.GET("/email-deliveries/:id", h.perIPRateLimit(2, 10), h.getEmailDelivery)
 	api.GET("/oauth/providers", h.perIPRateLimit(1, 10), h.listOAuthProviders)
 	api.GET("/oauth/:provider/login", h.perIPRateLimit(1.0/3, 5), h.oauthRedirect)
 	api.GET("/oauth/:provider/callback", h.perIPRateLimit(1, 10), h.oauthCallback)
@@ -94,6 +100,7 @@ func NewRouter(h *Handler) *gin.Engine {
 	authAPI := api.Group("", h.perAPIRateLimit(2, 10))
 	authAPI.POST("/auth/logout", h.logout)
 	authAPI.GET("/auth/me", h.me)
+	authAPI.PATCH("/user/profile", h.patchUserProfile)
 	authAPI.GET("/user/oauth-identities", h.listUserOAuthIdentities)
 	authAPI.DELETE("/user/oauth-identities/:provider", h.unbindUserOAuthIdentity)
 	authAPI.GET("/user/passkeys", h.listUserPasskeys)
@@ -155,14 +162,6 @@ func NewRouter(h *Handler) *gin.Engine {
 	webhookGroup.POST("/webhooks/:id/test", h.testWebhook)
 	webhookGroup.GET("/webhooks/:id/deliveries", h.listWebhookDeliveries)
 
-	userGroup := api.Group("", h.perAPIRateLimit(0.5, 5))
-	userGroup.GET("/users", h.listUsers)
-	userGroup.POST("/users", h.createUser)
-	userGroup.GET("/users/:id/api-keys", h.listUserAPIKeys)
-	userGroup.POST("/users/:id/api-keys/:key_id/reveal", h.revealUserAPIKey)
-	userGroup.PATCH("/users/:id", h.patchUser)
-	userGroup.DELETE("/users/:id", h.deleteUser)
-
 	notificationGroup := api.Group("", h.perAPIRateLimit(0.5, 5))
 	notificationGroup.GET("/notifications", h.listNotifications)
 	notificationGroup.GET("/notifications/unread-count", h.unreadNotificationCount)
@@ -176,9 +175,19 @@ func NewRouter(h *Handler) *gin.Engine {
 	announcementGroup.PATCH("/announcements/:id/read", h.markAnnouncementRead)
 	api.GET("/announcement-stream", h.perAPIRateLimit(1.0/6, 3), h.announcementStream)
 
-	adminGroup := api.Group("", h.perAPIRateLimit(0.5, 5))
+	adminGroup := api.Group("", h.perAPIRateLimit(0.5, 5), h.requireAdminSessionMiddleware())
 	adminGroup.GET("/admin/stats", h.adminStats)
+	adminGroup.GET("/admin/stats/timeseries", h.adminStatsTimeseries)
+	adminGroup.GET("/admin/users", h.listUsers)
+	adminGroup.POST("/admin/users", h.createUser)
+	adminGroup.GET("/admin/users/:id/api-keys", h.listUserAPIKeys)
+	adminGroup.POST("/admin/users/:id/api-keys/:key_id/reveal", h.revealUserAPIKey)
+	adminGroup.PATCH("/admin/users/:id", h.patchUser)
+	adminGroup.DELETE("/admin/users/:id", h.deleteUser)
 	adminGroup.GET("/admin/domain-health", h.adminDomainHealth)
+	adminGroup.POST("/admin/domains/:id/check-mx", h.adminCheckDomainMX)
+	adminGroup.PATCH("/admin/domains/:id", h.patchAdminDomain)
+	adminGroup.DELETE("/admin/domains/:id", h.deleteAdminDomain)
 	adminGroup.GET("/admin/domain-check-settings", h.adminDomainCheckSettings)
 	adminGroup.PATCH("/admin/domain-check-settings", h.patchAdminDomainCheckSettings)
 	adminGroup.POST("/admin/domain-check-runs", h.createAdminDomainCheckRun)
@@ -192,6 +201,14 @@ func NewRouter(h *Handler) *gin.Engine {
 	adminGroup.POST("/admin/login-settings/test-email", h.testAdminLoginSettingsEmail)
 	adminGroup.GET("/admin/quota-settings", h.adminQuotaSettings)
 	adminGroup.PATCH("/admin/quota-settings", h.patchAdminQuotaSettings)
+	adminGroup.GET("/admin/share-links", h.listAdminShareLinks)
+	adminGroup.POST("/admin/share-links/:id/revoke", h.revokeAdminShareLink)
+	adminGroup.DELETE("/admin/share-links/:id", h.deleteAdminShareLink)
+	adminGroup.GET("/admin/share-links/:id/access-logs", h.listAdminShareLinkAccessLogs)
+	adminGroup.GET("/admin/webhooks", h.listAdminWebhooks)
+	adminGroup.POST("/admin/webhooks/:id/disable", h.disableAdminWebhook)
+	adminGroup.DELETE("/admin/webhooks/:id", h.deleteAdminWebhook)
+	adminGroup.GET("/admin/webhooks/:id/deliveries", h.listAdminWebhookDeliveries)
 	adminGroup.GET("/admin/audit-logs", h.adminAuditLogs)
 	adminGroup.GET("/admin/announcements", h.adminListAnnouncements)
 	adminGroup.POST("/admin/announcements", h.adminCreateAnnouncement)

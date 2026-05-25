@@ -121,6 +121,12 @@ func (h *Handler) install(c *gin.Context) {
 		targetDB = db
 	}
 
+	envContent := buildEnvFileContent(input)
+	if err := writeEnvFile(h.Config.EnvPath, envContent); err != nil {
+		fail(c, http.StatusInternalServerError, "write env file: "+err.Error())
+		return
+	}
+
 	hash, err := auth.HashSecret(input.AdminPassword)
 	if err != nil {
 		fail(c, http.StatusInternalServerError, err.Error())
@@ -129,8 +135,10 @@ func (h *Handler) install(c *gin.Context) {
 	var existing int64
 	targetDB.Model(&models.User{}).Where("role = ? AND enabled = ?", models.UserRoleAdmin, true).Count(&existing)
 	if existing == 0 {
+		adminEmail := strings.ToLower(strings.TrimSpace(input.AdminEmail))
 		admin := models.User{
-			Email:         strings.ToLower(strings.TrimSpace(input.AdminEmail)),
+			Email:         adminEmail,
+			Nickname:      oauthNickname("", adminEmail),
 			EmailVerified: true,
 			Role:          models.UserRoleAdmin,
 			Enabled:       true,
@@ -143,27 +151,20 @@ func (h *Handler) install(c *gin.Context) {
 			return
 		}
 	}
-	envContent := buildEnvFileContent(input)
-	envWritten := true
-	envError := ""
-	if err := writeEnvFile(h.Config.EnvPath, envContent); err != nil {
-		envWritten = false
-		envError = err.Error()
-	}
 	if !restartRequired {
 		h.Config = targetCfg
 		h.Sessions = auth.NewSessionService(targetCfg.SessionSecret, h.DB)
 	}
-	ok(c, gin.H{
+	response := gin.H{
 		"installed":          true,
 		"restart_required":   restartRequired,
-		"env_written":        envWritten,
-		"env_error":          envError,
+		"env_written":        true,
+		"env_error":          "",
 		"env_path":           h.Config.EnvPath,
-		"env_content":        envContent,
 		"deployment_kind":    deploymentKind(),
 		"config_lock_reason": configLockReason(h.installRuntimeConfigLocked()),
-	})
+	}
+	ok(c, response)
 }
 
 func (h *Handler) installDNSCheck(c *gin.Context) {
@@ -261,7 +262,7 @@ func (h *Handler) login(c *gin.Context) {
 		return
 	}
 	setSessionCookie(c, token, 7*24*time.Hour)
-	ok(c, user)
+	ok(c, userDTO(user))
 }
 
 func (h *Handler) registrationCaptcha(c *gin.Context) {
@@ -327,6 +328,7 @@ func (h *Handler) register(c *gin.Context) {
 	}
 	var input struct {
 		Email          string `json:"email"`
+		Nickname       string `json:"nickname"`
 		Password       string `json:"password"`
 		TurnstileToken string `json:"turnstile_token"`
 		CaptchaID      string `json:"captcha_id"`
@@ -364,6 +366,11 @@ func (h *Handler) register(c *gin.Context) {
 	email := strings.ToLower(strings.TrimSpace(input.Email))
 	if !strings.Contains(email, "@") || len(input.Password) < 8 {
 		fail(c, http.StatusBadRequest, "valid email and 8+ character password required")
+		return
+	}
+	nickname, err := normalizeNickname(input.Nickname)
+	if err != nil {
+		fail(c, http.StatusBadRequest, err.Error())
 		return
 	}
 	var existing models.User
@@ -407,6 +414,7 @@ func (h *Handler) register(c *gin.Context) {
 		VerificationID: verificationID,
 		TokenHash:      tokenHash,
 		Email:          email,
+		Nickname:       nickname,
 		PasswordHash:   hash,
 		CodeHash:       codeHash,
 		ExpiresAt:      expiresAt,
@@ -425,16 +433,21 @@ func (h *Handler) register(c *gin.Context) {
 		fail(c, http.StatusInternalServerError, err.Error())
 		return
 	}
-	if err := h.sendRegistrationVerification(c.Request.Context(), settings, email, code); err != nil {
+	delivery, err := enqueueRegistrationVerification(h, settings, email, code, verificationID)
+	if err != nil {
 		_ = h.DB.Delete(&models.PendingRegistration{}, "verification_id = ?", verificationID).Error
 		fail(c, http.StatusBadGateway, err.Error())
 		return
 	}
-	ok(c, gin.H{
+	response := gin.H{
 		"email_verification_required": true,
 		"verification_id":             verificationID,
 		"expires_at":                  expiresAt,
-	})
+	}
+	for key, value := range emailDeliveryStatusFields(delivery) {
+		response[key] = value
+	}
+	ok(c, response)
 }
 
 func (h *Handler) verifyRegistration(c *gin.Context) {
@@ -492,6 +505,7 @@ func (h *Handler) verifyRegistration(c *gin.Context) {
 				return httpStatusError{Status: http.StatusConflict, Message: "email already registered"}
 			}
 			existing.PasswordHash = locked.PasswordHash
+			existing.Nickname = locked.Nickname
 			existing.EmailVerified = true
 			existing.Enabled = true
 			if existing.Role == "" {
@@ -504,6 +518,7 @@ func (h *Handler) verifyRegistration(c *gin.Context) {
 		} else if errors.Is(err, gorm.ErrRecordNotFound) {
 			user = models.User{
 				Email:         locked.Email,
+				Nickname:      locked.Nickname,
 				PasswordHash:  locked.PasswordHash,
 				EmailVerified: true,
 				Role:          models.UserRoleUser,
@@ -542,7 +557,7 @@ func (h *Handler) verifyRegistration(c *gin.Context) {
 		return
 	}
 	setSessionCookie(c, token, 7*24*time.Hour)
-	ok(c, user)
+	ok(c, userDTO(user))
 }
 
 func (h *Handler) verifyRegistrationCaptcha(captchaID, answer string) error {
@@ -618,18 +633,6 @@ func (h *Handler) upsertPendingRegistration(pending models.PendingRegistration) 
 			return err
 		}
 		return tx.Create(&pending).Error
-	})
-}
-
-func (h *Handler) sendRegistrationVerification(ctx context.Context, settings *models.LoginSettings, email, code string) error {
-	subject := "Verify your email address"
-	text := "Your verification code is " + code + ". It expires in 15 minutes."
-	html := "<p>Your verification code is <strong>" + code + "</strong>.</p><p>It expires in 15 minutes.</p>"
-	return h.mailSender().Send(ctx, mailerSettingsFromLoginSettings(h.Config, settings), mailer.Message{
-		To:      email,
-		Subject: subject,
-		Text:    text,
-		HTML:    html,
 	})
 }
 
@@ -721,7 +724,7 @@ func (h *Handler) me(c *gin.Context) {
 		fail(c, http.StatusUnauthorized, "login required")
 		return
 	}
-	ok(c, gin.H{"installed": true, "user": user})
+	ok(c, gin.H{"installed": true, "user": userDTO(*user)})
 }
 
 func (h *Handler) loginSettings(c *gin.Context) {

@@ -148,8 +148,8 @@
   z-index: 2;
 }
 
-.data-table-sticky-last th:last-child,
-.data-table-sticky-last td:last-child {
+.data-table.data-table-sticky-last th:last-child,
+.data-table.data-table-sticky-last td:last-child:not([colspan]) {
   position: sticky;
   right: 0;
   z-index: 3;
@@ -159,17 +159,17 @@
     -0.65rem 0 1rem -0.95rem color-mix(in srgb, var(--foreground) 28%, transparent);
 }
 
-.data-table-sticky-last th:last-child {
+.data-table.data-table-sticky-last th:last-child {
   z-index: 5;
   background: color-mix(in srgb, var(--soft) 46%, var(--panel));
 }
 
-.data-table-sticky-last td.table-empty {
+.data-table.data-table-sticky-last td[colspan] {
   position: static;
   box-shadow: none;
 }
 
-.data-table-sticky-last .table-actions {
+.data-table.data-table-sticky-last td[data-column-role="actions"]:last-child:not([colspan]) .table-actions {
   min-width: max-content;
   flex-wrap: nowrap;
 }
@@ -193,15 +193,15 @@
   background: color-mix(in srgb, var(--focus) 10%, var(--panel));
 }
 
-.data-table-sticky-last tbody tr:hover td:last-child {
+.data-table.data-table-sticky-last tbody tr:hover td:last-child:not([colspan]) {
   background: color-mix(in srgb, var(--soft) 58%, var(--panel));
 }
 
-.data-table-sticky-last tbody tr[data-selected="true"] td:last-child {
+.data-table.data-table-sticky-last tbody tr[data-selected="true"] td:last-child:not([colspan]) {
   background: color-mix(in srgb, var(--focus) 7%, var(--panel));
 }
 
-.data-table-sticky-last tbody tr[data-selected="true"]:hover td:last-child {
+.data-table.data-table-sticky-last tbody tr[data-selected="true"]:hover td:last-child:not([colspan]) {
   background: color-mix(in srgb, var(--focus) 10%, var(--panel));
 }
 
@@ -236,6 +236,19 @@
   align-items: center;
   justify-content: flex-end;
   gap: 0.25rem;
+}
+
+.data-table th[data-column-role="actions"],
+.data-table td[data-column-role="actions"] {
+  width: 1%;
+  white-space: nowrap;
+}
+
+.data-table td[data-column-role="actions"] .table-actions {
+  width: max-content;
+  max-width: min(100%, 24rem);
+  margin-left: auto;
+  flex-wrap: nowrap;
 }
 
 .data-table :where(input[type="checkbox"]) {

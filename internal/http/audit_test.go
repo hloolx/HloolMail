@@ -6,7 +6,6 @@ import (
 	"testing"
 	"time"
 
-	"gptmail/internal/config"
 	"gptmail/internal/models"
 )
 
@@ -48,10 +47,16 @@ func TestAdminAuditLogsFilterAndPagination(t *testing.T) {
 	if err := db.Create(&logs).Error; err != nil {
 		t.Fatal(err)
 	}
-	router := testRouterWithConfig(t, db, func(cfg *config.Config) {
-		cfg.AdminToken = "test-admin-token"
-	})
-	headers := map[string]string{"X-Admin-Token": "test-admin-token"}
+	createInstalledAdmin(t, db)
+	router := testRouter(t, db)
+	login := perform(router, http.MethodPost, "/api/auth/login", map[string]any{
+		"email":    "admin@example.com",
+		"password": "password123",
+	}, nil)
+	if login.Code != http.StatusOK {
+		t.Fatalf("login = %d: %s", login.Code, login.Body.String())
+	}
+	headers := cookieHeaders(login.Result().Cookies())
 
 	// Page 1: category=security, per_page=1 — expect 2 total, first item is newest
 	first := perform(router, http.MethodGet, "/api/admin/audit-logs?category=security&per_page=1&page=1", nil, headers)

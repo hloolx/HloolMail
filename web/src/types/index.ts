@@ -239,6 +239,35 @@ export type LoginSettings = {
   updated_at?: string;
 };
 
+export type EmailDeliveryStatus = 'pending' | 'delivering' | 'retry' | 'succeeded' | 'failed' | OpenString;
+
+export type EmailDelivery = {
+  id: number | string;
+  purpose: 'registration_verification' | 'login_settings_test' | OpenString;
+  recipient: string;
+  status: EmailDeliveryStatus;
+  stage: string;
+  attempt_count: number;
+  max_attempts: number;
+  next_attempt_at?: string;
+  last_attempt_at?: string;
+  succeeded_at?: string;
+  error?: string;
+  stage_log?: string;
+  created_at: string;
+  updated_at: string;
+};
+
+export type EmailDeliveryResult = {
+  delivery_id?: EmailDelivery['id'];
+  email_delivery_status?: EmailDeliveryStatus;
+  email_delivery_error?: string;
+};
+
+export type LoginSettingsTestEmailResponse = LoginSettings & EmailDeliveryResult & {
+  sent?: boolean;
+};
+
 export type PublicLoginSettings = {
   installed: boolean;
   registration_open?: boolean;
@@ -261,4 +290,4 @@ export type RegisterResponse = {
   email_verification_required: boolean;
   verification_id: string;
   expires_at: string;
-};
+} & EmailDeliveryResult;

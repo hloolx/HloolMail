@@ -6,9 +6,10 @@ import { api } from '../api';
 import type { Stats, TimeseriesStats } from '../types';
 import { useText } from '../locales';
 import { useAppStore } from '../store';
-import { DataTable, EmptyState, InfoTip, Metric, PaginationControls } from '../components/shared';
+import { DataTable, EmptyState, InfoTip, Metric, PaginationControls, UserAvatar } from '../components/shared';
 import type { DataTableColumn, DataTableRow } from '../components/shared';
 import { LineChart } from '../components/charts/LineChart';
+import { displayName } from '../lib/userDisplay';
 
 export function Dashboard({ user }: { user: User }) {
   const { setPage } = useAppStore();
@@ -46,6 +47,7 @@ export function Dashboard({ user }: { user: User }) {
   );
   const totalPages = Math.max(1, Math.ceil(publicDomains.length / pageSize));
   const pagedDomains = publicDomains.slice((domainPage - 1) * pageSize, domainPage * pageSize);
+  const userName = displayName(user);
 
   useEffect(() => {
     if (domainPage > totalPages) setDomainPage(totalPages);
@@ -55,7 +57,7 @@ export function Dashboard({ user }: { user: User }) {
     { key: 'domain', header: text.dashboard.tableDomain, minWidth: '14rem' },
     { key: 'mode', header: text.dashboard.tableMode, align: 'center', width: '7rem' },
     { key: 'mail', header: text.dashboard.tableMail, align: 'right', width: '7rem' },
-    { key: 'action', header: text.dashboard.tableAction, align: 'right', width: '9rem' },
+    { key: 'actions', role: 'actions', header: text.dashboard.tableAction, align: 'right', width: '9rem' },
   ];
 
   const domainRows: DataTableRow[] = pagedDomains.map((domain) => ({
@@ -80,9 +82,9 @@ export function Dashboard({ user }: { user: User }) {
       {/* Welcome banner */}
       <section className="panel dashboard-welcome">
         <div className="dashboard-welcome-inner">
-          <div className="dashboard-welcome-avatar">{user.email.slice(0, 1).toUpperCase()}</div>
+          <UserAvatar user={user} className="dashboard-welcome-avatar" />
           <div>
-            <h1>{text.dashboard.welcome} {user.email}</h1>
+            <h1>{text.dashboard.welcome} {userName}</h1>
             <p>{user.role === 'admin' ? text.role.admin : text.role.regularUser}</p>
           </div>
         </div>

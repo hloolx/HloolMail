@@ -4,7 +4,7 @@ import { AnimatePresence, motion } from 'framer-motion';
 import { CircleUserRound, Clipboard, ExternalLink, Github, Loader2, Mail, Pencil, Save, Send, Shield, Fingerprint, UserPlus, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { api, patchJSON, postJSON } from '../api';
-import type { OAuthProvider, LoginSettings } from '../types';
+import type { EmailDelivery, EmailDeliveryStatus, LoginSettings, LoginSettingsTestEmailResponse, OAuthProvider } from '../types';
 import { ConfirmModal, DialogShell, InfoTip, LoadingIndicator, SegmentedTabs, SelectDropdown } from '../components/shared';
 import { notifySuccess } from '../lib/feedback';
 import { useText } from '../locales';
@@ -26,6 +26,7 @@ type RegistrationForm = {
   smtp_security: 'none' | 'starttls' | 'tls';
   smtp_username: string;
   smtp_password: string;
+  smtp_password_set: boolean;
   smtp_from_name: string;
   smtp_from_email: string;
 };
@@ -119,6 +120,18 @@ export function LoginSettingsPage() {
   const [registrationInitial, setRegistrationInitial] = useState<RegistrationForm>(emptyRegistrationForm());
   const [testRecipient, setTestRecipient] = useState('');
   const [lastTestedRegistrationKey, setLastTestedRegistrationKey] = useState('');
+  const [testDeliveryId, setTestDeliveryId] = useState<EmailDelivery['id'] | null>(null);
+  const [testDeliverySnapshot, setTestDeliverySnapshot] = useState<{ status?: EmailDeliveryStatus; error?: string }>({});
+  const [testDeliveryRegistrationKey, setTestDeliveryRegistrationKey] = useState('');
+  const completedTestDeliveryRef = useRef('');
+
+  const testDelivery = useQuery({
+    queryKey: ['admin-login-settings', 'email-delivery', testDeliveryId],
+    queryFn: () => api<EmailDelivery>(`/api/email-deliveries/${encodeURIComponent(String(testDeliveryId))}`),
+    enabled: testDeliveryId !== null,
+    retry: false,
+    refetchInterval: (query) => isEmailDeliveryInProgress(query.state.data?.status) ? 2000 : false
+  });
 
   useEffect(() => {
     if (!loginSettings.data) return;
@@ -167,20 +180,55 @@ export function LoginSettingsPage() {
     mutationFn: () => {
       const recipient = testRecipient.trim();
       if (!recipient) throw new Error(text.loginSettings.testEmailRequired);
-      return postJSON<LoginSettings>('/api/admin/login-settings/test-email', {
+      return postJSON<LoginSettingsTestEmailResponse>('/api/admin/login-settings/test-email', {
         recipient,
         settings: registrationPayload(registrationForm)
       });
     },
-    onSuccess: () => {
+    onSuccess: (settings) => {
+      queryClient.setQueryData<LoginSettings>(['admin-login-settings'], settings);
+      queryClient.invalidateQueries({ queryKey: ['admin-login-settings'] });
       queryClient.invalidateQueries({ queryKey: ['login-settings'] });
-      setLastTestedRegistrationKey(registrationTestKey(registrationForm));
-      notifySuccess(text.loginSettings.testEmailSent);
+      setTestDeliveryId(settings.delivery_id ?? null);
+      setTestDeliverySnapshot({
+        status: settings.email_delivery_status,
+        error: settings.email_delivery_error
+      });
+      setTestDeliveryRegistrationKey(registrationTestKey(registrationForm));
+      completedTestDeliveryRef.current = isEmailDeliveryDone(settings.email_delivery_status)
+        ? String(settings.delivery_id ?? '')
+        : '';
+      const hasDeliveryResult = settings.delivery_id !== undefined || settings.email_delivery_status !== undefined || settings.sent !== undefined;
+      if (!hasDeliveryResult || settings.sent || isEmailDeliverySucceeded(settings.email_delivery_status)) {
+        setLastTestedRegistrationKey(registrationTestKey(registrationForm));
+        notifySuccess(text.loginSettings.testEmailSent);
+      } else if (isEmailDeliveryFailed(settings.email_delivery_status)) {
+        toast.error(settings.email_delivery_error || text.loginSettings.emailDeliveryFailed);
+      } else {
+        notifySuccess(text.loginSettings.testEmailQueued);
+      }
     },
     onError: (error) => {
       toast.error(error.message);
     }
   });
+
+  useEffect(() => {
+    const delivery = testDelivery.data;
+    if (!delivery || !isEmailDeliveryDone(delivery.status)) return;
+    const deliveryKey = String(delivery.id);
+    if (completedTestDeliveryRef.current === deliveryKey) return;
+    completedTestDeliveryRef.current = deliveryKey;
+
+    if (isEmailDeliverySucceeded(delivery.status)) {
+      setLastTestedRegistrationKey(testDeliveryRegistrationKey);
+      queryClient.invalidateQueries({ queryKey: ['admin-login-settings'] });
+      queryClient.invalidateQueries({ queryKey: ['login-settings'] });
+      notifySuccess(text.loginSettings.testEmailSent);
+    } else {
+      toast.error(delivery.error || text.loginSettings.emailDeliveryFailed);
+    }
+  }, [queryClient, testDelivery.data, testDeliveryRegistrationKey, text.loginSettings.emailDeliveryFailed, text.loginSettings.testEmailSent]);
 
   const handleSaveTurnstile = () => {
     setSavingTurnstile(true);
@@ -225,6 +273,16 @@ export function LoginSettingsPage() {
   const hasRegistrationChanges = registrationChanged(registrationForm, registrationInitial);
   const currentRegistrationKey = registrationTestKey(registrationForm);
   const initialRegistrationKey = registrationTestKey(registrationInitial);
+  const testDeliveryAppliesToCurrentForm = testDeliveryRegistrationKey === currentRegistrationKey;
+  const testDeliveryStatus = testDeliveryAppliesToCurrentForm
+    ? (testDelivery.isError ? undefined : (testDelivery.data?.status || testDeliverySnapshot.status))
+    : undefined;
+  const testDeliveryError = testDeliveryAppliesToCurrentForm
+    ? (testDelivery.data?.error || testDeliverySnapshot.error)
+    : undefined;
+  const testDeliveryInProgress = isEmailDeliveryInProgress(testDeliveryStatus);
+  const testDeliveryFailed = isEmailDeliveryFailed(testDeliveryStatus);
+  const testDeliveryStatusLoadError = testDeliveryAppliesToCurrentForm && testDelivery.isError;
   const currentFormEmailTested = Boolean(
     lastTestedRegistrationKey === currentRegistrationKey ||
     (loginSettings.data?.email_delivery_ready && currentRegistrationKey === initialRegistrationKey)
@@ -585,8 +643,8 @@ export function LoginSettingsPage() {
                     <input className="input" value={registrationForm.smtp_username} onChange={(event) => setRegistrationForm((form) => ({ ...form, smtp_username: event.target.value }))} autoComplete="username" />
                   </label>
                   <label className="user-form-field">
-                    <span>{text.loginSettings.smtpPassword}{registrationInitial.smtp_password && <InfoTip text={text.oauth.secret_hint} />}</span>
-                    <input className="input" value={registrationForm.smtp_password} onChange={(event) => setRegistrationForm((form) => ({ ...form, smtp_password: event.target.value }))} placeholder={registrationInitial.smtp_password ? '********' : ''} type="password" autoComplete="new-password" />
+                    <span>{text.loginSettings.smtpPassword}{registrationInitial.smtp_password_set && <InfoTip text={text.oauth.secret_hint} />}</span>
+                    <input className="input" value={registrationForm.smtp_password} onChange={(event) => setRegistrationForm((form) => ({ ...form, smtp_password: event.target.value }))} placeholder={registrationInitial.smtp_password_set ? '********' : ''} type="password" autoComplete="new-password" />
                   </label>
                   <label className="user-form-field">
                     <span>{text.loginSettings.smtpFromName}</span>
@@ -603,13 +661,19 @@ export function LoginSettingsPage() {
                   <span>{text.loginSettings.testRecipient}</span>
                   <input className="input" value={testRecipient} onChange={(event) => setTestRecipient(event.target.value)} type="email" placeholder="you@example.com" />
                 </label>
-                <button className="btn-secondary" type="button" onClick={() => testEmail.mutate()} disabled={testEmail.isPending}>
-                  {testEmail.isPending ? <LoadingIndicator size={14} /> : <Send size={14} />}
-                  {text.loginSettings.testEmail}
+                <button className="btn-secondary" type="button" onClick={() => testEmail.mutate()} disabled={testEmail.isPending || testDeliveryInProgress}>
+                  {testEmail.isPending || testDeliveryInProgress ? <LoadingIndicator size={14} /> : <Send size={14} />}
+                  {testEmail.isPending || testDeliveryInProgress ? text.loginSettings.emailDeliverySending : text.loginSettings.testEmail}
                 </button>
                 <p className="field-hint admin-registration-hint">
                   {currentFormEmailTested
                     ? text.loginSettings.emailDeliveryReady
+                    : testDeliveryInProgress
+                      ? text.loginSettings.emailDeliverySendingHint
+                      : testDeliveryFailed
+                        ? formatDeliveryError(text.loginSettings.emailDeliveryFailedWithError, testDeliveryError || text.loginSettings.emailDeliveryFailed)
+                        : testDeliveryStatusLoadError
+                          ? text.loginSettings.emailDeliveryStatusLoadError
                     : text.loginSettings.emailDeliveryNeedsTest}
                 </p>
               </div>
@@ -779,12 +843,14 @@ function emptyRegistrationForm(): RegistrationForm {
     smtp_security: 'starttls',
     smtp_username: '',
     smtp_password: '',
+    smtp_password_set: false,
     smtp_from_name: '',
     smtp_from_email: ''
   };
 }
 
 function registrationFormFromSettings(settings: LoginSettings): RegistrationForm {
+  const hasSavedSMTPPassword = settings.smtp_password === '***';
   return {
     registration_open: !!settings.registration_open,
     email_registration_enabled: !!settings.email_registration_enabled,
@@ -794,14 +860,15 @@ function registrationFormFromSettings(settings: LoginSettings): RegistrationForm
     smtp_port: String(settings.smtp_port || 587),
     smtp_security: settings.smtp_security || 'starttls',
     smtp_username: settings.smtp_username || '',
-    smtp_password: settings.smtp_password === '***' ? '***' : '',
+    smtp_password: '',
+    smtp_password_set: hasSavedSMTPPassword,
     smtp_from_name: settings.smtp_from_name || '',
     smtp_from_email: settings.smtp_from_email || ''
   };
 }
 
 function registrationPayload(form: RegistrationForm): Record<string, unknown> {
-  return {
+  const body: Record<string, unknown> = {
     registration_open: form.registration_open,
     email_registration_enabled: form.email_registration_enabled,
     email_verification_mode: form.email_verification_mode,
@@ -810,10 +877,12 @@ function registrationPayload(form: RegistrationForm): Record<string, unknown> {
     smtp_port: Number.parseInt(form.smtp_port, 10) || 0,
     smtp_security: form.smtp_security,
     smtp_username: form.smtp_username.trim(),
-    smtp_password: form.smtp_password.trim(),
     smtp_from_name: form.smtp_from_name.trim(),
     smtp_from_email: form.smtp_from_email.trim()
   };
+  const smtpPassword = form.smtp_password.trim();
+  body.smtp_password = smtpPassword || (form.smtp_password_set ? '***' : '');
+  return body;
 }
 
 function registrationTestKey(form: RegistrationForm): string {
@@ -824,7 +893,7 @@ function registrationTestKey(form: RegistrationForm): string {
     smtp_port: Number.parseInt(form.smtp_port, 10) || 0,
     smtp_security: form.smtp_security,
     smtp_username: form.smtp_username.trim(),
-    smtp_password: form.smtp_password.trim(),
+    smtp_password: form.smtp_password.trim() || (form.smtp_password_set ? '__saved__' : ''),
     smtp_from_name: form.smtp_from_name.trim(),
     smtp_from_email: form.smtp_from_email.trim()
   });
@@ -840,7 +909,8 @@ function registrationChanged(form: RegistrationForm, initial: RegistrationForm):
     form.smtp_port.trim() !== initial.smtp_port ||
     form.smtp_security !== initial.smtp_security ||
     form.smtp_username.trim() !== initial.smtp_username ||
-    form.smtp_password.trim() !== initial.smtp_password ||
+    form.smtp_password.trim() !== '' ||
+    form.smtp_password_set !== initial.smtp_password_set ||
     form.smtp_from_name.trim() !== initial.smtp_from_name ||
     form.smtp_from_email.trim() !== initial.smtp_from_email
   );
@@ -875,4 +945,24 @@ function hasUnsavedChanges(form: OAuthForm | undefined, initial: OAuthForm | und
     form.enabled !== initial.enabled ||
     form.client_secret.trim() !== ''
   );
+}
+
+function isEmailDeliveryInProgress(status?: EmailDeliveryStatus) {
+  return status === 'pending' || status === 'delivering' || status === 'retry';
+}
+
+function isEmailDeliverySucceeded(status?: EmailDeliveryStatus) {
+  return status === 'succeeded';
+}
+
+function isEmailDeliveryFailed(status?: EmailDeliveryStatus) {
+  return status === 'failed';
+}
+
+function isEmailDeliveryDone(status?: EmailDeliveryStatus) {
+  return isEmailDeliverySucceeded(status) || isEmailDeliveryFailed(status);
+}
+
+function formatDeliveryError(template: string, error: string) {
+  return template.replace('{error}', error);
 }

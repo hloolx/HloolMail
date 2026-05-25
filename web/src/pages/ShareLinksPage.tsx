@@ -43,7 +43,7 @@ export function ShareLinksPage() {
     { key: 'expires', header: text.shareLinks.expiresAt, width: '9rem', mobilePriority: 1 },
     { key: 'accesses', header: text.shareLinks.accesses, align: 'right', width: '6rem', mobilePriority: 3 },
     { key: 'last', header: text.shareLinks.lastAccessed, width: '8rem', mobilePriority: 4 },
-    { key: 'actions', header: text.shareLinks.actions, align: 'right', minWidth: '13rem', hideable: false }
+    { key: 'actions', role: 'actions', header: text.shareLinks.actions, align: 'right', width: '7rem', hideable: false }
   ], [text]);
   const deleteLink = useMutation({
     mutationFn: (link: ShareLinkDTO) => api(`/api/share-links/${link.id}`, { method: 'DELETE' }),
@@ -203,7 +203,7 @@ function CreateShareLinkDialog({ onClose, onCreated }: { onClose: () => void; on
   const mailboxInputRef = useRef<HTMLInputElement | null>(null);
   const mailboxes = useQuery({
     queryKey: ['mailboxes', 'share-links-create'],
-    queryFn: () => api<PaginatedResponse<MailboxInfo>>('/api/mailboxes?page=1&per_page=50'),
+    queryFn: () => api<PaginatedResponse<MailboxInfo>>('/api/mailboxes?page=1&per_page=50&scope=own'),
     retry: false
   });
   const mailboxOptions = mailboxes.data?.items || [];
@@ -419,7 +419,8 @@ async function resolveMailboxID(value: string, mailboxes: MailboxInfo[]) {
   const params = new URLSearchParams({
     q: trimmed,
     page: '1',
-    per_page: '50'
+    per_page: '50',
+    scope: 'own'
   });
   const result = await api<PaginatedResponse<MailboxInfo>>(`/api/mailboxes?${params.toString()}`);
   return findMailboxByEmail(trimmed, result.items || [])?.id || 0;

@@ -117,6 +117,7 @@ func AutoMigrate(db *gorm.DB) error {
 		&models.ShareLinkAccessLog{},
 		&models.WebhookEndpoint{},
 		&models.WebhookDelivery{},
+		&models.EmailDelivery{},
 		&models.APIUsageLog{},
 		&models.Notification{},
 		&models.Announcement{},
@@ -132,6 +133,9 @@ func AutoMigrate(db *gorm.DB) error {
 		return err
 	}
 	if err := BackfillExistingUsersEmailVerified(db, hadPendingRegistrationTable); err != nil {
+		return err
+	}
+	if err := BackfillUserNicknameDefaults(db); err != nil {
 		return err
 	}
 	if err := BackfillDomainBoolDefaults(db); err != nil {
@@ -187,6 +191,19 @@ func BackfillDomainBoolDefaults(db *gorm.DB) error {
 	}
 	for column, value := range defaults {
 		if err := db.Model(&models.Domain{}).Where(column+" IS NULL").Update(column, value).Error; err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func BackfillUserNicknameDefaults(db *gorm.DB) error {
+	for _, table := range []string{"users", "pending_registrations"} {
+		ok, err := hasTableColumns(db, table, "nickname")
+		if err != nil || !ok {
+			return err
+		}
+		if err := db.Table(table).Where("nickname IS NULL").Update("nickname", "").Error; err != nil {
 			return err
 		}
 	}

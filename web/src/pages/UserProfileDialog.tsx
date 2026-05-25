@@ -1,19 +1,19 @@
-import { useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { CircleUserRound, Fingerprint, Github, Plus, Trash2, Unlink, X } from 'lucide-react';
+import { CircleUserRound, Fingerprint, Github, Plus, Save, Trash2, Unlink, X } from 'lucide-react';
 import { toast } from 'sonner';
 import type { User } from '../api';
-import { api } from '../api';
-import type { OAuthProvider, PublicLoginSettings } from '../types';
+import { api, patchJSON } from '../api';
+import type { MeResponse, OAuthProvider, PublicLoginSettings } from '../types';
 import { roleText, useText } from '../locales';
-import { DialogShell, IconButton, InfoTip, LoadingIndicator } from '../components/shared';
+import { DialogShell, IconButton, InfoTip, LoadingIndicator, UserAvatar } from '../components/shared';
 import { notifySuccess } from '../lib/feedback';
 import { registerPasskey, type PasskeyCredentialSummary } from '../lib/passkeys';
+import { displayName, displaySubtitle, normalizeNicknameInput, validateNicknameInput } from '../lib/userDisplay';
 
 type OAuthIdentity = {
   provider: string;
   name: string;
-  avatar_url: string;
   bound_at: string;
 };
 
@@ -21,6 +21,14 @@ export function UserProfileDialog({ open, onClose, user }: { open: boolean; onCl
   const queryClient = useQueryClient();
   const text = useText();
   const feedbackOriginRef = useRef<HTMLElement | null>(null);
+  const [nickname, setNickname] = useState(user.nickname || '');
+  const [nicknameError, setNicknameError] = useState('');
+
+  useEffect(() => {
+    if (!open) return;
+    setNickname(user.nickname || '');
+    setNicknameError('');
+  }, [open, user.nickname]);
 
   const identities = useQuery({
     queryKey: ['user-oauth-identities'],
@@ -87,9 +95,38 @@ export function UserProfileDialog({ open, onClose, user }: { open: boolean; onCl
     onError: (error) => toast.error(error.message),
   });
 
+  const saveProfile = useMutation({
+    mutationFn: () => {
+      const error = validateNicknameInput(nickname, {
+        required: text.profile.nicknameRequired,
+        tooLong: text.profile.nicknameTooLong,
+        invalid: text.profile.nicknameInvalid
+      });
+      if (error) {
+        setNicknameError(error);
+        throw new Error(error);
+      }
+      return patchJSON<{ user: User }>('/api/user/profile', { nickname: normalizeNicknameInput(nickname) });
+    },
+    onSuccess: (response) => {
+      queryClient.setQueryData<MeResponse>(['me'], (current) => (
+        current?.user ? { ...current, user: response.user } : current
+      ));
+      queryClient.invalidateQueries({ queryKey: ['me'] });
+      notifySuccess(text.profile.nicknameSaved, { origin: feedbackOriginRef.current });
+      feedbackOriginRef.current = null;
+    },
+    onError: (error) => {
+      feedbackOriginRef.current = null;
+      toast.error(error.message);
+    },
+  });
+
   const boundProviders = new Set((identities.data || []).map((id) => id.provider));
   const availableProviders = (providers.data || []).filter((p) => p.configured && p.enabled);
   const loadingProviders = providers.isLoading || identities.isLoading;
+  const primaryName = displayName(user);
+  const secondaryName = displaySubtitle(user);
 
   const bind = (provider: string) => {
     const bindURL = `/api/oauth/${provider}/login?mode=bind&redirect=${encodeURIComponent('/#/dashboard')}`;
@@ -114,11 +151,48 @@ export function UserProfileDialog({ open, onClose, user }: { open: boolean; onCl
 
             <div className="profile-body">
               <div className="profile-user-info">
-                <div className="profile-avatar">{user.email.slice(0, 1).toUpperCase()}</div>
+                <UserAvatar user={user} className="profile-avatar" />
                 <div className="profile-user-details">
-                  <div className="profile-email">{user.email}</div>
+                  <div className="profile-email">{primaryName}</div>
+                  {secondaryName && <div className="profile-secondary">{secondaryName}</div>}
                   <div className="profile-role">{roleText(user.role, text)}</div>
                 </div>
+              </div>
+
+              <div className="profile-section">
+                <h3 className="profile-section-title">{text.profile.accountInfo}</h3>
+                {!normalizeNicknameInput(user.nickname || '') && (
+                  <p className="profile-empty profile-nickname-prompt">{text.profile.completeNicknameDesc}</p>
+                )}
+                <form
+                  className="profile-nickname-form"
+                  onSubmit={(event) => {
+                    event.preventDefault();
+                    feedbackOriginRef.current = event.currentTarget.querySelector('button[type="submit"]') as HTMLElement | null;
+                    saveProfile.mutate();
+                  }}
+                >
+                  <label className="profile-nickname-field">
+                    <span>{text.profile.nickname}</span>
+                    <input
+                      className="input"
+                      value={nickname}
+                      onChange={(event) => {
+                        setNickname(event.target.value);
+                        setNicknameError('');
+                      }}
+                      placeholder={text.profile.nicknamePlaceholder}
+                      autoComplete="nickname"
+                      maxLength={80}
+                      aria-invalid={Boolean(nicknameError)}
+                    />
+                  </label>
+                  {nicknameError && <span className="field-error" role="alert">{nicknameError}</span>}
+                  <button className="btn-secondary profile-save-btn" type="submit" disabled={saveProfile.isPending}>
+                    {saveProfile.isPending ? <LoadingIndicator size={14} /> : <Save size={14} />}
+                    {text.profile.saveNickname}
+                  </button>
+                </form>
               </div>
 
               <div className="profile-section">

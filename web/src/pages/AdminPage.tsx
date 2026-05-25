@@ -13,8 +13,10 @@ import { useHashSearchState, useTableUrlState } from '../hooks/useTableUrlState'
 import { DataTable, DataTableToolbar, DataTableViewOptions, InfoTip, Metric, PaginationControls, SegmentedTabs, StatusPill } from '../components/shared';
 import type { DataTableColumn } from '../components/shared';
 import { AdminAuditLog } from './AdminAuditLog';
+import { AdminShareLinksPanel } from './AdminShareLinksPanel';
+import { AdminWebhooksPanel } from './AdminWebhooksPanel';
 
-const ADMIN_TAB_OPTIONS = ['dns', 'domainHealth', 'quotaAlerts', 'audit'] as const;
+const ADMIN_TAB_OPTIONS = ['dns', 'domainHealth', 'shareLinks', 'webhooks', 'quotaAlerts', 'audit'] as const;
 const DOMAIN_HEALTH_PAGE_SIZE_OPTIONS = [10, 20, 50, 100];
 const DOMAIN_HEALTH_MODE_OPTIONS = ['all', 'public', 'private'] as const;
 const DOMAIN_HEALTH_STATUS_OPTIONS = ['all', 'active', 'inactive'] as const;
@@ -155,6 +157,7 @@ export function AdminPage() {
     queryClient.invalidateQueries({ queryKey: ['admin-domain-health'] });
     queryClient.invalidateQueries({ queryKey: ['admin-quota-alerts'] });
     queryClient.invalidateQueries({ queryKey: ['admin-audit-logs'] });
+    queryClient.invalidateQueries({ queryKey: ['admin-share-links'] });
     queryClient.invalidateQueries({ queryKey: ['admin-domain-check-settings'] });
     queryClient.invalidateQueries({ queryKey: ['admin-domain-check-runs'] });
     queryClient.invalidateQueries({ queryKey: ['admin-quota-settings'] });
@@ -206,7 +209,7 @@ export function AdminPage() {
   });
 
   const recheckDomain = useMutation({
-    mutationFn: (domain: string) => postJSON('/api/domains/check-mx', { domain }),
+    mutationFn: (domain: AdminDomainHealth) => postJSON(`/api/admin/domains/${domain.id}/check-mx`, {}),
     onSuccess: () => {
       refreshAdminData();
       queryClient.invalidateQueries({ queryKey: ['domains-all'] });
@@ -227,7 +230,7 @@ export function AdminPage() {
       if (!window.confirm(confirmText.replace('{domain}', domain.domain))) {
         throw new Error('Canceled');
       }
-      return patchJSON(`/api/domains/${domain.id}`, { mode });
+      return patchJSON(`/api/admin/domains/${domain.id}`, { mode });
     },
     onSuccess: (_, variables) => {
       refreshAdminData();
@@ -249,7 +252,7 @@ export function AdminPage() {
       if (!window.confirm(text.admin.domainHealth.deleteConfirm.replace('{domain}', domain.domain))) {
         throw new Error('Canceled');
       }
-      return api(`/api/domains/${domain.id}`, { method: 'DELETE' });
+      return api(`/api/admin/domains/${domain.id}`, { method: 'DELETE' });
     },
     onSuccess: () => {
       refreshAdminData();
@@ -285,7 +288,7 @@ export function AdminPage() {
     { key: 'expires', header: text.admin.domainHealth.colExpires, width: '8rem', mobilePriority: 3 },
     { key: 'mailboxes', header: text.admin.domainHealth.colMailboxes, align: 'right', width: '7rem', mobilePriority: 2 },
     { key: 'messages', header: text.admin.domainHealth.colMessages, align: 'right', width: '7rem', mobilePriority: 2 },
-    { key: 'actions', header: text.admin.domainHealth.colActions, align: 'right', minWidth: '14rem', hideable: false }
+    { key: 'actions', role: 'actions', header: text.admin.domainHealth.colActions, align: 'right', minWidth: '14rem', hideable: false }
   ], [text]);
   const domainHealthCountLabel = text.admin.domainHealth.resultCount
     .replace('{shown}', String(healthItems.length))
@@ -352,6 +355,8 @@ export function AdminPage() {
         items={[
           { value: 'dns', label: text.admin.dnsCheck.title, badge: hasRunningCheck ? domainCheckStatusLabel('running') : undefined },
           { value: 'domainHealth', label: text.admin.domainHealth.title, badge: stats.data?.failed_domains ? String(stats.data.failed_domains) : undefined },
+          { value: 'shareLinks', label: text.admin.shareLinks.title },
+          { value: 'webhooks', label: text.admin.webhooks.title },
           { value: 'quotaAlerts', label: text.admin.quotaAlerts.title, badge: quotaPage?.total ? String(quotaPage.total) : undefined },
           { value: 'audit', label: text.admin.auditLogs.title }
         ]}
@@ -523,7 +528,7 @@ export function AdminPage() {
         </div>
       </section>
 
-      <div className="admin-tab-panels" hidden={activeAdminTab !== 'domainHealth' && activeAdminTab !== 'quotaAlerts'}>
+      <div className="admin-tab-panels" hidden={activeAdminTab !== 'domainHealth' && activeAdminTab !== 'shareLinks' && activeAdminTab !== 'webhooks' && activeAdminTab !== 'quotaAlerts'}>
         <section className="panel admin-table-panel" id="admin-domain-health" hidden={activeAdminTab !== 'domainHealth'}>
           <div className="panel-header admin-panel-header">
             <div>
@@ -627,7 +632,7 @@ export function AdminPage() {
                 <div className="table-actions">
                   <button className="btn-ghost" onClick={(event) => {
                     domainHealthFeedbackOriginRef.current = event.currentTarget;
-                    recheckDomain.mutate(domain.domain);
+                    recheckDomain.mutate(domain);
                   }} disabled={recheckDomain.isPending} aria-label={`${text.admin.domainHealth.recheck} ${domain.domain}`}>
                     <RefreshCw size={14} aria-hidden="true" />
                     {text.admin.domainHealth.recheck}
@@ -655,6 +660,14 @@ export function AdminPage() {
             rowsPerPageLabel={text.common.rowsPerPage}
           />
         </section>
+
+        <div hidden={activeAdminTab !== 'shareLinks'}>
+          {activeAdminTab === 'shareLinks' && <AdminShareLinksPanel />}
+        </div>
+
+        <div hidden={activeAdminTab !== 'webhooks'}>
+          {activeAdminTab === 'webhooks' && <AdminWebhooksPanel />}
+        </div>
 
         <section className="panel admin-table-panel" id="admin-quota-alerts" hidden={activeAdminTab !== 'quotaAlerts'}>
           <div className="panel-header admin-panel-header">

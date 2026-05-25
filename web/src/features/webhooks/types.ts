@@ -1,10 +1,12 @@
 import type {
+  AdminWebhookEndpointDTO as ApiAdminWebhookEndpointDTO,
   PaginatedResponse as ApiPaginatedResponse,
   WebhookDeliveryDTO as ApiWebhookDeliveryDTO,
   WebhookEndpointDTO as ApiWebhookEndpointDTO
 } from '../../api';
 
 export type PaginatedResponse<T> = ApiPaginatedResponse<T>;
+export type AdminWebhookEndpointDTO = ApiAdminWebhookEndpointDTO;
 export type WebhookDeliveryDTO = ApiWebhookDeliveryDTO;
 export type WebhookEndpointDTO = ApiWebhookEndpointDTO;
 

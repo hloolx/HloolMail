@@ -115,7 +115,7 @@ func (h *Handler) createMailboxShareLink(c *gin.Context, user *models.User, inpu
 		fail(c, http.StatusInternalServerError, err.Error())
 		return
 	}
-	if user.Role != models.UserRoleAdmin && mailbox.OwnerID != user.ID {
+	if mailbox.OwnerID != user.ID {
 		fail(c, http.StatusForbidden, "mailbox access denied")
 		return
 	}
@@ -134,7 +134,7 @@ func (h *Handler) listShareLinks(c *gin.Context) {
 	}
 	page := parsePage(c.Query("page"))
 	perPage := parseLimit(c.Query("per_page"), 10, 100)
-	query := h.shareLinksForUser(user)
+	query := h.ownShareLinksForUser(user)
 	var total int64
 	if err := query.Session(&gorm.Session{}).Count(&total).Error; err != nil {
 		fail(c, http.StatusInternalServerError, err.Error())
@@ -170,7 +170,7 @@ func (h *Handler) getShareLink(c *gin.Context) {
 	if !loggedIn {
 		return
 	}
-	link, ok := h.findShareLinkForUser(c, user)
+	link, ok := h.findOwnShareLinkForUser(c, user)
 	if !ok {
 		return
 	}
@@ -182,7 +182,7 @@ func (h *Handler) patchShareLink(c *gin.Context) {
 	if !loggedIn {
 		return
 	}
-	link, ok := h.findShareLinkForUser(c, user)
+	link, ok := h.findOwnShareLinkForUser(c, user)
 	if !ok {
 		return
 	}
@@ -218,19 +218,15 @@ func (h *Handler) deleteShareLink(c *gin.Context) {
 	if !loggedIn {
 		return
 	}
-	link, ok := h.findShareLinkForUser(c, user)
+	link, ok := h.findOwnShareLinkForUser(c, user)
 	if !ok {
 		return
 	}
-	if err := h.DB.Transaction(func(tx *gorm.DB) error {
-		if err := tx.Where("share_link_id = ?", link.ID).Delete(&models.ShareLinkAccessLog{}).Error; err != nil {
-			return err
-		}
-		return tx.Delete(link).Error
-	}); err != nil {
+	if err := h.deleteShareLinkWithLogs(link); err != nil {
 		fail(c, http.StatusInternalServerError, err.Error())
 		return
 	}
+	h.audit("share_link.delete", actor(c), shareLinkAuditTarget(*link), adminShareLinkAuditMetadata(*link))
 	webOK(c, gin.H{"deleted": true})
 }
 
@@ -239,7 +235,7 @@ func (h *Handler) revokeShareLink(c *gin.Context) {
 	if !loggedIn {
 		return
 	}
-	link, ok := h.findShareLinkForUser(c, user)
+	link, ok := h.findOwnShareLinkForUser(c, user)
 	if !ok {
 		return
 	}
@@ -249,6 +245,7 @@ func (h *Handler) revokeShareLink(c *gin.Context) {
 		return
 	}
 	link.RevokedAt = &now
+	h.audit("share_link.revoke", actor(c), shareLinkAuditTarget(*link), adminShareLinkAuditMetadata(*link))
 	webOK(c, h.shareLinkDTO(c, *link, "", ""))
 }
 
@@ -257,7 +254,7 @@ func (h *Handler) rotateShareLinkToken(c *gin.Context) {
 	if !loggedIn {
 		return
 	}
-	link, ok := h.findShareLinkForUser(c, user)
+	link, ok := h.findOwnShareLinkForUser(c, user)
 	if !ok {
 		return
 	}
@@ -297,7 +294,7 @@ func (h *Handler) rotateShareLinkKey(c *gin.Context) {
 	if !loggedIn {
 		return
 	}
-	link, ok := h.findShareLinkForUser(c, user)
+	link, ok := h.findOwnShareLinkForUser(c, user)
 	if !ok {
 		return
 	}
@@ -323,13 +320,104 @@ func (h *Handler) listShareLinkAccessLogs(c *gin.Context) {
 	if !loggedIn {
 		return
 	}
-	link, ok := h.findShareLinkForUser(c, user)
+	link, ok := h.findOwnShareLinkForUser(c, user)
 	if !ok {
 		return
 	}
+	h.writeShareLinkAccessLogs(c, link.ID)
+}
+
+func (h *Handler) listAdminShareLinks(c *gin.Context) {
+	if _, ok := h.requireAdminSession(c); !ok {
+		return
+	}
+	page := parsePage(c.Query("page"))
+	perPage := parseLimit(c.Query("per_page"), 10, 100)
+	query := h.adminShareLinksQuery(c)
+	var total int64
+	if err := query.Session(&gorm.Session{}).Count(&total).Error; err != nil {
+		fail(c, http.StatusInternalServerError, err.Error())
+		return
+	}
+	totalPages := pageCount(total, perPage)
+	if page > totalPages {
+		page = totalPages
+	}
+	var links []models.ShareLink
+	if err := query.Session(&gorm.Session{}).
+		Preload("Owner").
+		Preload("Mailbox").
+		Order("share_links.created_at desc").
+		Limit(perPage).
+		Offset((page - 1) * perPage).
+		Find(&links).Error; err != nil {
+		fail(c, http.StatusInternalServerError, err.Error())
+		return
+	}
+	items := make([]AdminShareLinkDTO, 0, len(links))
+	for _, link := range links {
+		items = append(items, h.adminShareLinkDTO(c, link))
+	}
+	webOK(c, paginatedResponse[AdminShareLinkDTO]{
+		Items:      items,
+		Page:       page,
+		PerPage:    perPage,
+		Total:      total,
+		TotalPages: totalPages,
+	})
+}
+
+func (h *Handler) revokeAdminShareLink(c *gin.Context) {
+	if _, ok := h.requireAdminSession(c); !ok {
+		return
+	}
+	link, ok := h.findAdminShareLink(c)
+	if !ok {
+		return
+	}
+	now := time.Now()
+	if err := h.DB.Model(link).Update("revoked_at", &now).Error; err != nil {
+		fail(c, http.StatusInternalServerError, err.Error())
+		return
+	}
+	link.RevokedAt = &now
+	h.audit("share_link.revoke", actor(c), shareLinkAuditTarget(*link), adminShareLinkAuditMetadata(*link))
+	webOK(c, h.adminShareLinkDTO(c, *link))
+}
+
+func (h *Handler) deleteAdminShareLink(c *gin.Context) {
+	if _, ok := h.requireAdminSession(c); !ok {
+		return
+	}
+	link, ok := h.findAdminShareLink(c)
+	if !ok {
+		return
+	}
+	auditTarget := shareLinkAuditTarget(*link)
+	auditMetadata := adminShareLinkAuditMetadata(*link)
+	if err := h.deleteShareLinkWithLogs(link); err != nil {
+		fail(c, http.StatusInternalServerError, err.Error())
+		return
+	}
+	h.audit("share_link.delete", actor(c), auditTarget, auditMetadata)
+	webOK(c, gin.H{"deleted": true})
+}
+
+func (h *Handler) listAdminShareLinkAccessLogs(c *gin.Context) {
+	if _, ok := h.requireAdminSession(c); !ok {
+		return
+	}
+	link, ok := h.findAdminShareLink(c)
+	if !ok {
+		return
+	}
+	h.writeShareLinkAccessLogs(c, link.ID)
+}
+
+func (h *Handler) writeShareLinkAccessLogs(c *gin.Context, shareLinkID uint) {
 	page := parsePage(c.Query("page"))
 	perPage := parseLimit(c.Query("per_page"), 20, 100)
-	query := h.DB.Model(&models.ShareLinkAccessLog{}).Where("share_link_id = ?", link.ID)
+	query := h.DB.Model(&models.ShareLinkAccessLog{}).Where("share_link_id = ?", shareLinkID)
 	var total int64
 	if err := query.Session(&gorm.Session{}).Count(&total).Error; err != nil {
 		fail(c, http.StatusInternalServerError, err.Error())
@@ -478,20 +566,57 @@ func (h *Handler) getSharedMailboxMessage(c *gin.Context) {
 	publicOK(c, publicSharedMailboxMessageDTO(msg, attachments))
 }
 
-func (h *Handler) shareLinksForUser(user *models.User) *gorm.DB {
+func (h *Handler) ownShareLinksForUser(user *models.User) *gorm.DB {
 	query := h.DB.Model(&models.ShareLink{})
 	if user == nil {
 		return query.Where("1 = 0")
 	}
-	if user.Role != models.UserRoleAdmin {
-		query = query.Where("owner_id = ?", user.ID)
+	return query.Where("owner_id = ?", user.ID)
+}
+
+func (h *Handler) findOwnShareLinkForUser(c *gin.Context, user *models.User) (*models.ShareLink, bool) {
+	var link models.ShareLink
+	err := h.ownShareLinksForUser(user).Where("id = ?", c.Param("id")).First(&link).Error
+	if err == nil {
+		return &link, true
 	}
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		fail(c, http.StatusNotFound, "share link not found")
+		return nil, false
+	}
+	fail(c, http.StatusInternalServerError, err.Error())
+	return nil, false
+}
+
+func (h *Handler) adminShareLinksQuery(c *gin.Context) *gorm.DB {
+	query := h.DB.Model(&models.ShareLink{}).
+		Joins("LEFT JOIN users ON users.id = share_links.owner_id").
+		Joins("LEFT JOIN mailboxes ON mailboxes.id = share_links.mailbox_id")
+
+	if search := strings.TrimSpace(strings.ToLower(c.Query("q"))); search != "" {
+		like := "%" + search + "%"
+		query = query.Where(
+			"LOWER(users.email) LIKE ? OR LOWER(mailboxes.email) LIKE ? OR LOWER(share_links.token_prefix) LIKE ?",
+			like, like, like,
+		)
+	}
+
+	now := time.Now()
+	switch strings.TrimSpace(c.Query("status")) {
+	case "active":
+		query = query.Where("share_links.revoked_at IS NULL AND (share_links.expires_at IS NULL OR share_links.expires_at > ?)", now)
+	case "revoked":
+		query = query.Where("share_links.revoked_at IS NOT NULL")
+	case "expired":
+		query = query.Where("share_links.revoked_at IS NULL AND share_links.expires_at IS NOT NULL AND share_links.expires_at <= ?", now)
+	}
+
 	return query
 }
 
-func (h *Handler) findShareLinkForUser(c *gin.Context, user *models.User) (*models.ShareLink, bool) {
+func (h *Handler) findAdminShareLink(c *gin.Context) (*models.ShareLink, bool) {
 	var link models.ShareLink
-	err := h.shareLinksForUser(user).Where("id = ?", c.Param("id")).First(&link).Error
+	err := h.DB.Preload("Owner").Preload("Mailbox").First(&link, "id = ?", c.Param("id")).Error
 	if err == nil {
 		return &link, true
 	}
@@ -706,6 +831,66 @@ func (h *Handler) shareLinkDTO(c *gin.Context, link models.ShareLink, token, acc
 		}
 	}
 	return dto
+}
+
+func (h *Handler) adminShareLinkDTO(c *gin.Context, link models.ShareLink) AdminShareLinkDTO {
+	dto := AdminShareLinkDTO{
+		ID:             link.ID,
+		ResourceType:   link.ResourceType,
+		MailboxID:      link.MailboxID,
+		TokenPrefix:    link.TokenPrefix,
+		KeySet:         link.AccessKeyHash != "",
+		ExpiresAt:      link.ExpiresAt,
+		RevokedAt:      link.RevokedAt,
+		AccessCount:    link.AccessCount,
+		LastAccessedAt: link.LastAccessedAt,
+		CreatedAt:      link.CreatedAt,
+		UpdatedAt:      link.UpdatedAt,
+		OwnerID:        link.OwnerID,
+	}
+	if link.Owner.ID != 0 {
+		dto.OwnerEmail = link.Owner.Email
+		dto.OwnerRole = link.Owner.Role
+	}
+	if link.Mailbox != nil && link.Mailbox.ID != 0 {
+		dto.MailboxEmail = link.Mailbox.Email
+		dto.MailboxOwnerID = link.Mailbox.OwnerID
+	}
+	return dto
+}
+
+func shareLinkAuditTarget(link models.ShareLink) string {
+	if link.ID == 0 {
+		return ""
+	}
+	return fmt.Sprintf("%d", link.ID)
+}
+
+func adminShareLinkAuditMetadata(link models.ShareLink) string {
+	parts := []string{
+		fmt.Sprintf("owner_id=%d", link.OwnerID),
+		"resource_type=" + strings.TrimSpace(link.ResourceType),
+		"token_prefix=" + strings.TrimSpace(link.TokenPrefix),
+	}
+	if link.Owner.Email != "" {
+		parts = append(parts, "owner_email="+strings.TrimSpace(link.Owner.Email))
+	}
+	if link.MailboxID != nil {
+		parts = append(parts, fmt.Sprintf("mailbox_id=%d", *link.MailboxID))
+	}
+	if link.Mailbox != nil && link.Mailbox.Email != "" {
+		parts = append(parts, "mailbox_email="+strings.TrimSpace(link.Mailbox.Email))
+	}
+	return strings.Join(parts, " ")
+}
+
+func (h *Handler) deleteShareLinkWithLogs(link *models.ShareLink) error {
+	return h.DB.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Where("share_link_id = ?", link.ID).Delete(&models.ShareLinkAccessLog{}).Error; err != nil {
+			return err
+		}
+		return tx.Delete(link).Error
+	})
 }
 
 func (h *Handler) createMailboxShare(mailbox models.Mailbox, expiresAt *time.Time) (*models.ShareLink, string, string, error) {

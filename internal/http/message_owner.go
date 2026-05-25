@@ -28,9 +28,6 @@ func (h *Handler) actorOwnsMessageRecipient(actor *requestActor, recipient strin
 	if actor == nil {
 		return false, nil
 	}
-	if actor.isAdmin() {
-		return true, nil
-	}
 	ownerID, ok := actor.ownerID()
 	if !ok {
 		return false, nil
@@ -45,9 +42,6 @@ func (h *Handler) actorOwnsMessageRecipient(actor *requestActor, recipient strin
 func (h *Handler) userOwnsMessageRecipient(user *models.User, recipient string, d *models.Domain) (bool, error) {
 	if user == nil {
 		return false, nil
-	}
-	if user.Role == models.UserRoleAdmin {
-		return true, nil
 	}
 	owner, exists, err := h.messageOwnerForRecipient(recipient, d)
 	if err != nil || !exists {
@@ -64,9 +58,6 @@ func (h *Handler) scopeInboxMessages(query *gorm.DB, actor *requestActor, recipi
 	if actor == nil {
 		return query.Where("1 = 0"), nil
 	}
-	if actor.isAdmin() {
-		return query.Where("recipient = ?", recipient), nil
-	}
 	owner, exists, err := h.messageOwnerForRecipient(recipient, d)
 	if err != nil || !exists {
 		return query.Where("1 = 0"), err
@@ -81,9 +72,6 @@ func (h *Handler) scopeInboxMessages(query *gorm.DB, actor *requestActor, recipi
 func (h *Handler) scopeInboxMessagesForUser(query *gorm.DB, user *models.User, recipient string, d *models.Domain) (*gorm.DB, error) {
 	if user == nil {
 		return query.Where("1 = 0"), nil
-	}
-	if user.Role == models.UserRoleAdmin {
-		return query.Where("recipient = ?", recipient), nil
 	}
 	owner, exists, err := h.messageOwnerForRecipient(recipient, d)
 	if err != nil || !exists {
@@ -109,9 +97,6 @@ func (h *Handler) scopeInboxMessagesForOwner(query *gorm.DB, recipient string, o
 func (h *Handler) actorCanAccessMessage(actor *requestActor, msg models.Message) (bool, error) {
 	if actor == nil {
 		return false, nil
-	}
-	if actor.isAdmin() {
-		return true, nil
 	}
 	ownerID, ok := actor.ownerID()
 	if !ok {

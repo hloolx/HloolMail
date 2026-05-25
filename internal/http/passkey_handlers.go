@@ -278,7 +278,7 @@ func (h *Handler) finishPasskeyLogin(c *gin.Context) {
 	}
 	setSessionCookie(c, token, 7*24*time.Hour)
 	h.audit("passkey.login", user.Email, "", "")
-	ok(c, user)
+	ok(c, userDTO(user))
 }
 
 func (h *Handler) loadPasskeyUser(user models.User) (passkeyUser, error) {

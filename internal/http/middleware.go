@@ -180,6 +180,8 @@ func isSessionOnlyManagementPath(path string) bool {
 		"/api/share-links",
 		"/api/api-keys",
 		"/api/admin",
+		// Legacy user-management paths no longer route, but stale clients should
+		// not burn API-key quota before receiving 404.
 		"/api/users",
 		"/api/user/",
 		"/api/auth",
@@ -224,7 +226,7 @@ func (h *Handler) securityHeaders() gin.HandlerFunc {
 		c.Header("X-XSS-Protection", "0")
 		c.Header("Referrer-Policy", "strict-origin-when-cross-origin")
 		c.Header("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
-		c.Header("Content-Security-Policy", "default-src 'self'; script-src 'self' https://challenges.cloudflare.com; frame-src 'self' https://challenges.cloudflare.com; style-src 'self'; img-src 'self' data: blob:; connect-src 'self'")
+		c.Header("Content-Security-Policy", "default-src 'self'; script-src 'self' https://challenges.cloudflare.com; frame-src 'self' https://challenges.cloudflare.com; style-src 'self'; img-src 'self' https: data: blob:; connect-src 'self'")
 		c.Next()
 	}
 }
@@ -389,6 +391,16 @@ func (h *Handler) requireAdminSession(c *gin.Context) (*models.User, bool) {
 	}
 	fail(c, http.StatusForbidden, "admin login required")
 	return nil, false
+}
+
+func (h *Handler) requireAdminSessionMiddleware() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		if _, ok := h.requireAdminSession(c); !ok {
+			c.Abort()
+			return
+		}
+		c.Next()
+	}
 }
 
 func (h *Handler) requireLogin(c *gin.Context) (*models.User, bool) {

@@ -34,6 +34,7 @@ export function useInboxQueries({
     queryKey: ['mailboxes', apiKey, mailboxQuery, mailboxPage],
     queryFn: () => {
       const params = new URLSearchParams({
+        scope: 'own',
         page: String(mailboxPage),
         per_page: String(MAILBOX_PAGE_SIZE)
       });

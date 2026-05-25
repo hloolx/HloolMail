@@ -728,6 +728,31 @@
   width: min(100%, 30rem);
 }
 
+.user-avatar {
+  position: relative;
+  overflow: hidden;
+  display: grid;
+  place-items: center;
+}
+
+.user-avatar-image {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.user-avatar-default-image {
+  background: #101010;
+}
+
+.user-avatar-fallback {
+  display: grid;
+  width: 100%;
+  height: 100%;
+  place-items: center;
+}
+
 .profile-body {
   display: grid;
   gap: 1rem;
@@ -772,6 +797,15 @@
   white-space: nowrap;
 }
 
+.profile-secondary {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 0.76rem;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .profile-role {
   color: var(--muted);
   font-size: 0.76rem;
@@ -800,6 +834,28 @@
   color: var(--muted);
   padding: 0.8rem;
   font-size: 0.8rem;
+}
+
+.profile-nickname-prompt {
+  background: color-mix(in srgb, var(--focus) 6%, transparent);
+}
+
+.profile-nickname-form {
+  display: grid;
+  gap: 0.55rem;
+}
+
+.profile-nickname-field {
+  display: grid;
+  min-width: 0;
+  gap: 0.35rem;
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 680;
+}
+
+.profile-save-btn {
+  justify-content: center;
 }
 
 .profile-provider-list {

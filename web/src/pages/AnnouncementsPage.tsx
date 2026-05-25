@@ -176,7 +176,7 @@ export function AnnouncementsPage() {
             { key: 'title', header: text.announcements.title, minWidth: '18rem' },
             { key: 'created', header: text.common.refresh, width: '8rem' },
             { key: 'readers', header: text.announcements.read, align: 'right', width: '8rem' },
-            { key: 'actions', header: text.common.delete, align: 'right', width: '10rem' }
+            { key: 'actions', role: 'actions', header: text.common.delete, align: 'right', width: '10rem' }
           ]}
           rows={rows}
         />

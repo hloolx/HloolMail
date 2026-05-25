@@ -6,6 +6,8 @@ import type { User } from '../../api';
 import { postJSON } from '../../api';
 import { useAppStore } from '../../store';
 import { clearUserSession } from '../../lib/queryClient';
+import { displayName, displaySubtitle } from '../../lib/userDisplay';
+import { UserAvatar } from '../shared';
 import { UserProfileDialog } from '../../pages/UserProfileDialog';
 import { navGroups } from './navGroups';
 
@@ -22,6 +24,8 @@ export function Sidebar({ user }: { user: User }) {
   const text = useText();
   const sidebarTitle = sidebarCollapsed ? text.nav.expandSidebar : text.nav.collapseSidebar;
   const [profileOpen, setProfileOpen] = useState(false);
+  const userName = displayName(user);
+  const userSubtitle = displaySubtitle(user) || roleText(user.role, text);
 
   const logout = useMutation({
     mutationFn: () => postJSON('/api/auth/logout', {}),
@@ -72,7 +76,7 @@ export function Sidebar({ user }: { user: User }) {
           ))}
         </nav>
 
-        <div className="sidebar-user-card" title={`${user.email} · ${roleText(user.role, text)}`}>
+        <div className="sidebar-user-card" title={`${userName} · ${roleText(user.role, text)}`}>
           <button
             className="sidebar-user-profile-btn"
             type="button"
@@ -80,10 +84,10 @@ export function Sidebar({ user }: { user: User }) {
             aria-label={text.profile.open}
             onClick={() => setProfileOpen(true)}
           >
-            <div className="sidebar-user-avatar">{user.email.slice(0, 1).toUpperCase()}</div>
+            <UserAvatar user={user} className="sidebar-user-avatar" />
             <div className="sidebar-user-copy sidebar-label">
-              <div>{user.email}</div>
-              <span>{roleText(user.role, text)}</span>
+              <div>{userName}</div>
+              <span>{userSubtitle}</span>
             </div>
           </button>
           <button

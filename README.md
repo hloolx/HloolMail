@@ -44,6 +44,8 @@ docker compose up -d --build
 docker compose logs -f app
 ```
 
+不要直接复用本地开发用的 `.env`，尤其是包含 `DATABASE_URL=storage/gptmail.db` 的文件；Compose 部署请从 `.env.compose.example` 复制，并使用下面的 Compose 专用变量。
+
 至少修改这些值：
 
 ```env
@@ -72,10 +74,16 @@ GOPROXY=https://goproxy.cn,direct
 NPM_CONFIG_REGISTRY=https://registry.npmmirror.com/
 ```
 
-使用外部托管 PostgreSQL 时，把 `.env` 的 `DATABASE_URL` 改成外部连接串：
+使用外部托管 PostgreSQL 时，把 `.env` 的 `HLOOLMAIL_DATABASE_URL` 改成外部连接串：
 
 ```env
-DATABASE_URL=postgres://user:password@db.example.com:5432/hloolmail?sslmode=require
+HLOOLMAIL_DATABASE_URL=postgres://user:password@db.example.com:5432/hloolmail?sslmode=require
+```
+
+然后只启动应用服务：
+
+```bash
+docker compose up -d app
 ```
 
 ## Release 二进制
@@ -137,7 +145,7 @@ Environment=DEV_MODE=false
 WantedBy=multi-user.target
 ```
 
-自定义前端只适合高级场景。把 `FRONTEND_DIST` 指向一个包含 `index.html` 和 `assets/` 的构建目录即可；如果目录不存在或缺少 `index.html`，程序会回退到内置前端。
+自定义前端只适合高级场景。二进制部署把 `FRONTEND_DIST` 指向一个包含 `index.html` 和 `assets/` 的构建目录即可；Docker Compose 部署请使用 `HLOOLMAIL_FRONTEND_DIST`，避免误读本地开发环境变量。如果目录不存在或缺少 `index.html`，程序会回退到内置前端。
 
 ```bash
 cd web
@@ -207,9 +215,17 @@ Web Console 面向人工管理，使用 `gptmail_session` Cookie/session。它�
 
 Web Console 中创建 API Key 后，明文只会显示一次；后续只能看到前缀或重新 reveal。
 
+### 权限边界
+
+普通工作区页面（收件箱、Dashboard、域名、API Key、Webhooks、Share Links）只展示和操作当前登录账号可见的数据；即使账号是管理员，进入这些普通页面时也不会自动切到全局视角。
+
+跨用户的域名健康、公开分享链接、配额预警、审计和其他全局处置只放在管理后台，并走 `/api/admin/*` 管理接口。普通路由如果处理 share、mailbox、stats、webhook 或 domain 数据，都必须继续按 owner scope 返回。
+
 ## API 自动化
 
 API 自动化使用 `X-API-Key` 请求头。当前稳定面向脚本和 AI 的接口主要是：可用域名、生成邮箱、邮箱列表、邮件读取、邮件删除、统计。完整契约以运行中服务导出的文档为准。
+
+API Key 与所属账号绑定；普通 API 自动化只读取和操作该账号有权访问的数据，不提供跨用户管理能力。
 
 HLOOL Mail 是开源项目，可以部署在你自己的域名或内网环境中。示例里的 `BASE_URL` 不是固定官方 API 地址，请替换为你的 HLOOL Mail 实例地址，例如 `https://your-hlool-mail.example`。
 
@@ -248,7 +264,7 @@ curl "$BASE_URL/api/emails?email=demo@example.com&page=1&per_page=20" \
 
 Webhook 用于在新邮件到达后把事件投递到你的系统、队列或自动化流程。创建、启停、测试和查看投递记录推荐在 Web Console 中完成。
 
-当前事件是 `message.received`，范围支持 `all`、`domain`、`mailbox`。投递端点必须是 `https://`，不能指向 localhost、私网地址或云元数据地址。后台 worker 异步投递，失败会按退避策略重试；设置 `WEBHOOKS_ENABLED=false` 可以禁用投递。
+当前事件是 `message.received`，范围支持 `all`、`domain`、`mailbox`。投递端点必须是 `https://`，不能指向 localhost、私网地址或云元数据地址。后台 worker 异步投递，失败会按退避策略重试；设置 `WEBHOOKS_ENABLED=false` 可以禁用投递，Docker Compose 会把这个变量传入容器。
 
 已经登录 Web Console 并拿到 session Cookie 时，也可以直接调用管理接口：
 
@@ -290,7 +306,7 @@ curl -X POST "$BASE_URL/api/generate-email" \
 
 公开分享不提供 `POST /api/shared/:token/access` 解锁接口；带 `key` 的只读 GET 路径就是唯一公开读取面。
 
-已经登录 Web Console 并拿到 session Cookie 时，可以创建邮箱分享：
+已经登录 Web Console 并拿到 session Cookie 时，可以为当前账号自己的邮箱创建邮箱分享；管理员在普通分享链接页也只管理自己的分享链接。跨用户外显链接审计与处置请到管理后台的“链接管理”分页：
 
 ```bash
 BASE_URL="https://your-hlool-mail.example"

@@ -104,7 +104,7 @@ export function WebhooksPage() {
               { key: 'last-success', header: text.webhooks.lastSuccess, width: '8rem' },
               { key: 'last-failure', header: text.webhooks.lastFailure, width: '8rem' },
               { key: 'secret', header: text.webhooks.secret, width: '9rem' },
-              { key: 'actions', header: text.webhooks.actions, align: 'right', minWidth: '16rem' }
+              { key: 'actions', role: 'actions', header: text.webhooks.actions, align: 'right', minWidth: '16rem' }
             ]}
             emptyLabel={webhooks.isLoading ? text.common.loading : text.webhooks.empty}
             rows={(webhooks.data?.items || []).map((endpoint) => ({

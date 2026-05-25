@@ -1,6 +1,9 @@
 package models
 
 import (
+	"encoding/json"
+	"net/url"
+	"strings"
 	"time"
 
 	"gorm.io/gorm"
@@ -37,12 +40,22 @@ const (
 	WebhookDeliveryStatusRetry      = "retry"
 	WebhookDeliveryStatusSucceeded  = "succeeded"
 	WebhookDeliveryStatusFailed     = "failed"
+
+	EmailDeliveryPurposeRegistrationVerification = "registration_verification"
+	EmailDeliveryPurposeLoginSettingsTest        = "login_settings_test"
+
+	EmailDeliveryStatusPending    = "pending"
+	EmailDeliveryStatusDelivering = "delivering"
+	EmailDeliveryStatusRetry      = "retry"
+	EmailDeliveryStatusSucceeded  = "succeeded"
+	EmailDeliveryStatusFailed     = "failed"
 )
 
 type User struct {
 	ID                    uint       `gorm:"primaryKey" json:"id"`
 	Email                 string     `gorm:"uniqueIndex;size:255;not null" json:"email"`
 	PasswordHash          string     `gorm:"not null" json:"-"`
+	Nickname              string     `gorm:"size:120;not null;default:''" json:"nickname"`
 	AvatarURL             string     `gorm:"type:text" json:"avatar_url,omitempty"`
 	EmailVerified         bool       `gorm:"not null;default:false" json:"email_verified"`
 	Role                  string     `gorm:"size:20;index;not null" json:"role"`
@@ -60,10 +73,36 @@ type User struct {
 	UpdatedAt             time.Time  `json:"updated_at"`
 }
 
+func (u User) MarshalJSON() ([]byte, error) {
+	type userJSON User
+	out := userJSON(u)
+	out.AvatarURL = SanitizeAvatarURL(out.AvatarURL)
+	return json.Marshal(out)
+}
+
+func SanitizeAvatarURL(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return ""
+	}
+	parsed, err := url.Parse(value)
+	if err != nil {
+		return ""
+	}
+	if !strings.EqualFold(parsed.Scheme, "https") {
+		return ""
+	}
+	if parsed.Host == "" {
+		return ""
+	}
+	return parsed.String()
+}
+
 type PendingRegistration struct {
 	VerificationID string    `gorm:"primaryKey;size:96;not null" json:"verification_id"`
 	TokenHash      string    `gorm:"type:text;not null" json:"-"`
 	Email          string    `gorm:"uniqueIndex;size:255;not null" json:"email"`
+	Nickname       string    `gorm:"size:120;not null;default:''" json:"nickname,omitempty"`
 	PasswordHash   string    `gorm:"not null" json:"-"`
 	CodeHash       string    `gorm:"not null" json:"-"`
 	ExpiresAt      time.Time `gorm:"index;not null" json:"expires_at"`
@@ -351,6 +390,30 @@ type WebhookDelivery struct {
 	Error          string          `gorm:"type:text" json:"error,omitempty"`
 	CreatedAt      time.Time       `json:"created_at"`
 	UpdatedAt      time.Time       `json:"updated_at"`
+}
+
+type EmailDelivery struct {
+	ID            string     `gorm:"primaryKey;size:36;not null" json:"id"`
+	Purpose       string     `gorm:"size:80;index;not null" json:"purpose"`
+	ReferenceID   string     `gorm:"size:120;index" json:"reference_id,omitempty"`
+	Recipient     string     `gorm:"size:320;index;not null" json:"recipient"`
+	Subject       string     `gorm:"size:500;not null" json:"subject"`
+	MessageJSON   string     `gorm:"type:text;not null" json:"-"`
+	SettingsJSON  string     `gorm:"type:text;not null" json:"-"`
+	SettingsHash  string     `gorm:"size:64;index" json:"settings_hash,omitempty"`
+	Status        string     `gorm:"size:40;index;not null" json:"status"`
+	Stage         string     `gorm:"size:80;index;not null" json:"stage"`
+	AttemptCount  int        `gorm:"not null;default:0" json:"attempt_count"`
+	MaxAttempts   int        `gorm:"not null;default:3" json:"max_attempts"`
+	NextAttemptAt *time.Time `gorm:"index" json:"next_attempt_at,omitempty"`
+	LockedAt      *time.Time `gorm:"index" json:"locked_at,omitempty"`
+	LockedBy      string     `gorm:"size:120" json:"locked_by,omitempty"`
+	LastAttemptAt *time.Time `json:"last_attempt_at,omitempty"`
+	SucceededAt   *time.Time `json:"succeeded_at,omitempty"`
+	Error         string     `gorm:"type:text" json:"error,omitempty"`
+	StageLog      string     `gorm:"type:text" json:"stage_log,omitempty"`
+	CreatedAt     time.Time  `json:"created_at"`
+	UpdatedAt     time.Time  `json:"updated_at"`
 }
 
 type Mailbox struct {

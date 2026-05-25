@@ -1,8 +1,11 @@
 package httpapi
 
 import (
+	"fmt"
 	"net/http"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 
 	"gptmail/internal/auth"
 	"gptmail/internal/models"
@@ -11,8 +14,37 @@ import (
 	"gorm.io/gorm"
 )
 
+const maxNicknameRunes = 40
+
+func normalizeNickname(value string) (string, error) {
+	nickname := strings.TrimSpace(value)
+	if nickname == "" {
+		return "", fmt.Errorf("nickname is required")
+	}
+	if utf8.RuneCountInString(nickname) > maxNicknameRunes {
+		return "", fmt.Errorf("nickname must be %d characters or fewer", maxNicknameRunes)
+	}
+	for _, r := range nickname {
+		if unicode.IsControl(r) {
+			return "", fmt.Errorf("nickname contains invalid characters")
+		}
+	}
+	return nickname, nil
+}
+
+func oauthNickname(name, email string) string {
+	if nickname, err := normalizeNickname(name); err == nil {
+		return nickname
+	}
+	local, _, _ := strings.Cut(strings.TrimSpace(email), "@")
+	if nickname, err := normalizeNickname(local); err == nil {
+		return nickname
+	}
+	return ""
+}
+
 func (h *Handler) listUsers(c *gin.Context) {
-	if !h.requireAdmin(c) {
+	if _, ok := h.requireAdminSession(c); !ok {
 		return
 	}
 	page := parsePage(c.Query("page"))
@@ -25,8 +57,8 @@ func (h *Handler) listUsers(c *gin.Context) {
 	if search != "" {
 		like := "%" + strings.ToLower(search) + "%"
 		db = db.Where(
-			"LOWER(email) LIKE ? OR EXISTS (SELECT 1 FROM api_keys WHERE api_keys.owner_id = users.id AND (LOWER(api_keys.name) LIKE ? OR LOWER(api_keys.key_prefix) LIKE ?))",
-			like, like, like,
+			"LOWER(email) LIKE ? OR LOWER(nickname) LIKE ? OR EXISTS (SELECT 1 FROM api_keys WHERE api_keys.owner_id = users.id AND (LOWER(api_keys.name) LIKE ? OR LOWER(api_keys.key_prefix) LIKE ?))",
+			like, like, like, like,
 		)
 	}
 	if role == models.UserRoleAdmin || role == models.UserRoleUser {
@@ -54,8 +86,8 @@ func (h *Handler) listUsers(c *gin.Context) {
 		return
 	}
 
-	ok(c, paginatedResponse[models.User]{
-		Items:      users,
+	ok(c, paginatedResponse[UserDTO]{
+		Items:      userDTOs(users),
 		Page:       page,
 		PerPage:    pageSize,
 		Total:      total,
@@ -134,11 +166,12 @@ func (h *Handler) revealUserAPIKey(c *gin.Context) {
 }
 
 func (h *Handler) createUser(c *gin.Context) {
-	if !h.requireAdmin(c) {
+	if _, ok := h.requireAdminSession(c); !ok {
 		return
 	}
 	var input struct {
 		Email      string `json:"email"`
+		Nickname   string `json:"nickname"`
 		Password   string `json:"password"`
 		Role       string `json:"role"`
 		DailyLimit int64  `json:"daily_limit"`
@@ -152,6 +185,17 @@ func (h *Handler) createUser(c *gin.Context) {
 	if !strings.Contains(email, "@") || len(input.Password) < 8 {
 		fail(c, http.StatusBadRequest, "valid email and 8+ character password required")
 		return
+	}
+	var nickname string
+	if strings.TrimSpace(input.Nickname) == "" {
+		nickname = oauthNickname("", email)
+	} else {
+		var err error
+		nickname, err = normalizeNickname(input.Nickname)
+		if err != nil {
+			fail(c, http.StatusBadRequest, err.Error())
+			return
+		}
 	}
 	if input.DailyLimit < 0 || input.TotalLimit < 0 {
 		fail(c, http.StatusBadRequest, "quota limits must be zero or greater")
@@ -169,6 +213,7 @@ func (h *Handler) createUser(c *gin.Context) {
 	}
 	user := models.User{
 		Email:         email,
+		Nickname:      nickname,
 		PasswordHash:  hash,
 		EmailVerified: true,
 		Role:          role,
@@ -181,11 +226,11 @@ func (h *Handler) createUser(c *gin.Context) {
 		return
 	}
 	h.audit("user.create", actor(c), user.Email, user.Role)
-	created(c, user)
+	created(c, userDTO(user))
 }
 
 func (h *Handler) patchUser(c *gin.Context) {
-	if !h.requireAdmin(c) {
+	if _, ok := h.requireAdminSession(c); !ok {
 		return
 	}
 	id, err := auth.ParseUintID(c.Param("id"))
@@ -199,12 +244,13 @@ func (h *Handler) patchUser(c *gin.Context) {
 		return
 	}
 	var input struct {
-		Email      string `json:"email"`
-		Password   string `json:"password"`
-		Role       string `json:"role"`
-		Enabled    *bool  `json:"enabled"`
-		DailyLimit *int64 `json:"daily_limit"`
-		TotalLimit *int64 `json:"total_limit"`
+		Email      string  `json:"email"`
+		Nickname   *string `json:"nickname"`
+		Password   string  `json:"password"`
+		Role       string  `json:"role"`
+		Enabled    *bool   `json:"enabled"`
+		DailyLimit *int64  `json:"daily_limit"`
+		TotalLimit *int64  `json:"total_limit"`
 	}
 	if err := c.ShouldBindJSON(&input); err != nil {
 		fail(c, http.StatusBadRequest, "invalid json")
@@ -216,6 +262,14 @@ func (h *Handler) patchUser(c *gin.Context) {
 			return
 		}
 		user.Email = email
+	}
+	if input.Nickname != nil {
+		nickname, err := normalizeNickname(*input.Nickname)
+		if err != nil {
+			fail(c, http.StatusBadRequest, err.Error())
+			return
+		}
+		user.Nickname = nickname
 	}
 	current := currentUser(c)
 	if current != nil && current.ID == user.ID {
@@ -285,11 +339,37 @@ func (h *Handler) patchUser(c *gin.Context) {
 		return
 	}
 	h.audit("user.patch", actor(c), user.Email, "")
-	ok(c, user)
+	ok(c, userDTO(user))
+}
+
+func (h *Handler) patchUserProfile(c *gin.Context) {
+	user, loggedIn := h.requireLogin(c)
+	if !loggedIn {
+		return
+	}
+	var input struct {
+		Nickname string `json:"nickname"`
+	}
+	if err := c.ShouldBindJSON(&input); err != nil {
+		fail(c, http.StatusBadRequest, "invalid json")
+		return
+	}
+	nickname, err := normalizeNickname(input.Nickname)
+	if err != nil {
+		fail(c, http.StatusBadRequest, err.Error())
+		return
+	}
+	if err := h.DB.Model(&models.User{}).Where("id = ?", user.ID).Update("nickname", nickname).Error; err != nil {
+		fail(c, http.StatusInternalServerError, err.Error())
+		return
+	}
+	user.Nickname = nickname
+	h.audit("user.profile.patch", user.Email, user.Email, "")
+	ok(c, gin.H{"user": userDTO(*user)})
 }
 
 func (h *Handler) deleteUser(c *gin.Context) {
-	if !h.requireAdmin(c) {
+	if _, ok := h.requireAdminSession(c); !ok {
 		return
 	}
 	id, err := auth.ParseUintID(c.Param("id"))

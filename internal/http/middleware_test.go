@@ -62,6 +62,9 @@ func TestSecurityHeadersAllowTurnstile(t *testing.T) {
 	if !strings.Contains(csp, "frame-src 'self' https://challenges.cloudflare.com") {
 		t.Fatalf("CSP does not allow Turnstile frames: %q", csp)
 	}
+	if !strings.Contains(csp, "img-src 'self' https: data: blob:") {
+		t.Fatalf("CSP does not allow HTTPS avatar images: %q", csp)
+	}
 	if !strings.Contains(csp, "connect-src 'self'") {
 		t.Fatalf("CSP does not allow pre-clearance same-origin fetches: %q", csp)
 	}

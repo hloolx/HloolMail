@@ -4,6 +4,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -286,9 +287,101 @@ func (h *Handler) listWebhookDeliveries(c *gin.Context) {
 	if !ok {
 		return
 	}
+	h.writeWebhookDeliveries(c, endpoint.ID, false)
+}
+
+func (h *Handler) listAdminWebhooks(c *gin.Context) {
+	if _, ok := h.requireAdminSession(c); !ok {
+		return
+	}
+	page := parsePage(c.Query("page"))
+	perPage := parseLimit(c.Query("per_page"), 10, 100)
+	query := h.adminWebhooksQuery(c)
+	var total int64
+	if err := query.Session(&gorm.Session{}).Count(&total).Error; err != nil {
+		fail(c, http.StatusInternalServerError, err.Error())
+		return
+	}
+	totalPages := pageCount(total, perPage)
+	if page > totalPages {
+		page = totalPages
+	}
+	var endpoints []models.WebhookEndpoint
+	if err := query.Session(&gorm.Session{}).
+		Preload("Owner").
+		Preload("Domain").
+		Preload("Mailbox").
+		Order("webhook_endpoints.created_at desc").
+		Limit(perPage).
+		Offset((page - 1) * perPage).
+		Find(&endpoints).Error; err != nil {
+		fail(c, http.StatusInternalServerError, err.Error())
+		return
+	}
+	items := make([]AdminWebhookEndpointDTO, 0, len(endpoints))
+	for _, endpoint := range endpoints {
+		items = append(items, adminWebhookEndpointDTO(endpoint))
+	}
+	webOK(c, paginatedResponse[AdminWebhookEndpointDTO]{
+		Items:      items,
+		Page:       page,
+		PerPage:    perPage,
+		Total:      total,
+		TotalPages: totalPages,
+	})
+}
+
+func (h *Handler) disableAdminWebhook(c *gin.Context) {
+	if _, ok := h.requireAdminSession(c); !ok {
+		return
+	}
+	endpoint, ok := h.findAdminWebhookEndpoint(c)
+	if !ok {
+		return
+	}
+	now := time.Now()
+	if err := h.DB.Model(endpoint).Updates(map[string]any{
+		"enabled":     false,
+		"disabled_at": &now,
+	}).Error; err != nil {
+		fail(c, http.StatusInternalServerError, err.Error())
+		return
+	}
+	endpoint.Enabled = false
+	endpoint.DisabledAt = &now
+	webOK(c, adminWebhookEndpointDTO(*endpoint))
+}
+
+func (h *Handler) deleteAdminWebhook(c *gin.Context) {
+	if _, ok := h.requireAdminSession(c); !ok {
+		return
+	}
+	endpoint, ok := h.findAdminWebhookEndpoint(c)
+	if !ok {
+		return
+	}
+	if err := h.DB.Delete(endpoint).Error; err != nil {
+		fail(c, http.StatusInternalServerError, err.Error())
+		return
+	}
+	webOK(c, gin.H{"deleted": true})
+}
+
+func (h *Handler) listAdminWebhookDeliveries(c *gin.Context) {
+	if _, ok := h.requireAdminSession(c); !ok {
+		return
+	}
+	endpoint, ok := h.findAdminWebhookEndpoint(c)
+	if !ok {
+		return
+	}
+	h.writeWebhookDeliveries(c, endpoint.ID, true)
+}
+
+func (h *Handler) writeWebhookDeliveries(c *gin.Context, endpointID uint, redactDetails bool) {
 	page := parsePage(c.Query("page"))
 	perPage := parseLimit(c.Query("per_page"), 20, 100)
-	query := h.DB.Model(&models.WebhookDelivery{}).Where("endpoint_id = ?", endpoint.ID)
+	query := h.DB.Model(&models.WebhookDelivery{}).Where("endpoint_id = ?", endpointID)
 	var total int64
 	if err := query.Session(&gorm.Session{}).Count(&total).Error; err != nil {
 		fail(c, http.StatusInternalServerError, err.Error())
@@ -308,7 +401,12 @@ func (h *Handler) listWebhookDeliveries(c *gin.Context) {
 	}
 	items := make([]WebhookDeliveryDTO, 0, len(deliveries))
 	for _, delivery := range deliveries {
-		items = append(items, webhookDeliveryDTO(delivery))
+		dto := webhookDeliveryDTO(delivery)
+		if redactDetails {
+			dto.ResponseBody = ""
+			dto.Error = ""
+		}
+		items = append(items, dto)
 	}
 	webOK(c, paginatedResponse[WebhookDeliveryDTO]{
 		Items:      items,
@@ -324,10 +422,7 @@ func (h *Handler) webhookEndpointsForUser(user *models.User) *gorm.DB {
 	if user == nil {
 		return query.Where("1 = 0")
 	}
-	if user.Role != models.UserRoleAdmin {
-		query = query.Where("owner_id = ?", user.ID)
-	}
-	return query
+	return query.Where("owner_id = ?", user.ID)
 }
 
 func (h *Handler) findWebhookEndpointForUser(c *gin.Context, user *models.User) (*models.WebhookEndpoint, bool) {
@@ -338,6 +433,51 @@ func (h *Handler) findWebhookEndpointForUser(c *gin.Context, user *models.User) 
 	}
 	var endpoint models.WebhookEndpoint
 	err = h.webhookEndpointsForUser(user).Where("id = ?", uint(id)).First(&endpoint).Error
+	if err == nil {
+		return &endpoint, true
+	}
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		fail(c, http.StatusNotFound, "webhook not found")
+		return nil, false
+	}
+	fail(c, http.StatusInternalServerError, err.Error())
+	return nil, false
+}
+
+func (h *Handler) adminWebhooksQuery(c *gin.Context) *gorm.DB {
+	query := h.DB.Model(&models.WebhookEndpoint{}).
+		Joins("LEFT JOIN users ON users.id = webhook_endpoints.owner_id").
+		Joins("LEFT JOIN domains ON domains.id = webhook_endpoints.domain_id").
+		Joins("LEFT JOIN mailboxes ON mailboxes.id = webhook_endpoints.mailbox_id")
+
+	if search := strings.TrimSpace(strings.ToLower(c.Query("q"))); search != "" {
+		like := "%" + search + "%"
+		query = query.Where(
+			"LOWER(webhook_endpoints.name) LIKE ? OR LOWER(webhook_endpoints.url) LIKE ? OR LOWER(users.email) LIKE ? OR LOWER(domains.domain) LIKE ? OR LOWER(mailboxes.email) LIKE ?",
+			like, like, like, like, like,
+		)
+	}
+	switch strings.TrimSpace(c.Query("status")) {
+	case "enabled":
+		query = query.Where("webhook_endpoints.enabled = ?", true)
+	case "disabled":
+		query = query.Where("webhook_endpoints.enabled = ?", false)
+	}
+	switch scope := strings.TrimSpace(c.Query("scope")); scope {
+	case models.WebhookScopeAll, models.WebhookScopeDomain, models.WebhookScopeMailbox:
+		query = query.Where("webhook_endpoints.scope = ?", scope)
+	}
+	return query
+}
+
+func (h *Handler) findAdminWebhookEndpoint(c *gin.Context) (*models.WebhookEndpoint, bool) {
+	id, err := strconv.ParseUint(c.Param("id"), 10, 64)
+	if err != nil || id == 0 {
+		fail(c, http.StatusNotFound, "webhook not found")
+		return nil, false
+	}
+	var endpoint models.WebhookEndpoint
+	err = h.DB.Preload("Owner").Preload("Domain").Preload("Mailbox").First(&endpoint, "id = ?", uint(id)).Error
 	if err == nil {
 		return &endpoint, true
 	}
@@ -371,7 +511,7 @@ func (h *Handler) validateWebhookScope(c *gin.Context, user *models.User, rawSco
 			fail(c, http.StatusInternalServerError, err.Error())
 			return "", nil, nil, false
 		}
-		if user.Role != models.UserRoleAdmin && (domain.OwnerID == nil || *domain.OwnerID != user.ID) {
+		if domain.OwnerID == nil || user == nil || *domain.OwnerID != user.ID {
 			fail(c, http.StatusForbidden, "domain access denied")
 			return "", nil, nil, false
 		}
@@ -390,7 +530,7 @@ func (h *Handler) validateWebhookScope(c *gin.Context, user *models.User, rawSco
 			fail(c, http.StatusInternalServerError, err.Error())
 			return "", nil, nil, false
 		}
-		if user.Role != models.UserRoleAdmin && mailbox.OwnerID != user.ID {
+		if user == nil || mailbox.OwnerID != user.ID {
 			fail(c, http.StatusForbidden, "mailbox access denied")
 			return "", nil, nil, false
 		}
@@ -406,7 +546,7 @@ func webhookEndpointDTO(endpoint models.WebhookEndpoint, secret string) WebhookE
 	return WebhookEndpointDTO{
 		ID:            endpoint.ID,
 		Name:          endpoint.Name,
-		URL:           endpoint.URL,
+		URL:           redactWebhookURL(endpoint.URL),
 		Secret:        secret,
 		SecretPreview: endpoint.SecretPreview,
 		Enabled:       endpoint.Enabled,
@@ -421,6 +561,46 @@ func webhookEndpointDTO(endpoint models.WebhookEndpoint, secret string) WebhookE
 		CreatedAt:     endpoint.CreatedAt,
 		UpdatedAt:     endpoint.UpdatedAt,
 	}
+}
+
+func adminWebhookEndpointDTO(endpoint models.WebhookEndpoint) AdminWebhookEndpointDTO {
+	events, _ := webhook.EventsFromJSON(endpoint.EventsJSON)
+	dto := AdminWebhookEndpointDTO{
+		ID:            endpoint.ID,
+		OwnerID:       endpoint.OwnerID,
+		Name:          endpoint.Name,
+		URL:           redactWebhookURL(endpoint.URL),
+		Enabled:       endpoint.Enabled,
+		Events:        events,
+		Scope:         endpoint.Scope,
+		DomainID:      endpoint.DomainID,
+		MailboxID:     endpoint.MailboxID,
+		LastSuccessAt: endpoint.LastSuccessAt,
+		LastFailureAt: endpoint.LastFailureAt,
+		FailureCount:  endpoint.FailureCount,
+		DisabledAt:    endpoint.DisabledAt,
+		CreatedAt:     endpoint.CreatedAt,
+		UpdatedAt:     endpoint.UpdatedAt,
+	}
+	if endpoint.Owner.ID != 0 {
+		dto.OwnerEmail = endpoint.Owner.Email
+		dto.OwnerRole = endpoint.Owner.Role
+	}
+	if endpoint.Domain != nil && endpoint.Domain.ID != 0 {
+		dto.DomainName = endpoint.Domain.Domain
+	}
+	if endpoint.Mailbox != nil && endpoint.Mailbox.ID != 0 {
+		dto.MailboxEmail = endpoint.Mailbox.Email
+	}
+	return dto
+}
+
+func redactWebhookURL(raw string) string {
+	parsed, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+		return "redacted"
+	}
+	return parsed.Scheme + "://" + parsed.Host + "/..."
 }
 
 func webhookDeliveryDTO(delivery models.WebhookDelivery) WebhookDeliveryDTO {

@@ -89,7 +89,8 @@ func TestAutoMigrateCreatesIntegrityConstraints(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	assertNotNullColumns(t, database, "users", "email", "password_hash", "role")
+	assertNotNullColumns(t, database, "users", "email", "password_hash", "nickname", "role")
+	assertNotNullColumns(t, database, "pending_registrations", "verification_id", "token_hash", "email", "nickname", "password_hash", "code_hash", "expires_at")
 	assertNotNullColumns(t, database, "oauth_identities", "user_id", "provider", "provider_uid")
 	assertNotNullColumns(t, database, "oauth_provider_settings", "provider")
 	assertNotNullColumns(t, database, "domains", "domain", "mode", "verification_token")
@@ -274,6 +275,41 @@ func TestAutoMigrateBackfillsExistingUsersEmailVerified(t *testing.T) {
 	}
 	if !reloaded.EmailVerified {
 		t.Fatal("legacy user email_verified was not backfilled")
+	}
+}
+
+func TestBackfillUserNicknameDefaults(t *testing.T) {
+	database := openSQLiteTestDB(t)
+	if err := database.Exec("CREATE TABLE users (id integer primary key, nickname text NULL)").Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := database.Exec("CREATE TABLE pending_registrations (verification_id text primary key, nickname text NULL)").Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := database.Exec("INSERT INTO users (id, nickname) VALUES (1, NULL)").Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := database.Exec("INSERT INTO pending_registrations (verification_id, nickname) VALUES ('pending-1', NULL)").Error; err != nil {
+		t.Fatal(err)
+	}
+
+	if err := BackfillUserNicknameDefaults(database); err != nil {
+		t.Fatal(err)
+	}
+
+	var userNickname string
+	if err := database.Raw("SELECT nickname FROM users WHERE id = 1").Scan(&userNickname).Error; err != nil {
+		t.Fatal(err)
+	}
+	if userNickname != "" {
+		t.Fatalf("users.nickname = %q, want empty string", userNickname)
+	}
+	var pendingNickname string
+	if err := database.Raw("SELECT nickname FROM pending_registrations WHERE verification_id = 'pending-1'").Scan(&pendingNickname).Error; err != nil {
+		t.Fatal(err)
+	}
+	if pendingNickname != "" {
+		t.Fatalf("pending_registrations.nickname = %q, want empty string", pendingNickname)
 	}
 }
 

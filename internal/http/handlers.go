@@ -207,6 +207,15 @@ func (h *Handler) statsTimeseries(c *gin.Context) {
 	if days < 2 {
 		days = 7
 	}
+	ok(c, h.statsTimeseriesData(
+		days,
+		h.scopeMessages(actor),
+		h.scopeAPIUsage(actor),
+		h.scopeDomains(actor),
+	))
+}
+
+func (h *Handler) statsTimeseriesData(days int, messageScope, apiScope, domainScope *gorm.DB) gin.H {
 	now := time.Now()
 	today := startOfDay(now)
 	labels := make([]string, days)
@@ -214,10 +223,6 @@ func (h *Handler) statsTimeseries(c *gin.Context) {
 	apiCalls := make([]int64, days)
 	domains := make([]int64, days)
 	earliest := today.AddDate(0, 0, -(days - 1))
-
-	messageScope := h.scopeMessages(actor)
-	apiScope := h.scopeAPIUsage(actor)
-	domainScope := h.scopeDomains(actor)
 
 	var totalDomainsBeforeWindow int64
 	domainScope.Session(&gorm.Session{}).Where("created_at < ?", earliest).Count(&totalDomainsBeforeWindow)
@@ -236,18 +241,18 @@ func (h *Handler) statsTimeseries(c *gin.Context) {
 		apiCalls[i] = apiCount
 		domains[i] = runningDomains
 	}
-	ok(c, gin.H{
+	return gin.H{
 		"days":      labels,
 		"messages":  messages,
 		"domains":   domains,
 		"api_calls": apiCalls,
-	})
+	}
 }
 
 func (h *Handler) scopeMessages(actor *requestActor) *gorm.DB {
 	query := h.DB.Model(&models.Message{})
-	if actor == nil || actor.isAdmin() {
-		return query
+	if actor == nil {
+		return query.Where("1 = 0")
 	}
 	ownerID, ok := actor.ownerID()
 	if !ok {
@@ -258,20 +263,20 @@ func (h *Handler) scopeMessages(actor *requestActor) *gorm.DB {
 
 func (h *Handler) scopeDomains(actor *requestActor) *gorm.DB {
 	query := h.DB.Model(&models.Domain{})
-	if actor == nil || actor.isAdmin() {
-		return query
+	if actor == nil {
+		return query.Where("1 = 0")
 	}
 	ownerID, ok := actor.ownerID()
 	if !ok {
-		return publicReadyDomainQuery(query)
+		return query.Where("1 = 0")
 	}
-	return visibleDomainsForOwner(query, ownerID)
+	return query.Where("owner_id = ?", ownerID)
 }
 
 func (h *Handler) scopeAPIKeys(actor *requestActor) *gorm.DB {
 	query := h.DB.Model(&models.APIKey{})
-	if actor == nil || actor.isAdmin() {
-		return query
+	if actor == nil {
+		return query.Where("1 = 0")
 	}
 	ownerID, ok := actor.ownerID()
 	if !ok {
@@ -282,8 +287,8 @@ func (h *Handler) scopeAPIKeys(actor *requestActor) *gorm.DB {
 
 func (h *Handler) scopeAPIUsage(actor *requestActor) *gorm.DB {
 	query := h.DB.Model(&models.APIUsageLog{})
-	if actor == nil || actor.isAdmin() {
-		return query
+	if actor == nil {
+		return query.Where("1 = 0")
 	}
 	if actor.APIKey != nil {
 		return query.Where("api_key_id = ?", actor.APIKey.ID)
@@ -336,6 +341,22 @@ func (h *Handler) adminStats(c *gin.Context) {
 	})
 }
 
+func (h *Handler) adminStatsTimeseries(c *gin.Context) {
+	if !h.requireAdmin(c) {
+		return
+	}
+	days := parseLimit(c.Query("days"), 7, 30)
+	if days < 2 {
+		days = 7
+	}
+	ok(c, h.statsTimeseriesData(
+		days,
+		h.DB.Model(&models.Message{}),
+		h.DB.Model(&models.APIUsageLog{}),
+		h.DB.Model(&models.Domain{}),
+	))
+}
+
 type generateEmailRequest struct {
 	Prefix string          `json:"prefix"`
 	Domain string          `json:"domain"`
@@ -356,6 +377,32 @@ type generateEmailShareDTO struct {
 	URL          string     `json:"url"`
 	AccessURL    string     `json:"access_url"`
 	ExpiresAt    *time.Time `json:"expires_at,omitempty"`
+}
+
+type domainPatchInput struct {
+	Active          *bool  `json:"active"`
+	MXVerified      *bool  `json:"mx_verified"`
+	WildcardEnabled *bool  `json:"wildcard_enabled"`
+	Mode            string `json:"mode"`
+}
+
+func applyDomainPatch(d *models.Domain, input domainPatchInput, allowAdminFields bool) {
+	if allowAdminFields && input.Active != nil {
+		d.Active = *input.Active
+	}
+	if allowAdminFields && input.MXVerified != nil {
+		d.MXVerified = *input.MXVerified
+	}
+	if input.WildcardEnabled != nil {
+		d.WildcardRequested = *input.WildcardEnabled
+		if !*input.WildcardEnabled {
+			d.WildcardEnabled = false
+		}
+	}
+	if input.Mode == models.DomainModePublic || input.Mode == models.DomainModePrivate {
+		d.Mode = input.Mode
+	}
+	applyDomainVerificationLifecycle(d, time.Now(), false)
 }
 
 func (h *Handler) generateEmail(c *gin.Context) {
@@ -433,7 +480,7 @@ func (h *Handler) generateEmail(c *gin.Context) {
 			fail(c, http.StatusInternalServerError, err.Error())
 			return
 		}
-		if existing.OwnerID == ownerID || actor.isAdmin() {
+		if existing.OwnerID == ownerID {
 			var link *models.ShareLink
 			var token string
 			var accessKey string
@@ -982,7 +1029,7 @@ func (h *Handler) checkMX(c *gin.Context) {
 		fail(c, http.StatusNotFound, "domain not found")
 		return
 	}
-	if !h.canManageDomain(c, d) && !(d.Mode == models.DomainModePublic && d.IsRootMailboxReady()) {
+	if !h.canManageDomain(c, d) {
 		fail(c, http.StatusForbidden, "domain access denied")
 		return
 	}
@@ -1030,20 +1077,17 @@ func (h *Handler) availableDomains(c *gin.Context) {
 		fail(c, http.StatusInternalServerError, err.Error())
 		return
 	}
-	privateQuery := privateReadyDomainQuery(h.DB.Order("domain asc"))
-	if !actor.isAdmin() {
-		ownerID, hasOwner := actor.ownerID()
-		if !hasOwner {
-			ok(c, availableDomainsResponse{
-				Domains:                 domainNames(publicDomains),
-				PublicDomains:           availableDomainDTOsWithCountsOrEmpty(h.DB, publicDomains),
-				PrivateDomains:          []availableDomainDTO{},
-				PublicUnavailableReason: publicUnavailableReason,
-			})
-			return
-		}
-		privateQuery = privateQuery.Where("owner_id = ?", ownerID)
+	ownerID, hasOwner := actor.ownerID()
+	if !hasOwner {
+		ok(c, availableDomainsResponse{
+			Domains:                 domainNames(publicDomains),
+			PublicDomains:           availableDomainDTOsWithCountsOrEmpty(h.DB, publicDomains),
+			PrivateDomains:          []availableDomainDTO{},
+			PublicUnavailableReason: publicUnavailableReason,
+		})
+		return
 	}
+	privateQuery := privateReadyDomainQuery(h.DB.Order("domain asc")).Where("owner_id = ?", ownerID)
 	var privateDomains []models.Domain
 	if err := privateQuery.Find(&privateDomains).Error; err != nil {
 		fail(c, http.StatusInternalServerError, err.Error())
@@ -1081,10 +1125,7 @@ func (h *Handler) getDomain(c *gin.Context) {
 }
 
 func (h *Handler) patchDomain(c *gin.Context) {
-	user := currentUser(c)
-	adminByToken := user == nil && h.Config.AdminToken != "" && c.GetHeader("X-Admin-Token") == h.Config.AdminToken
-	if user == nil && !adminByToken {
-		fail(c, http.StatusUnauthorized, "login required")
+	if _, loggedIn := h.requireLogin(c); !loggedIn {
 		return
 	}
 	var d models.Domain
@@ -1092,38 +1133,16 @@ func (h *Handler) patchDomain(c *gin.Context) {
 		fail(c, http.StatusNotFound, "domain not found")
 		return
 	}
-	isAdmin := adminByToken || (user != nil && user.Role == models.UserRoleAdmin)
-	isOwner := user != nil && d.OwnerID != nil && *d.OwnerID == user.ID
-	if !isAdmin && !isOwner {
+	if !h.canManageDomain(c, d) {
 		fail(c, http.StatusForbidden, "domain access denied")
 		return
 	}
-	var input struct {
-		Active          *bool  `json:"active"`
-		MXVerified      *bool  `json:"mx_verified"`
-		WildcardEnabled *bool  `json:"wildcard_enabled"`
-		Mode            string `json:"mode"`
-	}
+	var input domainPatchInput
 	if err := c.ShouldBindJSON(&input); err != nil {
 		fail(c, http.StatusBadRequest, "invalid json")
 		return
 	}
-	if isAdmin && input.Active != nil {
-		d.Active = *input.Active
-	}
-	if isAdmin && input.MXVerified != nil {
-		d.MXVerified = *input.MXVerified
-	}
-	if input.WildcardEnabled != nil {
-		d.WildcardRequested = *input.WildcardEnabled
-		if !*input.WildcardEnabled {
-			d.WildcardEnabled = false
-		}
-	}
-	if input.Mode == models.DomainModePublic || input.Mode == models.DomainModePrivate {
-		d.Mode = input.Mode
-	}
-	applyDomainVerificationLifecycle(&d, time.Now(), false)
+	applyDomainPatch(&d, input, false)
 	if err := h.DB.Save(&d).Error; err != nil {
 		fail(c, http.StatusInternalServerError, err.Error())
 		return
@@ -1202,10 +1221,7 @@ func (h *Handler) setDomainMXAutoRetry(c *gin.Context) {
 }
 
 func (h *Handler) deleteDomain(c *gin.Context) {
-	user := currentUser(c)
-	adminByToken := user == nil && h.Config.AdminToken != "" && c.GetHeader("X-Admin-Token") == h.Config.AdminToken
-	if user == nil && !adminByToken {
-		fail(c, http.StatusUnauthorized, "login required")
+	if _, loggedIn := h.requireLogin(c); !loggedIn {
 		return
 	}
 	var d models.Domain
@@ -1213,12 +1229,19 @@ func (h *Handler) deleteDomain(c *gin.Context) {
 		fail(c, http.StatusNotFound, "domain not found")
 		return
 	}
-	isAdmin := adminByToken || (user != nil && user.Role == models.UserRoleAdmin)
-	isOwner := user != nil && d.OwnerID != nil && *d.OwnerID == user.ID
-	if !isAdmin && (!isOwner || !d.IsWaitingVerification()) {
+	if !h.canManageDomain(c, d) || !d.IsWaitingVerification() {
 		fail(c, http.StatusForbidden, "domain access denied")
 		return
 	}
+	if err := h.deleteDomainWithDependents(d); err != nil {
+		fail(c, http.StatusInternalServerError, err.Error())
+		return
+	}
+	h.audit("domain.delete", actor(c), d.Domain, "")
+	ok(c, gin.H{"deleted": true})
+}
+
+func (h *Handler) deleteDomainWithDependents(d models.Domain) error {
 	if err := h.DB.Transaction(func(tx *gorm.DB) error {
 		var mailboxIDs []uint
 		if err := tx.Model(&models.Mailbox{}).Where("domain_id = ?", d.ID).Pluck("id", &mailboxIDs).Error; err != nil {
@@ -1255,11 +1278,9 @@ func (h *Handler) deleteDomain(c *gin.Context) {
 		}
 		return tx.Delete(&d).Error
 	}); err != nil {
-		fail(c, http.StatusInternalServerError, err.Error())
-		return
+		return err
 	}
-	h.audit("domain.delete", actor(c), d.Domain, "")
-	ok(c, gin.H{"deleted": true})
+	return nil
 }
 
 func (h *Handler) listAPIKeys(c *gin.Context) {
@@ -1448,9 +1469,6 @@ func (h *Handler) authorizeInbox(c *gin.Context, email string) (domaindb.Recipie
 	if !allowed {
 		return parts, nil, false
 	}
-	if actor.isAdmin() {
-		return parts, nil, true
-	}
 	d, err := h.Resolver.ResolveDomain(parts.Recipient)
 	if err != nil {
 		fail(c, http.StatusNotFound, "domain not found or not verified")
@@ -1478,9 +1496,6 @@ func (h *Handler) authorizeInboxForUser(c *gin.Context, email string, user *mode
 		fail(c, http.StatusUnauthorized, "login required")
 		return parts, nil, false
 	}
-	if user.Role == models.UserRoleAdmin {
-		return parts, nil, true
-	}
 	d, err := h.Resolver.ResolveDomain(parts.Recipient)
 	if err != nil {
 		fail(c, http.StatusNotFound, "domain not found or not verified")
@@ -1503,21 +1518,12 @@ func (h *Handler) canManageDomain(c *gin.Context, d models.Domain) bool {
 	if user == nil {
 		return false
 	}
-	if user.Role == models.UserRoleAdmin {
-		return true
-	}
 	return d.OwnerID != nil && *d.OwnerID == user.ID
 }
 
 func (h *Handler) canViewDomain(actor *requestActor, d models.Domain) bool {
 	if actor == nil {
 		return false
-	}
-	if d.Mode == models.DomainModePublic && d.IsRootMailboxReady() {
-		return true
-	}
-	if actor.isAdmin() {
-		return true
 	}
 	ownerID, ok := actor.ownerID()
 	return ok && d.OwnerID != nil && *d.OwnerID == ownerID
@@ -1541,9 +1547,6 @@ func (h *Handler) selectDomainForActor(input string, actor *requestActor) (*mode
 			return nil, fmt.Errorf("域名 MX 未验证")
 		}
 		if d.Mode == models.DomainModePrivate {
-			if actor.isAdmin() {
-				return &d, nil
-			}
 			if ownerID, ok := actor.ownerID(); ok && d.OwnerID != nil && *d.OwnerID == ownerID {
 				return &d, nil
 			}
@@ -1948,14 +1951,12 @@ func (h *Handler) listMailboxes(c *gin.Context) {
 	}
 	var mailboxes []models.Mailbox
 	query := h.DB.Model(&models.Mailbox{})
-	if !actor.isAdmin() {
-		ownerID, hasOwner := actor.ownerID()
-		if !hasOwner {
-			fail(c, http.StatusForbidden, "api key must be bound to an active user")
-			return
-		}
-		query = query.Where("owner_id = ?", ownerID)
+	ownerID, hasOwner := actor.ownerID()
+	if !hasOwner {
+		fail(c, http.StatusForbidden, "api key must be bound to an active user")
+		return
 	}
+	query = query.Where("owner_id = ?", ownerID)
 	search := strings.ToLower(strings.TrimSpace(c.Query("q")))
 	if search != "" {
 		like := "%" + search + "%"
@@ -2082,7 +2083,7 @@ func (h *Handler) deleteMailbox(c *gin.Context) {
 		return
 	}
 	ownerID, hasOwner := actor.ownerID()
-	if !actor.isAdmin() && (!hasOwner || mailbox.OwnerID != ownerID) {
+	if !hasOwner || mailbox.OwnerID != ownerID {
 		fail(c, http.StatusForbidden, "mailbox access denied")
 		return
 	}
@@ -2129,7 +2130,7 @@ func (h *Handler) createMailboxWithAccounting(ownerID uint, d *models.Domain, em
 		if !freshDomain.IsRootMailboxReady() {
 			return httpStatusError{Status: http.StatusBadRequest, Message: "域名未激活或 MX 未验证"}
 		}
-		if freshDomain.Mode == models.DomainModePrivate && !actor.isAdmin() {
+		if freshDomain.Mode == models.DomainModePrivate {
 			if freshDomain.OwnerID == nil || *freshDomain.OwnerID != ownerID {
 				return httpStatusError{Status: http.StatusForbidden, Message: "该域名是私有域名，只有域名的所有者才能使用"}
 			}

@@ -1,10 +1,13 @@
 package httpapi
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -43,7 +46,6 @@ func TestBindOAuthIdentityCreatesSingleProviderBinding(t *testing.T) {
 	boundUser, err := handler.bindOAuthIdentity(user.ID, oauthProviderGitHub, OAuthUserInfo{
 		ProviderUID: "github-1",
 		Email:       user.Email,
-		AvatarURL:   "https://example.com/avatar.png",
 	}, oauthToken{})
 	if err != nil {
 		t.Fatalf("bind identity: %v", err)
@@ -225,6 +227,48 @@ func TestBindOAuthIdentityMarksCurrentUserEmailVerified(t *testing.T) {
 	}
 }
 
+func TestBindOAuthIdentityFillsBlankNicknameAndAvatarURL(t *testing.T) {
+	db := httpTestDB(t)
+	hash, err := auth.HashSecret("password123")
+	if err != nil {
+		t.Fatal(err)
+	}
+	user := models.User{
+		Email:         "bind-nickname@example.com",
+		PasswordHash:  hash,
+		EmailVerified: true,
+		Role:          models.UserRoleUser,
+		Enabled:       true,
+	}
+	if err := db.Create(&user).Error; err != nil {
+		t.Fatal(err)
+	}
+	handler := &Handler{DB: db}
+
+	boundUser, err := handler.bindOAuthIdentity(user.ID, oauthProviderLinuxDo, OAuthUserInfo{
+		ProviderUID: "linuxdo-bind-nickname",
+		Email:       "bind-nickname@example.com",
+		Name:        "Linux Friend",
+		AvatarURL:   "https://example.com/linux.png",
+	}, oauthToken{})
+	if err != nil {
+		t.Fatalf("bind identity: %v", err)
+	}
+	if boundUser.Nickname != "Linux Friend" {
+		t.Fatalf("bound nickname = %q, want %q", boundUser.Nickname, "Linux Friend")
+	}
+	var reloaded models.User
+	if err := db.First(&reloaded, user.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if reloaded.Nickname != "Linux Friend" {
+		t.Fatalf("stored nickname = %q, want %q", reloaded.Nickname, "Linux Friend")
+	}
+	if reloaded.AvatarURL != "https://example.com/linux.png" {
+		t.Fatalf("stored avatar_url = %q, want %q", reloaded.AvatarURL, "https://example.com/linux.png")
+	}
+}
+
 func TestLoginOAuthUserRejectsUnverifiedEmailMatch(t *testing.T) {
 	db := httpTestDB(t)
 	hash, err := auth.HashSecret("password123")
@@ -344,6 +388,7 @@ func TestLoginOAuthUserAllowsExistingIdentityWhenRegistrationClosed(t *testing.T
 	loggedIn, isNew, err := handler.loginOAuthUser(oauthProviderGitHub, OAuthUserInfo{
 		ProviderUID: "github-bound",
 		Email:       "bound@example.com",
+		Name:        "Bound Name",
 		AvatarURL:   "https://example.com/bound.png",
 	}, oauthToken{})
 	if err != nil {
@@ -355,11 +400,21 @@ func TestLoginOAuthUserAllowsExistingIdentityWhenRegistrationClosed(t *testing.T
 	if loggedIn.ID != user.ID {
 		t.Fatalf("logged in user id = %d, want %d", loggedIn.ID, user.ID)
 	}
+	if loggedIn.Nickname != "Bound Name" {
+		t.Fatalf("logged in nickname = %q, want %q", loggedIn.Nickname, "Bound Name")
+	}
 
 	var identityCount int64
 	db.Model(&models.OAuthIdentity{}).Where("user_id = ? AND provider = ?", user.ID, oauthProviderGitHub).Count(&identityCount)
 	if identityCount != 1 {
 		t.Fatalf("identity count = %d, want 1", identityCount)
+	}
+	var reloaded models.User
+	if err := db.First(&reloaded, user.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if reloaded.AvatarURL != "https://example.com/bound.png" {
+		t.Fatalf("stored avatar_url = %q, want %q", reloaded.AvatarURL, "https://example.com/bound.png")
 	}
 }
 
@@ -391,7 +446,6 @@ func TestLoginOAuthUserMergesVerifiedEmailMatch(t *testing.T) {
 	merged, isNew, err := handler.loginOAuthUser(oauthProviderGitHub, OAuthUserInfo{
 		ProviderUID: "github-verified",
 		Email:       "verified@example.com",
-		AvatarURL:   "https://example.com/verified.png",
 	}, oauthToken{})
 	if err != nil {
 		t.Fatalf("login oauth user: %v", err)
@@ -407,5 +461,264 @@ func TestLoginOAuthUserMergesVerifiedEmailMatch(t *testing.T) {
 	db.Model(&models.OAuthIdentity{}).Where("user_id = ? AND provider = ?", user.ID, oauthProviderGitHub).Count(&identityCount)
 	if identityCount != 1 {
 		t.Fatalf("identity count = %d, want 1", identityCount)
+	}
+}
+
+func TestLoginOAuthUserCreatesNicknameAndAvatarURL(t *testing.T) {
+	db := httpTestDB(t)
+	if err := db.Create(&models.LoginSettings{
+		ID:                       1,
+		RegistrationOpen:         true,
+		EmailRegistrationEnabled: false,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	handler := &Handler{DB: db}
+
+	user, isNew, err := handler.loginOAuthUser(oauthProviderGitHub, OAuthUserInfo{
+		ProviderUID: "github-new-nickname",
+		Email:       "oauth-new@example.com",
+		Name:        "OAuth Person",
+		AvatarURL:   "https://example.com/oauth.png",
+	}, oauthToken{})
+	if err != nil {
+		t.Fatalf("login oauth user: %v", err)
+	}
+	if !isNew {
+		t.Fatal("new OAuth user should report isNew")
+	}
+	if user.Nickname != "OAuth Person" {
+		t.Fatalf("nickname = %q, want %q", user.Nickname, "OAuth Person")
+	}
+	var reloaded models.User
+	if err := db.First(&reloaded, user.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if reloaded.Nickname != "OAuth Person" {
+		t.Fatalf("stored nickname = %q, want %q", reloaded.Nickname, "OAuth Person")
+	}
+	if reloaded.AvatarURL != "https://example.com/oauth.png" {
+		t.Fatalf("stored avatar_url = %q, want %q", reloaded.AvatarURL, "https://example.com/oauth.png")
+	}
+}
+
+func TestLoginOAuthUserIgnoresUnsafeAvatarURL(t *testing.T) {
+	db := httpTestDB(t)
+	if err := db.Create(&models.LoginSettings{
+		ID:                       1,
+		RegistrationOpen:         true,
+		EmailRegistrationEnabled: false,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	handler := &Handler{DB: db}
+	cases := []string{
+		"http://example.com/avatar.png",
+		"data:image/png;base64,abc",
+		"file:///tmp/avatar.png",
+		"/avatar.png",
+	}
+
+	for index, avatarURL := range cases {
+		t.Run(avatarURL, func(t *testing.T) {
+			user, isNew, err := handler.loginOAuthUser(oauthProviderGitHub, OAuthUserInfo{
+				ProviderUID: "github-unsafe-avatar-" + strconv.Itoa(index),
+				Email:       fmt.Sprintf("unsafe-avatar-%d@example.com", index),
+				Name:        "Unsafe Avatar",
+				AvatarURL:   avatarURL,
+			}, oauthToken{})
+			if err != nil {
+				t.Fatalf("login oauth user: %v", err)
+			}
+			if !isNew {
+				t.Fatal("new OAuth user should report isNew")
+			}
+			var reloaded models.User
+			if err := db.First(&reloaded, user.ID).Error; err != nil {
+				t.Fatal(err)
+			}
+			if reloaded.AvatarURL != "" {
+				t.Fatalf("stored avatar_url = %q, want empty", reloaded.AvatarURL)
+			}
+		})
+	}
+}
+
+func TestLoginOAuthUserNicknameFallbackAndNoOverwrite(t *testing.T) {
+	db := httpTestDB(t)
+	if err := db.Create(&models.LoginSettings{
+		ID:                       1,
+		RegistrationOpen:         true,
+		EmailRegistrationEnabled: false,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	handler := &Handler{DB: db}
+
+	created, _, err := handler.loginOAuthUser(oauthProviderGitHub, OAuthUserInfo{
+		ProviderUID: "github-fallback",
+		Email:       "fallback@example.com",
+		Name:        "bad\nname",
+	}, oauthToken{})
+	if err != nil {
+		t.Fatalf("login oauth user: %v", err)
+	}
+	if created.Nickname != "fallback" {
+		t.Fatalf("fallback nickname = %q, want %q", created.Nickname, "fallback")
+	}
+
+	created.Nickname = "Kept Name"
+	if err := db.Save(created).Error; err != nil {
+		t.Fatal(err)
+	}
+	loggedIn, isNew, err := handler.loginOAuthUser(oauthProviderGitHub, OAuthUserInfo{
+		ProviderUID: "github-fallback",
+		Email:       "fallback@example.com",
+		Name:        "Replacement",
+	}, oauthToken{})
+	if err != nil {
+		t.Fatalf("login oauth user again: %v", err)
+	}
+	if isNew {
+		t.Fatal("existing OAuth identity should not report new user")
+	}
+	if loggedIn.Nickname != "Kept Name" {
+		t.Fatalf("nickname was overwritten to %q", loggedIn.Nickname)
+	}
+}
+
+func TestOAuthIdentityListDoesNotExposeAvatarURL(t *testing.T) {
+	db := httpTestDB(t)
+	hash, err := auth.HashSecret("password123")
+	if err != nil {
+		t.Fatal(err)
+	}
+	user := models.User{
+		Email:         "identity-list@example.com",
+		PasswordHash:  hash,
+		Nickname:      "Identity List",
+		EmailVerified: true,
+		Role:          models.UserRoleUser,
+		Enabled:       true,
+		AvatarURL:     "https://example.com/stored.png",
+	}
+	admin := models.User{
+		Email:         "identity-admin@example.com",
+		PasswordHash:  hash,
+		EmailVerified: true,
+		Role:          models.UserRoleAdmin,
+		Enabled:       true,
+	}
+	if err := db.Create(&admin).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&user).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&models.OAuthIdentity{
+		UserID:      user.ID,
+		Provider:    oauthProviderGitHub,
+		ProviderUID: "github-identity-list",
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	router := testRouter(t, db)
+	login := perform(router, http.MethodPost, "/api/auth/login", map[string]any{
+		"email":    user.Email,
+		"password": "password123",
+	}, nil)
+	if login.Code != http.StatusOK {
+		t.Fatalf("login = %d: %s", login.Code, login.Body.String())
+	}
+
+	list := perform(router, http.MethodGet, "/api/user/oauth-identities", nil, sessionHeaders(login))
+	if list.Code != http.StatusOK {
+		t.Fatalf("list = %d: %s", list.Code, list.Body.String())
+	}
+	if strings.Contains(list.Body.String(), "avatar_url") || strings.Contains(list.Body.String(), "stored.png") {
+		t.Fatalf("identity list exposed avatar data: %s", list.Body.String())
+	}
+}
+
+func TestDecodeLinuxDoUserInfoExtractsNicknameClaimsAndAvatarURL(t *testing.T) {
+	raw := []byte(`{
+		"id": 12345,
+		"email": "linux@example.com",
+		"username": "Linux Nick",
+		"avatar_url": "https://example.com/avatar.png"
+	}`)
+	info, err := decodeLinuxDoUserInfo(raw)
+	if err != nil {
+		t.Fatalf("decode linux.do json: %v", err)
+	}
+	if info.ProviderUID != "12345" || info.Email != "linux@example.com" || info.Name != "Linux Nick" {
+		t.Fatalf("decoded info = %+v", info)
+	}
+	if info.AvatarURL != "https://example.com/avatar.png" {
+		t.Fatalf("decoded avatar_url = %q, want %q", info.AvatarURL, "https://example.com/avatar.png")
+	}
+}
+
+func TestDecodeLinuxDoUserInfoSupportsNestedUserPayload(t *testing.T) {
+	raw := []byte(`{
+		"user": {
+			"id": 67890,
+			"email": "nested@example.com",
+			"login": "nested-user"
+		},
+		"avatar_template": "/user_avatar/connect.linux.do/nested/{size}/1.png"
+	}`)
+	info, err := decodeLinuxDoUserInfo(raw)
+	if err != nil {
+		t.Fatalf("decode nested linux.do json: %v", err)
+	}
+	if info.ProviderUID != "67890" || info.Email != "nested@example.com" || info.Name != "nested-user" {
+		t.Fatalf("decoded nested info = %+v", info)
+	}
+	wantAvatar := "https://connect.linux.do/user_avatar/connect.linux.do/nested/96/1.png"
+	if info.AvatarURL != wantAvatar {
+		t.Fatalf("decoded nested avatar_url = %q, want %q", info.AvatarURL, wantAvatar)
+	}
+}
+
+func TestDecodeLinuxDoUserInfoSupportsJWTClaims(t *testing.T) {
+	claims := base64.RawURLEncoding.EncodeToString([]byte(`{
+		"sub": "linux-jwt-1",
+		"email": "jwt@example.com",
+		"name": "JWT Nick",
+		"picture": "https://example.com/picture.png"
+	}`))
+	info, err := decodeLinuxDoUserInfo([]byte("e30." + claims + ".sig"))
+	if err != nil {
+		t.Fatalf("decode linux.do jwt: %v", err)
+	}
+	if info.ProviderUID != "linux-jwt-1" || info.Email != "jwt@example.com" || info.Name != "JWT Nick" {
+		t.Fatalf("decoded jwt info = %+v", info)
+	}
+	if info.AvatarURL != "https://example.com/picture.png" {
+		t.Fatalf("decoded jwt avatar_url = %q, want %q", info.AvatarURL, "https://example.com/picture.png")
+	}
+}
+
+func TestSanitizeOAuthAvatarURLAllowsOnlyHTTPS(t *testing.T) {
+	cases := []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{name: "https", input: " https://example.com/avatar.png ", want: "https://example.com/avatar.png"},
+		{name: "http", input: "http://example.com/avatar.png", want: ""},
+		{name: "data", input: "data:image/png;base64,abc", want: ""},
+		{name: "file", input: "file:///tmp/avatar.png", want: ""},
+		{name: "relative", input: "/avatar.png", want: ""},
+		{name: "missing host", input: "https:///avatar.png", want: ""},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := sanitizeOAuthAvatarURL(tc.input); got != tc.want {
+				t.Fatalf("sanitizeOAuthAvatarURL(%q) = %q, want %q", tc.input, got, tc.want)
+			}
+		})
 	}
 }

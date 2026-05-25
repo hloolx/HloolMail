@@ -11,8 +11,8 @@ import (
 
 	"gptmail/internal/config"
 	"gptmail/internal/db"
+	"gptmail/internal/emaildelivery"
 	"gptmail/internal/jobs"
-	"gptmail/internal/mailer"
 	"gptmail/internal/models"
 
 	"github.com/gin-gonic/gin"
@@ -135,6 +135,74 @@ func (h *Handler) adminDomainHealth(c *gin.Context) {
 	})
 }
 
+func (h *Handler) adminCheckDomainMX(c *gin.Context) {
+	if _, allowed := h.requireAdminSession(c); !allowed {
+		return
+	}
+	d, found := h.adminDomainByID(c)
+	if !found {
+		return
+	}
+	result, err := h.DNSChecker.Check(c.Request.Context(), d.Domain)
+	if err != nil {
+		fail(c, http.StatusBadRequest, err.Error())
+		return
+	}
+	ok(c, result)
+}
+
+func (h *Handler) patchAdminDomain(c *gin.Context) {
+	if _, allowed := h.requireAdminSession(c); !allowed {
+		return
+	}
+	d, found := h.adminDomainByID(c)
+	if !found {
+		return
+	}
+	var input domainPatchInput
+	if err := c.ShouldBindJSON(&input); err != nil {
+		fail(c, http.StatusBadRequest, "invalid json")
+		return
+	}
+	applyDomainPatch(&d, input, true)
+	if err := h.DB.Save(&d).Error; err != nil {
+		fail(c, http.StatusInternalServerError, err.Error())
+		return
+	}
+	h.audit("domain.patch", actor(c), d.Domain, "")
+	ok(c, domainWithCount(h.DB, d))
+}
+
+func (h *Handler) deleteAdminDomain(c *gin.Context) {
+	if _, allowed := h.requireAdminSession(c); !allowed {
+		return
+	}
+	d, found := h.adminDomainByID(c)
+	if !found {
+		return
+	}
+	if err := h.deleteDomainWithDependents(d); err != nil {
+		fail(c, http.StatusInternalServerError, err.Error())
+		return
+	}
+	h.audit("domain.delete", actor(c), d.Domain, "")
+	ok(c, gin.H{"deleted": true})
+}
+
+func (h *Handler) adminDomainByID(c *gin.Context) (models.Domain, bool) {
+	id, err := strconv.ParseUint(c.Param("id"), 10, 64)
+	if err != nil || id == 0 {
+		fail(c, http.StatusNotFound, "domain not found")
+		return models.Domain{}, false
+	}
+	var d models.Domain
+	if err := h.DB.First(&d, "id = ?", id).Error; err != nil {
+		fail(c, http.StatusNotFound, "domain not found")
+		return models.Domain{}, false
+	}
+	return d, true
+}
+
 func applyAdminDomainHealthFilters(query *gorm.DB, c *gin.Context, now time.Time) *gorm.DB {
 	if search := strings.TrimSpace(strings.ToLower(c.Query("q"))); search != "" {
 		like := "%" + search + "%"
@@ -195,13 +263,13 @@ func domainHealthOrder(now time.Time) clause.OrderBy {
 	return clause.OrderBy{
 		Expression: clause.Expr{
 			SQL: `CASE
-				WHEN domains.active = ? THEN ?
-				WHEN domains.mx_verified = ? THEN ?
-				WHEN domains.domain_expires_at IS NOT NULL AND domains.domain_expires_at < ? THEN ?
-				WHEN domains.domain_expires_at IS NOT NULL AND domains.domain_expires_at < ? THEN ?
-				WHEN domains.last_mx_check_at IS NULL THEN ?
-				WHEN domains.last_mx_check_at < ? THEN ?
-				ELSE ?
+				WHEN domains.active = ? THEN CAST(? AS integer)
+				WHEN domains.mx_verified = ? THEN CAST(? AS integer)
+				WHEN domains.domain_expires_at IS NOT NULL AND domains.domain_expires_at < ? THEN CAST(? AS integer)
+				WHEN domains.domain_expires_at IS NOT NULL AND domains.domain_expires_at < ? THEN CAST(? AS integer)
+				WHEN domains.last_mx_check_at IS NULL THEN CAST(? AS integer)
+				WHEN domains.last_mx_check_at < ? THEN CAST(? AS integer)
+				ELSE CAST(? AS integer)
 			END DESC, domains.domain ASC`,
 			Vars: []interface{}{
 				false, severityRank("warning"),
@@ -951,28 +1019,28 @@ func (h *Handler) testAdminLoginSettingsEmail(c *gin.Context) {
 		fail(c, http.StatusBadRequest, err.Error())
 		return
 	}
-	err = h.mailSender().Send(c.Request.Context(), mailerSettingsFromLoginSettings(h.Config, &candidate), mailer.Message{
-		To:      recipient,
-		Subject: "HloolMail test email",
-		Text:    "This is a test email from HloolMail.",
-		HTML:    "<p>This is a test email from HloolMail.</p>",
+	delivery, err := h.enqueueEmailDelivery(emaildelivery.EnqueueInput{
+		Purpose:      models.EmailDeliveryPurposeLoginSettingsTest,
+		Recipient:    recipient,
+		SettingsHash: loginEmailSettingsFingerprint(h.Config, &candidate),
+		Settings:     mailerSettingsFromLoginSettings(h.Config, &candidate),
+		Message:      loginSettingsTestMessage(recipient),
+		MaxAttempts:  emaildelivery.DefaultMaxAttempts,
 	})
 	if err != nil {
 		fail(c, http.StatusBadGateway, err.Error())
 		return
 	}
-	now := time.Now()
-	settings.EmailDeliveryTestedAt = &now
-	settings.EmailDeliveryTestHash = loginEmailSettingsFingerprint(h.Config, &candidate)
-	settings.EmailDeliveryTestRecipient = recipient
-	if err := h.DB.Save(settings).Error; err != nil {
+	if err := h.DB.First(settings, "id = ?", settings.ID).Error; err != nil {
 		fail(c, http.StatusInternalServerError, err.Error())
 		return
 	}
 	h.audit("login_settings.test_email", actor(c), "login-settings", recipient)
 	response := loginSettingsDTO(h.Config, settings)
-	response["sent"] = true
 	response["tested_mode"] = strings.ToLower(strings.TrimSpace(candidate.EmailVerificationMode))
+	for key, value := range emailDeliveryStatusFields(delivery) {
+		response[key] = value
+	}
 	ok(c, response)
 }
 

@@ -16,6 +16,7 @@ import (
 	"gptmail/internal/config"
 	"gptmail/internal/db"
 	"gptmail/internal/domain"
+	"gptmail/internal/emaildelivery"
 	"gptmail/internal/events"
 	httpapi "gptmail/internal/http"
 	"gptmail/internal/jobs"
@@ -59,6 +60,7 @@ func Run(ctx context.Context) error {
 	jobs.StartDomainHealthMonitor(runCtx, healthJob)
 	jobs.StartMXAutoRetry(runCtx, checker)
 	webhook.Start(runCtx, database, cfg)
+	emaildelivery.Start(runCtx, database, nil, httpapi.EmailDeliverySuccessCallback(cfg))
 	smtpServer := smtpserver.Start(runCtx, smtpserver.Service{
 		Config:   cfg,
 		DB:       database,

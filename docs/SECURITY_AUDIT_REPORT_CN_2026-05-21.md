@@ -226,7 +226,7 @@
 | AKM-006 | `GET /api/api-keys` | API key only | 401 | 正确拒绝，要求登录 |
 | SHM-010 | `GET /api/share-links` | API key only | 401 | 正确拒绝，要求登录 |
 | WH-008 | `GET /api/webhooks` | API key only | 401 | 正确拒绝，要求登录 |
-| ADM-001 | `GET /api/admin/stats` | API key only | 403 | 正确拒绝，要求 admin token |
+| ADM-001 | `GET /api/admin/stats` | API key only | 403 | 正确拒绝；当前边界要求管理员网页登录态 |
 | ANN-004 | `GET /api/announcements` | API key only | 401 | 拒绝，要求登录 |
 | NOT-001 | `GET /api/notifications` | API key | 200 | 审计时接受；本地代码已改为部署后应返回 401 |
 | NOT-002 | `GET /api/notifications/unread-count` | API key | 200 | 审计时接受；本地代码已改为部署后应返回 401 |

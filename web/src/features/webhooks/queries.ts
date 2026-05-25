@@ -2,6 +2,7 @@ import { useMutation, useQuery } from '@tanstack/react-query';
 import type { UseMutationOptions } from '@tanstack/react-query';
 import { api, patchJSON, postJSON } from '../../api';
 import type {
+  AdminWebhookEndpointDTO,
   PaginatedResponse,
   WebhookDeliveryDTO,
   WebhookEndpointDTO,
@@ -19,7 +20,11 @@ export const webhookKeys = {
   all: ['webhooks'] as const,
   list: (page: number, perPage: number) => ['webhooks', page, perPage] as const,
   deliveriesRoot: (endpointId: number) => ['webhook-deliveries', endpointId] as const,
-  deliveries: (endpointId: number, page: number) => ['webhook-deliveries', endpointId, page] as const
+  deliveries: (endpointId: number, page: number) => ['webhook-deliveries', endpointId, page] as const,
+  adminAll: ['admin-webhooks'] as const,
+  adminList: (query: string) => ['admin-webhooks', query] as const,
+  adminDeliveriesRoot: (endpointId: number) => ['admin-webhook-deliveries', endpointId] as const,
+  adminDeliveries: (endpointId: number, page: number) => ['admin-webhook-deliveries', endpointId, page] as const
 };
 
 type MutationOptions<TData, TVariables> = UseMutationOptions<TData, Error, TVariables>;
@@ -41,6 +46,14 @@ export function fetchWebhooks(page: number, perPage = WEBHOOKS_PER_PAGE) {
 
 export function fetchWebhookDeliveries(endpointId: number, page: number, perPage = WEBHOOK_DELIVERIES_PER_PAGE) {
   return api<PaginatedResponse<WebhookDeliveryDTO>>(`/api/webhooks/${endpointId}/deliveries?page=${page}&per_page=${perPage}`);
+}
+
+export function fetchAdminWebhooks(query: string) {
+  return api<PaginatedResponse<AdminWebhookEndpointDTO>>(`/api/admin/webhooks?${query}`);
+}
+
+export function fetchAdminWebhookDeliveries(endpointId: number, page: number, perPage = WEBHOOK_DELIVERIES_PER_PAGE) {
+  return api<PaginatedResponse<WebhookDeliveryDTO>>(`/api/admin/webhooks/${endpointId}/deliveries?page=${page}&per_page=${perPage}`);
 }
 
 export function saveWebhook(endpointId: number | undefined, payload: WebhookFormPayload) {
@@ -65,6 +78,14 @@ export async function deleteWebhook(endpoint: WebhookEndpointDTO) {
   await api<unknown>(`/api/webhooks/${endpoint.id}`, { method: 'DELETE' });
 }
 
+export function disableAdminWebhook(endpoint: AdminWebhookEndpointDTO) {
+  return postJSON<AdminWebhookEndpointDTO>(`/api/admin/webhooks/${endpoint.id}/disable`, {});
+}
+
+export async function deleteAdminWebhook(endpoint: AdminWebhookEndpointDTO) {
+  await api<unknown>(`/api/admin/webhooks/${endpoint.id}`, { method: 'DELETE' });
+}
+
 export function useWebhooksQuery(page: number, perPage = WEBHOOKS_PER_PAGE) {
   return useQuery({
     queryKey: webhookKeys.list(page, perPage),
@@ -77,6 +98,23 @@ export function useWebhookDeliveriesQuery(endpointId: number, page: number) {
   return useQuery({
     queryKey: webhookKeys.deliveries(endpointId, page),
     queryFn: () => fetchWebhookDeliveries(endpointId, page),
+    retry: false
+  });
+}
+
+export function useAdminWebhooksQuery(query: string) {
+  return useQuery({
+    queryKey: webhookKeys.adminList(query),
+    queryFn: () => fetchAdminWebhooks(query),
+    retry: false,
+    staleTime: 30_000
+  });
+}
+
+export function useAdminWebhookDeliveriesQuery(endpointId: number, page: number) {
+  return useQuery({
+    queryKey: webhookKeys.adminDeliveries(endpointId, page),
+    queryFn: () => fetchAdminWebhookDeliveries(endpointId, page),
     retry: false
   });
 }
@@ -112,6 +150,20 @@ export function useTestWebhookMutation(options?: MutationOptions<WebhookDelivery
 export function useDeleteWebhookMutation(options?: MutationOptions<void, WebhookEndpointDTO>) {
   return useMutation({
     mutationFn: deleteWebhook,
+    ...options
+  });
+}
+
+export function useDisableAdminWebhookMutation(options?: MutationOptions<AdminWebhookEndpointDTO, AdminWebhookEndpointDTO>) {
+  return useMutation({
+    mutationFn: disableAdminWebhook,
+    ...options
+  });
+}
+
+export function useDeleteAdminWebhookMutation(options?: MutationOptions<void, AdminWebhookEndpointDTO>) {
+  return useMutation({
+    mutationFn: deleteAdminWebhook,
     ...options
   });
 }

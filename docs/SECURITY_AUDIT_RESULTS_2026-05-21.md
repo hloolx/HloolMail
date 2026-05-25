@@ -115,7 +115,7 @@ API key read-only conclusion:
 | AKM-006 | `GET /api/api-keys` | API key only | 401 | Rejected with `login required` |
 | SHM-010 | `GET /api/share-links` | API key only | 401 | Rejected with `login required` |
 | WH-008 | `GET /api/webhooks` | API key only | 401 | Rejected with `login required` |
-| ADM-001-keyonly | `GET /api/admin/stats` | API key only | 403 | Rejected with `admin token required` |
+| ADM-001-keyonly | `GET /api/admin/stats` | API key only | 403 | Rejected; current boundary requires an admin web session |
 | NOT-001 | `GET /api/notifications` | API key | 200 | Accepted during audit; local code now expects API key-only requests to return 401 after deployment |
 | NOT-002 | `GET /api/notifications/unread-count` | API key | 200 | Accepted during audit; local code now expects API key-only requests to return 401 after deployment |
 | ANN-004 | `GET /api/announcements` | API key only | 401 | Rejected with `login required` |

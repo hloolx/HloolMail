@@ -63,7 +63,7 @@ API key boundary checks:
 - `GET /api/api-keys` should require session.
 - `GET /api/share-links` should require session.
 - `GET /api/webhooks` should require session.
-- `GET /api/admin/stats` should require admin session or approved admin token, not plain API key.
+- `GET /api/admin/stats` and other `/api/admin/*` routes should require an admin web session, not plain API key or `X-Admin-Token`.
 - `GET /api/announcements` should require session.
 - `GET /api/notifications*` must be Web Console cookie/session-only.
 - `GET /api/stats/timeseries` must be Web Console cookie/session-only.

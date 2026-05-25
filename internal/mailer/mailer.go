@@ -14,6 +14,24 @@ import (
 	"time"
 )
 
+type stageRecorderKey struct{}
+
+type StageRecorder func(stage, detail string)
+
+func WithStageRecorder(ctx context.Context, recorder StageRecorder) context.Context {
+	if recorder == nil {
+		return ctx
+	}
+	return context.WithValue(ctx, stageRecorderKey{}, recorder)
+}
+
+func recordStage(ctx context.Context, stage, detail string) {
+	recorder, _ := ctx.Value(stageRecorderKey{}).(StageRecorder)
+	if recorder != nil {
+		recorder(stage, detail)
+	}
+}
+
 type Message struct {
 	To      string
 	Subject string
@@ -66,6 +84,7 @@ func sendInternal(ctx context.Context, settings Settings, message Message) error
 	if recipientDomain == "" {
 		return fmt.Errorf("valid recipient email is required")
 	}
+	recordStage(ctx, "dns_mx", "looking up MX records for "+recipientDomain)
 	mxs, err := net.DefaultResolver.LookupMX(ctx, recipientDomain)
 	if err != nil {
 		return fmt.Errorf("lookup MX for %s: %w", recipientDomain, err)
@@ -82,11 +101,13 @@ func sendInternal(ctx context.Context, settings Settings, message Message) error
 		mxHost := strings.TrimSuffix(mx.Host, ".")
 		addr := net.JoinHostPort(mxHost, "25")
 		dialer := net.Dialer{Timeout: 15 * time.Second}
+		recordStage(ctx, "connect", "connecting to "+addr)
 		conn, err := dialer.DialContext(ctx, "tcp", addr)
 		if err != nil {
 			lastErr = fmt.Errorf("connect %s: %w", addr, err)
 			continue
 		}
+		_ = conn.SetDeadline(time.Now().Add(45 * time.Second))
 		err = deliverSMTP(ctx, conn, host, from, message)
 		if err == nil {
 			return nil
@@ -133,6 +154,7 @@ func sendSMTP(ctx context.Context, settings Settings, message Message) error {
 	var conn net.Conn
 	var err error
 	dialer := net.Dialer{Timeout: 15 * time.Second}
+	recordStage(ctx, "connect", "connecting to SMTP "+addr)
 	if security == "tls" {
 		tlsDialer := tls.Dialer{NetDialer: &dialer, Config: &tls.Config{ServerName: host}}
 		conn, err = tlsDialer.DialContext(ctx, "tcp", addr)
@@ -142,6 +164,7 @@ func sendSMTP(ctx context.Context, settings Settings, message Message) error {
 	if err != nil {
 		return fmt.Errorf("connect SMTP %s: %w", addr, err)
 	}
+	_ = conn.SetDeadline(time.Now().Add(45 * time.Second))
 	client, err := smtp.NewClient(conn, host)
 	if err != nil {
 		_ = conn.Close()
@@ -153,10 +176,12 @@ func sendSMTP(ctx context.Context, settings Settings, message Message) error {
 	if helo == "" {
 		helo = "localhost"
 	}
+	recordStage(ctx, "ehlo", "sending EHLO "+helo)
 	if err := client.Hello(helo); err != nil {
 		return err
 	}
 	if security == "starttls" {
+		recordStage(ctx, "starttls", "checking STARTTLS support")
 		ok, _ := client.Extension("STARTTLS")
 		if !ok {
 			return fmt.Errorf("SMTP server does not advertise STARTTLS")
@@ -166,6 +191,7 @@ func sendSMTP(ctx context.Context, settings Settings, message Message) error {
 		}
 	}
 	if settings.SMTPUsername != "" || settings.SMTPPassword != "" {
+		recordStage(ctx, "auth", "authenticating SMTP user")
 		if err := client.Auth(smtp.PlainAuth("", settings.SMTPUsername, settings.SMTPPassword, host)); err != nil {
 			return err
 		}
@@ -180,6 +206,7 @@ func deliverSMTP(ctx context.Context, conn net.Conn, helo, from string, message 
 		return err
 	}
 	defer client.Close()
+	recordStage(ctx, "ehlo", "sending EHLO "+helo)
 	if err := client.Hello(helo); err != nil {
 		return err
 	}
@@ -194,12 +221,15 @@ func finishSMTP(ctx context.Context, client *smtp.Client, from, fromName string,
 	if err := validateAddress(to); err != nil {
 		return fmt.Errorf("recipient address: %w", err)
 	}
+	recordStage(ctx, "mail_from", "sending MAIL FROM")
 	if err := client.Mail(from); err != nil {
 		return err
 	}
+	recordStage(ctx, "rcpt_to", "sending RCPT TO "+to)
 	if err := client.Rcpt(to); err != nil {
 		return err
 	}
+	recordStage(ctx, "data", "sending message DATA")
 	writer, err := client.Data()
 	if err != nil {
 		return err
@@ -216,6 +246,7 @@ func finishSMTP(ctx context.Context, client *smtp.Client, from, fromName string,
 		return ctx.Err()
 	default:
 	}
+	recordStage(ctx, "quit", "closing SMTP session")
 	return client.Quit()
 }
 

@@ -1,8 +1,10 @@
 import { currentText } from '../locales';
 import type { User } from '../api';
+import { normalizeNicknameInput, validateNicknameInput } from '../lib/userDisplay';
 
 export type UserForm = {
   email: string;
+  nickname: string;
   password: string;
   role: User['role'];
   enabled: boolean;
@@ -17,12 +19,13 @@ export function validateEmail(email: string, text: ReturnType<typeof currentText
 }
 
 export function emptyCreateForm(): UserForm {
-  return { email: '', password: '', role: 'user', enabled: true, daily_limit: '1000', total_limit: '0' };
+  return { email: '', nickname: '', password: '', role: 'user', enabled: true, daily_limit: '1000', total_limit: '0' };
 }
 
 export function formFromUser(user: User): UserForm {
   return {
     email: user.email,
+    nickname: user.nickname || '',
     password: '',
     role: user.role,
     enabled: user.enabled,
@@ -52,10 +55,18 @@ function buildBasePayload(form: UserForm) {
   const text = currentText();
   const email = form.email.trim().toLowerCase();
   if (!email.includes('@')) throw new Error(text.users.emailInvalid);
+  const nickname = normalizeNicknameInput(form.nickname);
+  const nicknameError = validateNicknameInput(nickname, {
+    required: text.users.nicknameRequired,
+    tooLong: text.users.nicknameTooLong,
+    invalid: text.users.nicknameInvalid
+  });
+  if (nicknameError) throw new Error(nicknameError);
   const daily = parseQuota(form.daily_limit, text.users.dailyLimit);
   const total = parseQuota(form.total_limit, text.users.totalLimit);
   return {
     email,
+    nickname,
     role: form.role,
     enabled: form.enabled,
     daily_limit: daily,

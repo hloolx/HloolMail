@@ -8,6 +8,7 @@ import { roleText, useText } from '../locales';
 import { notifySuccess, runDeleteEffect } from '../lib/feedback';
 import { boolBadge, formatAPIKeyExpiry, relativeTime } from '../lib/display';
 import { copy as copyText } from '../lib/clipboard';
+import { displayName, displaySubtitle } from '../lib/userDisplay';
 import { useTableUrlState } from '../hooks/useTableUrlState';
 import { ConfirmModal, DataTable, DataTableToolbar, DataTableViewOptions, IconButton, InfoTip, PaginationControls, QuotaThermometer } from '../components/shared';
 import type { DataTableColumn } from '../components/shared';
@@ -72,7 +73,7 @@ export function UsersPage({ currentUser }: { currentUser: User }) {
       if (term) params.set('search', term);
       if (roleFilter !== 'all') params.set('role', roleFilter);
       if (statusFilter !== 'all') params.set('status', statusFilter);
-      return api<PaginatedResponse<User>>(`/api/users?${params.toString()}`);
+      return api<PaginatedResponse<User>>(`/api/admin/users?${params.toString()}`);
     },
     retry: false,
     staleTime: 30_000
@@ -81,13 +82,13 @@ export function UsersPage({ currentUser }: { currentUser: User }) {
   const visibleUsers = userPage?.items || [];
   const userColumns = useMemo<DataTableColumn[]>(() => [
     { key: 'expand', header: <span className="sr-only">{text.users.apiKeysTitle}</span>, align: 'center', width: '3rem', hideable: false, mobileBadge: true },
-    { key: 'email', header: text.users.email, minWidth: '15rem', mobileTitle: true },
+    { key: 'email', header: text.users.account, minWidth: '15rem', mobileTitle: true },
     { key: 'role', header: text.users.role, width: '7rem', mobileSubtitle: true },
     { key: 'enabled', header: text.users.enabled, align: 'center', width: '6rem', mobileBadge: true },
     { key: 'today-usage', header: text.users.todayUsage, align: 'right', width: '8rem', mobilePriority: 1 },
     { key: 'total-usage', header: text.users.totalUsage, align: 'right', width: '8rem', mobilePriority: 2 },
     { key: 'last-used', header: text.users.lastUsed, width: '8rem', mobilePriority: 3 },
-    { key: 'actions', header: text.users.actions, align: 'right', minWidth: '15rem', hideable: false }
+    { key: 'actions', role: 'actions', header: text.users.actions, align: 'right', minWidth: '15rem', hideable: false }
   ], [text]);
 
   const toggleUserApiKeys = (userId: number) => {
@@ -104,7 +105,7 @@ export function UsersPage({ currentUser }: { currentUser: User }) {
   };
 
   const create = useMutation({
-    mutationFn: (form: UserForm) => postJSON<User>('/api/users', buildCreatePayload(form)),
+    mutationFn: (form: UserForm) => postJSON<User>('/api/admin/users', buildCreatePayload(form)),
     onSuccess: () => {
       invalidateUserViews();
       setShowCreateDialog(false);
@@ -153,7 +154,7 @@ export function UsersPage({ currentUser }: { currentUser: User }) {
   });
 
   const updateUser = useMutation({
-    mutationFn: ({ user, form }: { user: User; form: UserForm }) => patchJSON<User>(`/api/users/${user.id}`, buildUpdatePayload(form)),
+    mutationFn: ({ user, form }: { user: User; form: UserForm }) => patchJSON<User>(`/api/admin/users/${user.id}`, buildUpdatePayload(form)),
     onSuccess: () => {
       invalidateUserViews();
       setEditingUser(null);
@@ -167,7 +168,7 @@ export function UsersPage({ currentUser }: { currentUser: User }) {
   });
 
   const toggleUser = useMutation({
-    mutationFn: ({ user, enabled }: { user: User; enabled: boolean }) => patchJSON<User>(`/api/users/${user.id}`, { enabled }),
+    mutationFn: ({ user, enabled }: { user: User; enabled: boolean }) => patchJSON<User>(`/api/admin/users/${user.id}`, { enabled }),
     onSuccess: () => {
       invalidateUserViews();
       setDisableTarget(null);
@@ -181,7 +182,7 @@ export function UsersPage({ currentUser }: { currentUser: User }) {
   });
 
   const deleteUser = useMutation({
-    mutationFn: (user: User) => api(`/api/users/${user.id}`, { method: 'DELETE' })
+    mutationFn: (user: User) => api(`/api/admin/users/${user.id}`, { method: 'DELETE' })
   });
 
   return (
@@ -297,6 +298,8 @@ export function UsersPage({ currentUser }: { currentUser: User }) {
             rows={visibleUsers.flatMap((user) => {
               const expanded = expandedUserIds.includes(user.id);
               const toggleLabel = expanded ? text.users.collapseApiKeys : text.users.expandApiKeys;
+              const userName = displayName(user);
+              const userSubtitle = displaySubtitle(user);
               const userRow = {
                 key: user.id,
                 selected: expanded,
@@ -313,7 +316,8 @@ export function UsersPage({ currentUser }: { currentUser: User }) {
                     {expanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
                   </button>,
                   <div className="admin-domain-cell users-email-cell">
-                    <b>{user.email}</b>
+                    <b>{userName}</b>
+                    {userSubtitle && <span>{userSubtitle}</span>}
                     {user.id === currentUser.id && <small>{text.users.currentUser}</small>}
                   </div>,
                   roleText(user.role, text),
@@ -506,7 +510,7 @@ function UserApiKeysPanel({ user }: { user: User }) {
         page_size: String(pageSize)
       });
       if (deferredSearch) params.set('search', deferredSearch);
-      return api<PaginatedResponse<APIKey>>(`/api/users/${user.id}/api-keys?${params.toString()}`);
+      return api<PaginatedResponse<APIKey>>(`/api/admin/users/${user.id}/api-keys?${params.toString()}`);
     },
     retry: false,
     staleTime: 30_000
@@ -520,7 +524,7 @@ function UserApiKeysPanel({ user }: { user: User }) {
     { key: 'total', header: text.apiKeys.total, align: 'center', width: '8rem', mobilePriority: 2 },
     { key: 'expires', header: text.apiKeys.expires, width: '9rem', mobilePriority: 3 },
     { key: 'last-used', header: text.apiKeys.lastUsed, width: '8rem', mobilePriority: 4 },
-    { key: 'actions', header: text.apiKeys.actions, align: 'right', width: '6rem', hideable: false }
+    { key: 'actions', role: 'actions', header: text.apiKeys.actions, align: 'right', width: '6rem', hideable: false }
   ], [text]);
 
   const keyPage = keys.data;
@@ -529,7 +533,7 @@ function UserApiKeysPanel({ user }: { user: User }) {
   const revealKey = async (key: APIKey, event: MouseEvent<Element>, action: 'view' | 'copy') => {
     setRevealing({ keyId: key.id, action });
     try {
-      const data = await postJSON<{ plain_key: string }>(`/api/users/${user.id}/api-keys/${key.id}/reveal`, {});
+      const data = await postJSON<{ plain_key: string }>(`/api/admin/users/${user.id}/api-keys/${key.id}/reveal`, {});
       setRevealedKeys((current) => ({ ...current, [key.id]: data.plain_key }));
       if (action === 'copy') {
         await copyText(data.plain_key, {

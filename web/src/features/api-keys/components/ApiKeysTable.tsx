@@ -112,7 +112,7 @@ export function ApiKeysTable({
     { key: 'expires', header: text.apiKeys.expires, width: '8rem', sortable: true, sortLabel: String(text.apiKeys.expires), mobilePriority: 3 },
     { key: 'created', header: text.common.createdAt, width: '8rem', sortable: true, sortLabel: String(text.common.createdAt), mobilePriority: 4 },
     { key: 'last-used', header: text.apiKeys.lastUsed, width: '8rem', sortable: true, sortLabel: String(text.apiKeys.lastUsed), mobilePriority: 5 },
-    { key: 'actions', header: text.apiKeys.actions, align: 'right', width: '5rem', hideable: false }
+    { key: 'actions', role: 'actions', header: text.apiKeys.actions, align: 'right', width: '5rem', hideable: false }
   ], [allKeysSelected, deletePending, keys.length, someKeysSelected, text]);
   const sortedKeys = useMemo(
     () => sortApiKeys(keys, sortState),

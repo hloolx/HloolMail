@@ -25,3 +25,4 @@ export { ConfirmModal } from './ConfirmModal';
 export { DialogShell } from './DialogShell';
 export { QuotaThermometer } from './QuotaThermometer';
 export { InfoTip } from './InfoTip';
+export { UserAvatar } from './UserAvatar';

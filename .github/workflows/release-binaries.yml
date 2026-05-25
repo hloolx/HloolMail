@@ -122,22 +122,16 @@ jobs:
           set -euo pipefail
 
           tag="${GITHUB_REF_NAME}"
+          notes_file="docs/releases/${tag}.md"
           previous_tag="$(git tag --sort=-v:refname --merged HEAD | grep -v "^${tag}$" | head -n 1 || true)"
 
-          if [ -n "${previous_tag}" ]; then
-            range="${previous_tag}..${tag}"
-          else
-            range="${tag}"
+          if [ ! -f "${notes_file}" ]; then
+            echo "::error::Missing ${notes_file}. Create user-facing release notes before pushing ${tag}."
+            exit 1
           fi
 
           {
-            echo "## What's Changed"
-            echo
-            if git log --format=%s "${range}" | grep -q .; then
-              git log --reverse --format='- %s ([%h](https://github.com/${{ github.repository }}/commit/%H))' "${range}"
-            else
-              echo "- Release maintenance update."
-            fi
+            cat "${notes_file}"
             echo
             echo "## Assets"
             echo

@@ -18,6 +18,7 @@ export function DomainManagementPage({ user }: { user: User }) {
   const queryClient = useQueryClient();
   const text = useText();
   const language = useAppStore((state) => state.language);
+  const pageDescription = user.role === 'admin' ? text.domains.adminDesc : text.domains.manageDesc;
   const [addOpen, setAddOpen] = useState(false);
   const [confirmDeleteId, setConfirmDeleteId] = useState<number | null>(null);
   const [managedHiddenColumns, setManagedHiddenColumns] = useState<string[]>([]);
@@ -30,7 +31,7 @@ export function DomainManagementPage({ user }: { user: User }) {
   const domains = useQuery({ queryKey: ['domains-all'], queryFn: () => api<Domain[]>('/api/domains'), retry: false, staleTime: 30_000 });
   const managedDomains = (domains.data || []).filter(isReadyDomain);
   const waitingDomains = (domains.data || []).filter((domain) => isWaitingDomain(domain) && canDeleteWaitingDomain(domain, user));
-  const inactiveDomains = (domains.data || []).filter((domain) => !domain.active && (user.role === 'admin' || domain.owner_id === user.id));
+  const inactiveDomains = (domains.data || []).filter((domain) => !domain.active && domain.owner_id === user.id);
   const managedColumns = useMemo<DataTableColumn[]>(() => [
     { key: 'domain', header: text.domains.domain, viewLabel: text.domains.domain, sortLabel: text.domains.domain, minWidth: '14rem', hideable: false, sortable: true, mobileTitle: true },
     { key: 'effective', header: text.domains.effective, viewLabel: text.domains.effective, align: 'center', width: '8rem', mobileBadge: true },
@@ -43,14 +44,14 @@ export function DomainManagementPage({ user }: { user: User }) {
     { key: 'status', header: text.domains.status, viewLabel: text.domains.status, sortLabel: text.domains.status, align: 'center', width: '12rem', sortable: true, mobileBadge: true },
     { key: 'mode', header: text.domains.mode, viewLabel: text.domains.mode, width: '8rem', mobileSubtitle: true },
     { key: 'autoDelete', header: text.domains.autoDelete, viewLabel: text.domains.autoDelete, sortLabel: text.domains.autoDelete, minWidth: '12rem', sortable: true, mobilePriority: 1 },
-    { key: 'actions', header: text.domains.actions, viewLabel: text.domains.actions, align: 'right', minWidth: '13rem', hideable: false },
+    { key: 'actions', role: 'actions', header: text.domains.actions, viewLabel: text.domains.actions, align: 'right', minWidth: '13rem', hideable: false },
   ], [text]);
   const inactiveColumns = useMemo<DataTableColumn[]>(() => [
     { key: 'domain', header: text.domains.domain, viewLabel: text.domains.domain, sortLabel: text.domains.domain, minWidth: '14rem', hideable: false, sortable: true, mobileTitle: true },
     { key: 'status', header: text.domains.status, viewLabel: text.domains.status, align: 'center', width: '8rem', mobileBadge: true },
     { key: 'mode', header: text.domains.mode, viewLabel: text.domains.mode, width: '8rem', mobileSubtitle: true },
     { key: 'expiry', header: text.domains.expiry, viewLabel: text.domains.expiry, sortLabel: text.domains.expiry, width: '8rem', sortable: true, mobilePriority: 1 },
-    { key: 'actions', header: text.domains.actions, viewLabel: text.domains.actions, align: 'right', width: '9rem', hideable: false },
+    { key: 'actions', role: 'actions', header: text.domains.actions, viewLabel: text.domains.actions, align: 'right', width: '9rem', hideable: false },
   ], [text]);
   const sortedManagedDomains = useMemo(
     () => sortDomains(managedDomains, managedSortState, {
@@ -168,8 +169,8 @@ export function DomainManagementPage({ user }: { user: User }) {
       <div className="admin-table-page domain-management-page">
         <div className="admin-table-page-header">
           <div className="admin-table-page-title">
-            <h1>{text.domains.manageTitle}<InfoTip text={text.domains.manageDesc} /></h1>
-            <p>{text.domains.manageDesc}</p>
+            <h1>{text.domains.manageTitle}<InfoTip text={pageDescription} /></h1>
+            <p>{pageDescription}</p>
           </div>
           <div className="admin-table-page-actions domain-management-actions">
             <button className="btn-primary" onClick={() => setAddOpen(true)}>
@@ -216,7 +217,7 @@ export function DomainManagementPage({ user }: { user: User }) {
             sortState={managedSortState}
             onSortChange={setManagedSortState}
             rows={sortedManagedDomains.map((domain) => {
-              const canEdit = user.role === 'admin' || domain.owner_id === user.id;
+              const canEdit = domain.owner_id === user.id;
               const modeBusy = updateDomain.isPending;
               return {
                 key: domain.id,
@@ -403,7 +404,7 @@ function isWaitingDomain(domain: Domain) {
 }
 
 function canDeleteWaitingDomain(domain: Domain, user: User) {
-  return user.role === 'admin' || domain.owner_id === user.id;
+  return domain.owner_id === user.id;
 }
 
 function formatAutoDeleteTime(domain: Domain, pastLabel: string) {

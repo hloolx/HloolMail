@@ -228,6 +228,264 @@ func TestShareLinkCreationIsMailboxOnly(t *testing.T) {
 	}
 }
 
+func TestShareLinkManagementIsAlwaysOwnerScoped(t *testing.T) {
+	db := httpTestDB(t)
+	owner := createShareTestUser(t, db, "owner-scope@example.test")
+	var admin models.User
+	if err := db.First(&admin, "email = ?", "admin@example.test").Error; err != nil {
+		t.Fatal(err)
+	}
+	ownerDomain := createShareTestDomain(t, db, "owner-scope.test", models.DomainModePrivate, &owner.ID)
+	adminDomain := createShareTestDomain(t, db, "admin-scope.test", models.DomainModePrivate, &admin.ID)
+	ownerMailbox := createShareTestMailbox(t, db, owner, ownerDomain, "owner@owner-scope.test")
+	adminMailbox := createShareTestMailbox(t, db, admin, adminDomain, "admin@admin-scope.test")
+	router := testRouter(t, db)
+	ownerLogin := loginShareTestUser(t, router, owner.Email)
+	adminLogin := loginShareTestUser(t, router, admin.Email)
+
+	ownerCreate := perform(router, http.MethodPost, "/api/share-links", map[string]any{
+		"mailbox_id": ownerMailbox.ID,
+	}, cookieHeaders(ownerLogin.Result().Cookies()))
+	if ownerCreate.Code != http.StatusCreated {
+		t.Fatalf("owner create share = %d: %s", ownerCreate.Code, ownerCreate.Body.String())
+	}
+	ownerShare := decodeShareEnvelope[ShareLinkDTO](t, ownerCreate.Body.Bytes()).Data
+
+	adminCreate := perform(router, http.MethodPost, "/api/share-links", map[string]any{
+		"mailbox_id": adminMailbox.ID,
+	}, cookieHeaders(adminLogin.Result().Cookies()))
+	if adminCreate.Code != http.StatusCreated {
+		t.Fatalf("admin own create share = %d: %s", adminCreate.Code, adminCreate.Body.String())
+	}
+	adminShare := decodeShareEnvelope[ShareLinkDTO](t, adminCreate.Body.Bytes()).Data
+
+	adminCreateOther := perform(router, http.MethodPost, "/api/share-links", map[string]any{
+		"mailbox_id": ownerMailbox.ID,
+	}, cookieHeaders(adminLogin.Result().Cookies()))
+	if adminCreateOther.Code != http.StatusForbidden {
+		t.Fatalf("admin personal endpoint created another user's share = %d: %s", adminCreateOther.Code, adminCreateOther.Body.String())
+	}
+
+	adminList := perform(router, http.MethodGet, "/api/share-links?page=1&per_page=10", nil, cookieHeaders(adminLogin.Result().Cookies()))
+	if adminList.Code != http.StatusOK {
+		t.Fatalf("admin personal list = %d: %s", adminList.Code, adminList.Body.String())
+	}
+	adminPage := decodeShareEnvelope[paginatedResponse[ShareLinkDTO]](t, adminList.Body.Bytes()).Data
+	if adminPage.Total != 1 || len(adminPage.Items) != 1 || adminPage.Items[0].ID != adminShare.ID {
+		t.Fatalf("admin personal list should contain only admin-owned share: %+v", adminPage)
+	}
+
+	ownerList := perform(router, http.MethodGet, "/api/share-links?page=1&per_page=10", nil, cookieHeaders(ownerLogin.Result().Cookies()))
+	if ownerList.Code != http.StatusOK {
+		t.Fatalf("owner list = %d: %s", ownerList.Code, ownerList.Body.String())
+	}
+	ownerPage := decodeShareEnvelope[paginatedResponse[ShareLinkDTO]](t, ownerList.Body.Bytes()).Data
+	if ownerPage.Total != 1 || len(ownerPage.Items) != 1 || ownerPage.Items[0].ID != ownerShare.ID {
+		t.Fatalf("owner list should contain only owner-owned share: %+v", ownerPage)
+	}
+
+	adminGetOwner := perform(router, http.MethodGet, "/api/share-links/"+uintPath(ownerShare.ID), nil, cookieHeaders(adminLogin.Result().Cookies()))
+	if adminGetOwner.Code != http.StatusNotFound {
+		t.Fatalf("admin personal get another user's share = %d: %s", adminGetOwner.Code, adminGetOwner.Body.String())
+	}
+
+	var beforeOwnerShare models.ShareLink
+	if err := db.First(&beforeOwnerShare, ownerShare.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	adminHeaders := cookieHeaders(adminLogin.Result().Cookies())
+	futureExpires := time.Now().Add(2 * time.Hour).UTC().Format(time.RFC3339)
+	for _, attempt := range []struct {
+		name   string
+		method string
+		path   string
+		body   map[string]any
+	}{
+		{"patch", http.MethodPatch, "/api/share-links/" + uintPath(ownerShare.ID), map[string]any{"expires_at": futureExpires}},
+		{"revoke", http.MethodPost, "/api/share-links/" + uintPath(ownerShare.ID) + "/revoke", nil},
+		{"rotate-token", http.MethodPost, "/api/share-links/" + uintPath(ownerShare.ID) + "/rotate-token", nil},
+		{"rotate-key", http.MethodPost, "/api/share-links/" + uintPath(ownerShare.ID) + "/rotate-key", nil},
+		{"access-logs", http.MethodGet, "/api/share-links/" + uintPath(ownerShare.ID) + "/access-logs", nil},
+		{"delete", http.MethodDelete, "/api/share-links/" + uintPath(ownerShare.ID), nil},
+	} {
+		response := perform(router, attempt.method, attempt.path, attempt.body, adminHeaders)
+		if response.Code != http.StatusNotFound {
+			t.Fatalf("admin personal %s another user's share = %d: %s", attempt.name, response.Code, response.Body.String())
+		}
+	}
+	var afterOwnerShare models.ShareLink
+	if err := db.First(&afterOwnerShare, ownerShare.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if afterOwnerShare.TokenPrefix != beforeOwnerShare.TokenPrefix ||
+		afterOwnerShare.TokenHash != beforeOwnerShare.TokenHash ||
+		afterOwnerShare.AccessKeyHash != beforeOwnerShare.AccessKeyHash ||
+		afterOwnerShare.RevokedAt != nil {
+		t.Fatalf("admin personal subroutes modified another user's share: before=%+v after=%+v", beforeOwnerShare, afterOwnerShare)
+	}
+}
+
+func TestAdminShareLinksGlobalManagement(t *testing.T) {
+	db := httpTestDB(t)
+	owner := createShareTestUser(t, db, "global-share-owner@example.test")
+	var admin models.User
+	if err := db.First(&admin, "email = ?", "admin@example.test").Error; err != nil {
+		t.Fatal(err)
+	}
+	ownerDomain := createShareTestDomain(t, db, "global-owner.test", models.DomainModePrivate, &owner.ID)
+	adminDomain := createShareTestDomain(t, db, "global-admin.test", models.DomainModePrivate, &admin.ID)
+	ownerMailbox := createShareTestMailbox(t, db, owner, ownerDomain, "owner@global-owner.test")
+	adminMailbox := createShareTestMailbox(t, db, admin, adminDomain, "admin@global-admin.test")
+	router := testRouterWithConfig(t, db, func(cfg *config.Config) {
+		cfg.AdminToken = "test-admin-token"
+	})
+	ownerLogin := loginShareTestUser(t, router, owner.Email)
+	adminLogin := loginShareTestUser(t, router, admin.Email)
+
+	ownerCreate := perform(router, http.MethodPost, "/api/share-links", map[string]any{
+		"mailbox_id": ownerMailbox.ID,
+	}, cookieHeaders(ownerLogin.Result().Cookies()))
+	if ownerCreate.Code != http.StatusCreated {
+		t.Fatalf("owner create share = %d: %s", ownerCreate.Code, ownerCreate.Body.String())
+	}
+	ownerShare := decodeShareEnvelope[ShareLinkDTO](t, ownerCreate.Body.Bytes()).Data
+	adminCreate := perform(router, http.MethodPost, "/api/share-links", map[string]any{
+		"mailbox_id": adminMailbox.ID,
+	}, cookieHeaders(adminLogin.Result().Cookies()))
+	if adminCreate.Code != http.StatusCreated {
+		t.Fatalf("admin create share = %d: %s", adminCreate.Code, adminCreate.Body.String())
+	}
+	adminShare := decodeShareEnvelope[ShareLinkDTO](t, adminCreate.Body.Bytes()).Data
+
+	userGlobalList := perform(router, http.MethodGet, "/api/admin/share-links", nil, cookieHeaders(ownerLogin.Result().Cookies()))
+	if userGlobalList.Code != http.StatusForbidden {
+		t.Fatalf("non-admin global share list = %d: %s", userGlobalList.Code, userGlobalList.Body.String())
+	}
+	for _, attempt := range []struct {
+		name   string
+		method string
+		path   string
+	}{
+		{"logs", http.MethodGet, "/api/admin/share-links/" + uintPath(ownerShare.ID) + "/access-logs"},
+		{"revoke", http.MethodPost, "/api/admin/share-links/" + uintPath(ownerShare.ID) + "/revoke"},
+		{"delete", http.MethodDelete, "/api/admin/share-links/" + uintPath(ownerShare.ID)},
+	} {
+		response := perform(router, attempt.method, attempt.path, nil, cookieHeaders(ownerLogin.Result().Cookies()))
+		if response.Code != http.StatusForbidden {
+			t.Fatalf("non-admin global share %s = %d: %s", attempt.name, response.Code, response.Body.String())
+		}
+	}
+	for _, attempt := range []struct {
+		name   string
+		method string
+		path   string
+	}{
+		{"list", http.MethodGet, "/api/admin/share-links"},
+		{"logs", http.MethodGet, "/api/admin/share-links/" + uintPath(ownerShare.ID) + "/access-logs"},
+		{"revoke", http.MethodPost, "/api/admin/share-links/" + uintPath(ownerShare.ID) + "/revoke"},
+		{"delete", http.MethodDelete, "/api/admin/share-links/" + uintPath(ownerShare.ID)},
+	} {
+		response := perform(router, attempt.method, attempt.path, nil, map[string]string{"X-Admin-Token": "test-admin-token"})
+		if response.Code != http.StatusForbidden {
+			t.Fatalf("admin token-only global share %s = %d: %s", attempt.name, response.Code, response.Body.String())
+		}
+	}
+
+	adminGlobalList := perform(router, http.MethodGet, "/api/admin/share-links?page=1&per_page=10", nil, cookieHeaders(adminLogin.Result().Cookies()))
+	if adminGlobalList.Code != http.StatusOK {
+		t.Fatalf("admin global share list = %d: %s", adminGlobalList.Code, adminGlobalList.Body.String())
+	}
+	body := adminGlobalList.Body.String()
+	if strings.Contains(body, ownerShare.Token) || strings.Contains(body, ownerShare.AccessKey) || strings.Contains(body, adminShare.Token) || strings.Contains(body, adminShare.AccessKey) {
+		t.Fatalf("admin global list leaked one-time token/key: %s", body)
+	}
+	assertAdminShareLinkResponseRedacted(t, adminGlobalList.Body.Bytes())
+	globalPage := decodeShareEnvelope[paginatedResponse[AdminShareLinkDTO]](t, adminGlobalList.Body.Bytes()).Data
+	if globalPage.Total != 2 || len(globalPage.Items) != 2 {
+		t.Fatalf("admin global list should include all shares: %+v", globalPage)
+	}
+	if !adminSharePageContains(globalPage, ownerShare.ID, owner.Email, ownerMailbox.Email) {
+		t.Fatalf("admin global list missing owner share metadata: %+v", globalPage)
+	}
+	if !adminSharePageContains(globalPage, adminShare.ID, admin.Email, adminMailbox.Email) {
+		t.Fatalf("admin global list missing admin share metadata: %+v", globalPage)
+	}
+
+	searchOwner := perform(router, http.MethodGet, "/api/admin/share-links?q=global-share-owner%40example.test&page=1&per_page=10", nil, cookieHeaders(adminLogin.Result().Cookies()))
+	if searchOwner.Code != http.StatusOK {
+		t.Fatalf("admin global share search = %d: %s", searchOwner.Code, searchOwner.Body.String())
+	}
+	searchPage := decodeShareEnvelope[paginatedResponse[AdminShareLinkDTO]](t, searchOwner.Body.Bytes()).Data
+	if searchPage.Total != 1 || len(searchPage.Items) != 1 || searchPage.Items[0].ID != ownerShare.ID {
+		t.Fatalf("admin global search should isolate owner share: %+v", searchPage)
+	}
+
+	read := perform(router, http.MethodGet, "/api/shared/"+ownerShare.Token+"?key="+url.QueryEscape(ownerShare.AccessKey), nil, nil)
+	if read.Code != http.StatusOK {
+		t.Fatalf("shared read before admin actions = %d: %s", read.Code, read.Body.String())
+	}
+	logs := perform(router, http.MethodGet, "/api/admin/share-links/"+uintPath(ownerShare.ID)+"/access-logs", nil, cookieHeaders(adminLogin.Result().Cookies()))
+	if logs.Code != http.StatusOK {
+		t.Fatalf("admin global share logs = %d: %s", logs.Code, logs.Body.String())
+	}
+	logPage := decodeShareEnvelope[paginatedResponse[shareLinkAccessLogDTO]](t, logs.Body.Bytes()).Data
+	if logPage.Total != 1 || len(logPage.Items) != 1 || logPage.Items[0].ShareLinkID != ownerShare.ID {
+		t.Fatalf("admin global logs should show owner share access: %+v", logPage)
+	}
+
+	revoke := perform(router, http.MethodPost, "/api/admin/share-links/"+uintPath(ownerShare.ID)+"/revoke", nil, cookieHeaders(adminLogin.Result().Cookies()))
+	if revoke.Code != http.StatusOK {
+		t.Fatalf("admin revoke owner share = %d: %s", revoke.Code, revoke.Body.String())
+	}
+	assertAdminShareLinkResponseRedacted(t, revoke.Body.Bytes())
+	revokedRead := perform(router, http.MethodGet, "/api/shared/"+ownerShare.Token+"?key="+url.QueryEscape(ownerShare.AccessKey), nil, nil)
+	if revokedRead.Code != http.StatusGone {
+		t.Fatalf("revoked share read = %d: %s", revokedRead.Code, revokedRead.Body.String())
+	}
+
+	deleteResponse := perform(router, http.MethodDelete, "/api/admin/share-links/"+uintPath(ownerShare.ID), nil, cookieHeaders(adminLogin.Result().Cookies()))
+	if deleteResponse.Code != http.StatusOK {
+		t.Fatalf("admin delete owner share = %d: %s", deleteResponse.Code, deleteResponse.Body.String())
+	}
+	var remaining int64
+	if err := db.Model(&models.ShareLink{}).Where("id = ?", ownerShare.ID).Count(&remaining).Error; err != nil {
+		t.Fatal(err)
+	}
+	if remaining != 0 {
+		t.Fatalf("owner share still exists after admin delete: %d", remaining)
+	}
+	var remainingLogs int64
+	if err := db.Model(&models.ShareLinkAccessLog{}).Where("share_link_id = ?", ownerShare.ID).Count(&remainingLogs).Error; err != nil {
+		t.Fatal(err)
+	}
+	if remainingLogs != 0 {
+		t.Fatalf("owner share access logs still exist after admin delete: %d", remainingLogs)
+	}
+	var auditLogs []models.AuditLog
+	if err := db.Where("action IN ?", []string{"share_link.revoke", "share_link.delete"}).Order("created_at asc").Find(&auditLogs).Error; err != nil {
+		t.Fatal(err)
+	}
+	if len(auditLogs) != 2 {
+		t.Fatalf("admin share audit logs = %+v, want revoke and delete", auditLogs)
+	}
+	for _, log := range auditLogs {
+		if log.Actor != admin.Email || log.TargetType != "share_link" || log.TargetID != uintPath(ownerShare.ID) || log.Target != uintPath(ownerShare.ID) {
+			t.Fatalf("unexpected admin share audit log identity: %+v", log)
+		}
+		if log.Category != auditCategorySecurity || log.Severity != auditSeverityWarning {
+			t.Fatalf("unexpected admin share audit classification: %+v", log)
+		}
+		if !strings.Contains(log.Metadata, "owner_id="+uintPath(owner.ID)) || !strings.Contains(log.Metadata, "token_prefix="+ownerShare.TokenPrefix) {
+			t.Fatalf("admin share audit metadata missing redacted target context: %+v", log)
+		}
+		for _, forbidden := range []string{ownerShare.Token, ownerShare.AccessKey, "token_hash", "access_key_hash"} {
+			if strings.Contains(log.Metadata, forbidden) {
+				t.Fatalf("admin share audit metadata leaked %q: %+v", forbidden, log)
+			}
+		}
+	}
+}
+
 func TestMailboxShareKeyAccessRevokeAndRotate(t *testing.T) {
 	db := httpTestDB(t)
 	owner := createShareTestUser(t, db, "owner@example.test")
@@ -302,6 +560,18 @@ func TestMailboxShareKeyAccessRevokeAndRotate(t *testing.T) {
 	revoke := perform(router, http.MethodPost, "/api/share-links/"+uintPath(created.ID)+"/revoke", nil, cookieHeaders(login.Result().Cookies()))
 	if revoke.Code != http.StatusOK {
 		t.Fatalf("revoke share = %d: %s", revoke.Code, revoke.Body.String())
+	}
+	var revokeAudit models.AuditLog
+	if err := db.First(&revokeAudit, "action = ? AND target = ?", "share_link.revoke", uintPath(created.ID)).Error; err != nil {
+		t.Fatal(err)
+	}
+	if revokeAudit.Actor != owner.Email || revokeAudit.TargetType != "share_link" || revokeAudit.TargetID != uintPath(created.ID) {
+		t.Fatalf("unexpected owner revoke audit log: %+v", revokeAudit)
+	}
+	for _, forbidden := range []string{created.Token, created.AccessKey, "access_url", "share_url"} {
+		if strings.Contains(revokeAudit.Metadata, forbidden) {
+			t.Fatalf("owner revoke audit metadata leaked %q: %+v", forbidden, revokeAudit)
+		}
 	}
 	gone := perform(router, http.MethodGet, "/api/shared/"+created.Token, nil, nil)
 	if gone.Code != http.StatusGone {
@@ -407,6 +677,18 @@ func TestShareLinkDeleteRemovesLinkAndAccessLogs(t *testing.T) {
 	}
 	if remainingLogs != 0 {
 		t.Fatalf("share access logs were not deleted, count=%d", remainingLogs)
+	}
+	var deleteAudit models.AuditLog
+	if err := db.First(&deleteAudit, "action = ? AND target = ?", "share_link.delete", uintPath(created.ID)).Error; err != nil {
+		t.Fatal(err)
+	}
+	if deleteAudit.Actor != owner.Email || deleteAudit.TargetType != "share_link" || deleteAudit.TargetID != uintPath(created.ID) {
+		t.Fatalf("unexpected owner delete audit log: %+v", deleteAudit)
+	}
+	for _, forbidden := range []string{created.Token, created.AccessKey, "access_url", "share_url"} {
+		if strings.Contains(deleteAudit.Metadata, forbidden) {
+			t.Fatalf("owner delete audit metadata leaked %q: %+v", forbidden, deleteAudit)
+		}
 	}
 }
 
@@ -736,6 +1018,49 @@ func cookieHeaders(cookies []*http.Cookie) map[string]string {
 		values = append(values, cookie.Name+"="+cookie.Value)
 	}
 	return map[string]string{"Cookie": strings.Join(values, "; ")}
+}
+
+func adminSharePageContains(page paginatedResponse[AdminShareLinkDTO], id uint, ownerEmail, mailboxEmail string) bool {
+	for _, item := range page.Items {
+		if item.ID == id && item.OwnerEmail == ownerEmail && item.MailboxEmail == mailboxEmail {
+			return true
+		}
+	}
+	return false
+}
+
+func assertAdminShareLinkResponseRedacted(t *testing.T, body []byte) {
+	t.Helper()
+	var payload any
+	if err := json.Unmarshal(body, &payload); err != nil {
+		t.Fatal(err)
+	}
+	for _, field := range []string{"token", "access_key", "share_url", "access_url", "token_hash", "access_key_hash"} {
+		if jsonFieldExists(payload, field) {
+			t.Fatalf("admin share response exposed %q: %s", field, string(body))
+		}
+	}
+}
+
+func jsonFieldExists(value any, field string) bool {
+	switch typed := value.(type) {
+	case map[string]any:
+		if _, ok := typed[field]; ok {
+			return true
+		}
+		for _, child := range typed {
+			if jsonFieldExists(child, field) {
+				return true
+			}
+		}
+	case []any:
+		for _, child := range typed {
+			if jsonFieldExists(child, field) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func uintPath(id uint) string {

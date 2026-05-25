@@ -36,7 +36,32 @@ func RunCleanupWithConfig(db *gorm.DB, now time.Time, cfg config.Config) error {
 	if err := RunExpiredMessageCleanup(db, now); err != nil {
 		return err
 	}
+	if err := RunEmailDeliveryCleanup(db, now); err != nil {
+		return err
+	}
 	return RunAuditLogCleanup(db, now, auditRetentionDays(cfg.AuditLogRetentionDays, defaultAuditLogRetentionDays), auditRetentionDays(cfg.AuditActivityRetentionDays, defaultAuditActivityRetentionDays))
+}
+
+func RunEmailDeliveryCleanup(db *gorm.DB, now time.Time) error {
+	if !db.Migrator().HasTable(&models.EmailDelivery{}) {
+		return nil
+	}
+	redactBefore := now.Add(-24 * time.Hour)
+	deleteBefore := now.Add(-30 * 24 * time.Hour)
+	return db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Model(&models.EmailDelivery{}).
+			Where("created_at < ? AND status IN ?",
+				redactBefore,
+				[]string{models.EmailDeliveryStatusSucceeded, models.EmailDeliveryStatusFailed},
+			).
+			Updates(map[string]any{
+				"message_json":  "{}",
+				"settings_json": "{}",
+			}).Error; err != nil {
+			return err
+		}
+		return tx.Where("created_at < ?", deleteBefore).Delete(&models.EmailDelivery{}).Error
+	})
 }
 
 func RunExpiredRegistrationCleanup(db *gorm.DB, now time.Time) error {

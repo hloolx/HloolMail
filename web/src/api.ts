@@ -147,6 +147,25 @@ export type ShareLinkDTO = {
   updated_at: string;
 };
 
+export type AdminShareLinkDTO = {
+  id: number;
+  resource_type: ShareResourceType;
+  mailbox_id?: number;
+  token_prefix: string;
+  key_set?: boolean;
+  expires_at?: string;
+  revoked_at?: string;
+  access_count: number;
+  last_accessed_at?: string;
+  created_at: string;
+  updated_at: string;
+  owner_id: number;
+  owner_email?: string;
+  owner_role?: 'user' | 'admin' | OpenString;
+  mailbox_email?: string;
+  mailbox_owner_id?: number;
+};
+
 export type ShareLinkAccessLogDTO = {
   id: number;
   share_link_id: number;
@@ -224,6 +243,28 @@ export type WebhookEndpointDTO = {
   updated_at: string;
 };
 
+export type AdminWebhookEndpointDTO = {
+  id: number;
+  owner_id: number;
+  owner_email?: string;
+  owner_role?: 'user' | 'admin' | OpenString;
+  name: string;
+  url: string;
+  enabled: boolean;
+  events: string[];
+  scope: 'all' | 'domain' | 'mailbox' | OpenString;
+  domain_id?: number;
+  domain_name?: string;
+  mailbox_id?: number;
+  mailbox_email?: string;
+  last_success_at?: string;
+  last_failure_at?: string;
+  failure_count: number;
+  disabled_at?: string;
+  created_at: string;
+  updated_at: string;
+};
+
 export type WebhookDeliveryDTO = {
   id: string;
   endpoint_id: number;
@@ -259,6 +300,7 @@ export type APIKey = {
 export type User = {
   id: number;
   email: string;
+  nickname: string;
   avatar_url?: string;
   email_verified?: boolean;
   role: 'user' | 'admin';
@@ -345,7 +387,7 @@ export type InstallResult = {
   env_written: boolean;
   env_error?: string;
   env_path: string;
-  env_content: string;
+  env_content?: string;
   deployment_kind: string;
   config_lock_reason?: string;
 };
@@ -409,7 +451,7 @@ type RequestOptions = RequestInit & {
   retryDelay?: number;
 };
 
-export type ApiErrorKind = 'http' | 'business' | 'parse';
+export type ApiErrorKind = 'http' | 'business' | 'parse' | 'timeout' | 'abort';
 
 type ApiErrorOptions = {
   httpStatus?: number;
@@ -481,10 +523,13 @@ async function runApiRequest<T>(
 
     let timedOut = false;
     const controller = new AbortController();
-    const timeoutId = timeout > 0 ? window.setTimeout(() => { timedOut = true; controller.abort(); }, timeout) : undefined;
-    const abortFromCaller = () => controller.abort();
+    const timeoutId = timeout > 0 ? window.setTimeout(() => {
+      timedOut = true;
+      abortController(controller, new DOMException('Request timed out', 'TimeoutError'));
+    }, timeout) : undefined;
+    const abortFromCaller = () => abortController(controller, fetchOptions.signal?.reason || new DOMException('Request aborted', 'AbortError'));
     if (fetchOptions.signal?.aborted) {
-      controller.abort();
+      abortFromCaller();
     } else {
       fetchOptions.signal?.addEventListener('abort', abortFromCaller, { once: true });
     }
@@ -525,11 +570,17 @@ async function runApiRequest<T>(
       return envelope.data;
     } catch (err) {
       lastError = err instanceof Error ? err : new Error(String(err));
-      const retryable = err instanceof TypeError || err instanceof SyntaxError || ((err as { name?: string })?.name === 'AbortError' && timedOut);
+      const retryable = err instanceof TypeError || err instanceof SyntaxError || timedOut;
       if (attempt < retries && retryable) {
         const delay = retryDelay * Math.pow(2, attempt) * (0.5 + Math.random() * 0.5);
         await new Promise((resolve) => window.setTimeout(resolve, delay));
         continue;
+      }
+      if (timedOut) {
+        throw new ApiError('Request timed out', 408, { httpStatus: 408, kind: 'timeout', error: lastError });
+      }
+      if ((err as { name?: string })?.name === 'AbortError') {
+        throw new ApiError('Request aborted', 0, { httpStatus: 0, kind: 'abort', error: lastError });
       }
       throw lastError;
     } finally {
@@ -539,6 +590,14 @@ async function runApiRequest<T>(
   }
 
   throw lastError;
+}
+
+function abortController(controller: AbortController, reason: unknown) {
+  try {
+    controller.abort(reason);
+  } catch {
+    controller.abort();
+  }
 }
 
 function parseApiEnvelope<T>(raw: string): ApiEnvelope<T> {

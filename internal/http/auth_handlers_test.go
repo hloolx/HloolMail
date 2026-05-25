@@ -166,6 +166,9 @@ func TestRegisterCreatesPendingWithoutUserOrSession(t *testing.T) {
 	if response.VerificationID == "" {
 		t.Fatal("verification_id is empty")
 	}
+	if response.DeliveryID == "" {
+		t.Fatal("delivery_id is empty")
+	}
 	if !response.ExpiresAt.After(time.Now()) {
 		t.Fatalf("expires_at = %s, want future", response.ExpiresAt)
 	}
@@ -185,6 +188,112 @@ func TestRegisterCreatesPendingWithoutUserOrSession(t *testing.T) {
 	}
 	if pending.Email != "new-user@example.com" || pending.CodeHash == "" || pending.PasswordHash == "" {
 		t.Fatalf("pending registration not populated safely: %+v", pending)
+	}
+	if pending.Nickname != "new-user" {
+		t.Fatalf("pending nickname = %q, want %q", pending.Nickname, "new-user")
+	}
+}
+
+func TestRegisterRejectsMissingNickname(t *testing.T) {
+	database := httpTestDB(t)
+	createInstalledAdmin(t, database)
+	enableEmailRegistration(t, database)
+	sender := &capturingMailer{}
+	router := testRouterWithMailer(t, database, sender)
+	captcha := requestRegistrationCaptcha(t, router)
+
+	response := perform(router, http.MethodPost, "/api/auth/register", map[string]any{
+		"email":          "compat-user@example.com",
+		"password":       "password123",
+		"captcha_id":     captcha.CaptchaID,
+		"captcha_answer": fmt.Sprintf("%d", solveCaptchaChallenge(t, captcha.Challenge)),
+	}, nil)
+	if response.Code != http.StatusBadRequest {
+		t.Fatalf("register = %d, want %d: %s", response.Code, http.StatusBadRequest, response.Body.String())
+	}
+	if len(sender.messages) != 0 {
+		t.Fatalf("sent messages = %d, want 0", len(sender.messages))
+	}
+	var pendingCount int64
+	if err := database.Model(&models.PendingRegistration{}).Where("email = ?", "compat-user@example.com").Count(&pendingCount).Error; err != nil {
+		t.Fatal(err)
+	}
+	if pendingCount != 0 {
+		t.Fatalf("pending registrations = %d, want 0", pendingCount)
+	}
+}
+
+func TestRegistrationEmailDeliveryStatusIsPubliclyRedacted(t *testing.T) {
+	database := httpTestDB(t)
+	createInstalledAdmin(t, database)
+	enableEmailRegistration(t, database)
+	router := testRouterWithMailer(t, database, &capturingMailer{})
+
+	registered := registerForVerification(t, router, "redacted@example.com", "password123")
+	response := perform(router, http.MethodGet, "/api/email-deliveries/"+registered.DeliveryID, nil, nil)
+	if response.Code != http.StatusOK {
+		t.Fatalf("email delivery status = %d, want %d: %s", response.Code, http.StatusOK, response.Body.String())
+	}
+	var payload testEnvelope[map[string]any]
+	if err := json.Unmarshal(response.Body.Bytes(), &payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload.Data["status"] != models.EmailDeliveryStatusSucceeded {
+		t.Fatalf("status = %v, want %s", payload.Data["status"], models.EmailDeliveryStatusSucceeded)
+	}
+	for _, key := range []string{"recipient", "subject", "reference_id", "stage_log"} {
+		if _, ok := payload.Data[key]; ok {
+			t.Fatalf("public delivery status exposed %s: %s", key, response.Body.String())
+		}
+	}
+	for _, leak := range []string{"redacted@example.com", registered.VerificationID, "Verify your email"} {
+		if strings.Contains(response.Body.String(), leak) {
+			t.Fatalf("public delivery status leaked %q: %s", leak, response.Body.String())
+		}
+	}
+}
+
+func TestRegisterRejectsInvalidNicknames(t *testing.T) {
+	cases := []struct {
+		name     string
+		nickname any
+	}{
+		{name: "too long", nickname: strings.Repeat("a", maxNicknameRunes+1)},
+		{name: "control char", nickname: "bad\nname"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			database := httpTestDB(t)
+			createInstalledAdmin(t, database)
+			enableEmailRegistration(t, database)
+			sender := &capturingMailer{}
+			router := testRouterWithMailer(t, database, sender)
+			captcha := requestRegistrationCaptcha(t, router)
+			body := map[string]any{
+				"email":          "invalid-nickname@example.com",
+				"password":       "password123",
+				"captcha_id":     captcha.CaptchaID,
+				"captcha_answer": fmt.Sprintf("%d", solveCaptchaChallenge(t, captcha.Challenge)),
+			}
+			if tc.nickname != nil {
+				body["nickname"] = tc.nickname
+			}
+
+			response := perform(router, http.MethodPost, "/api/auth/register", body, nil)
+			if response.Code != http.StatusBadRequest {
+				t.Fatalf("register = %d, want %d: %s", response.Code, http.StatusBadRequest, response.Body.String())
+			}
+			if len(sender.messages) != 0 {
+				t.Fatalf("sent messages = %d, want 0", len(sender.messages))
+			}
+			var pendingCount int64
+			if err := database.Model(&models.PendingRegistration{}).Where("email = ?", "invalid-nickname@example.com").Count(&pendingCount).Error; err != nil {
+				t.Fatal(err)
+			}
+			if pendingCount != 0 {
+				t.Fatalf("pending count = %d, want 0", pendingCount)
+			}
+		})
 	}
 }
 
@@ -217,6 +326,7 @@ func TestRegisterWithTurnstileStillRequiresEmailVerification(t *testing.T) {
 	router := testRouterWithMailer(t, database, sender)
 	response := perform(router, http.MethodPost, "/api/auth/register", map[string]any{
 		"email":           "turnstile@example.com",
+		"nickname":        "Turnstile User",
 		"password":        "password123",
 		"turnstile_token": "valid-turnstile-token",
 	}, nil)
@@ -289,6 +399,60 @@ func TestLoginRejectsUnverifiedUserWhenTurnstileEnabled(t *testing.T) {
 	}, nil)
 	if login.Code != http.StatusForbidden {
 		t.Fatalf("login = %d, want %d: %s", login.Code, http.StatusForbidden, login.Body.String())
+	}
+}
+
+func TestAuthUserResponsesUseSafeDTO(t *testing.T) {
+	database := httpTestDB(t)
+	createInstalledAdmin(t, database)
+	hash, err := auth.HashSecret("password123")
+	if err != nil {
+		t.Fatal(err)
+	}
+	user := models.User{
+		Email:         "auth-safe@example.com",
+		PasswordHash:  hash,
+		Nickname:      "Auth Safe",
+		EmailVerified: true,
+		Role:          models.UserRoleUser,
+		Enabled:       true,
+		AvatarURL:     "https://example.com/private-avatar.png",
+	}
+	if err := database.Create(&user).Error; err != nil {
+		t.Fatal(err)
+	}
+	router := testRouter(t, database)
+
+	login := perform(router, http.MethodPost, "/api/auth/login", map[string]any{
+		"email":    user.Email,
+		"password": "password123",
+	}, nil)
+	if login.Code != http.StatusOK {
+		t.Fatalf("login = %d: %s", login.Code, login.Body.String())
+	}
+	assertNoUserPrivateFields(t, login.Body.String())
+	var loginPayload testEnvelope[UserDTO]
+	if err := json.Unmarshal(login.Body.Bytes(), &loginPayload); err != nil {
+		t.Fatal(err)
+	}
+	if loginPayload.Data.Email != user.Email || loginPayload.Data.Nickname != user.Nickname {
+		t.Fatalf("login user dto = %+v, want email/nickname from user", loginPayload.Data)
+	}
+
+	me := perform(router, http.MethodGet, "/api/auth/me", nil, sessionHeaders(login))
+	if me.Code != http.StatusOK {
+		t.Fatalf("me = %d: %s", me.Code, me.Body.String())
+	}
+	assertNoUserPrivateFields(t, me.Body.String())
+	var mePayload testEnvelope[struct {
+		Installed bool    `json:"installed"`
+		User      UserDTO `json:"user"`
+	}]
+	if err := json.Unmarshal(me.Body.Bytes(), &mePayload); err != nil {
+		t.Fatal(err)
+	}
+	if !mePayload.Data.Installed || mePayload.Data.User.ID != user.ID {
+		t.Fatalf("me payload = %+v, want installed user %d", mePayload.Data, user.ID)
 	}
 }
 
@@ -551,6 +715,9 @@ func TestRegisterVerifyCorrectCodeCreatesVerifiedUserAndSession(t *testing.T) {
 	if !user.EmailVerified || !user.Enabled {
 		t.Fatalf("user verification/enabled flags = verified:%t enabled:%t", user.EmailVerified, user.Enabled)
 	}
+	if user.Nickname != "verified" {
+		t.Fatalf("user nickname = %q, want %q", user.Nickname, "verified")
+	}
 	var pendingCount int64
 	if err := database.Model(&models.PendingRegistration{}).Where("email = ?", "verified@example.com").Count(&pendingCount).Error; err != nil {
 		t.Fatal(err)
@@ -604,11 +771,16 @@ func TestLegacyUnverifiedRegisterVerifyOverwritesPassword(t *testing.T) {
 	if !auth.VerifySecret(user.PasswordHash, "new-password") {
 		t.Fatal("new registration password was not stored")
 	}
+	if user.Nickname != "legacy" {
+		t.Fatalf("legacy nickname = %q, want %q", user.Nickname, "legacy")
+	}
 }
 
 type registrationResponse struct {
 	EmailVerificationRequired bool      `json:"email_verification_required"`
 	VerificationID            string    `json:"verification_id"`
+	DeliveryID                string    `json:"delivery_id"`
+	EmailDeliveryStatus       string    `json:"email_delivery_status"`
 	ExpiresAt                 time.Time `json:"expires_at"`
 }
 
@@ -720,8 +892,10 @@ func registerForVerification(t *testing.T, router http.Handler, email, password 
 func submitRegistrationWithCaptcha(t *testing.T, router http.Handler, email, password string) *httptest.ResponseRecorder {
 	t.Helper()
 	captcha := requestRegistrationCaptcha(t, router)
+	nickname, _, _ := strings.Cut(email, "@")
 	return perform(router, http.MethodPost, "/api/auth/register", map[string]any{
 		"email":          email,
+		"nickname":       nickname,
 		"password":       password,
 		"captcha_id":     captcha.CaptchaID,
 		"captcha_answer": fmt.Sprintf("%d", solveCaptchaChallenge(t, captcha.Challenge)),

@@ -153,6 +153,17 @@
   max-width: min(22rem, 42vw);
 }
 
+.users-email-cell span {
+  display: block;
+  max-width: 100%;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 0.74rem;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .users-expand-button {
   color: var(--muted);
 }

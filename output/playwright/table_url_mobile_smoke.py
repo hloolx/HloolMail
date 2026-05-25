@@ -8,6 +8,7 @@ from playwright.sync_api import expect, sync_playwright
 
 BASE_URL = os.environ.get("PLAYWRIGHT_BASE_URL", "http://localhost:5174")
 SCREENSHOT_DIR = Path("output/playwright")
+UPDATE_SCREENSHOTS = os.environ.get("PLAYWRIGHT_UPDATE_SCREENSHOTS") == "1"
 NOW = "2026-05-23T08:00:00Z"
 CURRENT_USER = None
 
@@ -18,6 +19,7 @@ def main():
         browser = playwright.chromium.launch(headless=True)
         try:
             run_url_state_checks(browser)
+            run_desktop_geometry_checks(browser)
             run_mobile_card_checks(browser)
         finally:
             browser.close()
@@ -30,13 +32,15 @@ def run_url_state_checks(browser):
     expect(page.locator("table[aria-label]").first).to_be_visible()
     expect(page.locator(".data-table-mobile-card").first).to_be_hidden()
     expect(page.locator("input").filter(has_text="").nth(0)).to_be_visible()
-    page.screenshot(path=str(SCREENSHOT_DIR / "table-url-users-desktop.png"), full_page=True)
+    capture_screenshot(page, "table-url-users-desktop.png")
 
     page.goto(f"{BASE_URL}/#/admin?tab=audit&page=2&pageSize=20&search=login&category=activity&severity=warning&action=oauth.login&target_type=user")
     expect(page.locator("#admin-audit-logs")).to_be_visible()
     expect(page.locator("#admin-audit-logs table[aria-label]").first).to_be_visible()
+    assert_no_actions_role(page, "admin-audit-logs", "#admin-audit-logs")
     page.reload()
     expect(page.locator("#admin-audit-logs")).to_be_visible()
+    assert_no_actions_role(page, "admin-audit-logs-reload", "#admin-audit-logs")
     assert "tab=audit" in page.url, page.url
     assert "page=2" in page.url, page.url
     assert "search=login" in page.url, page.url
@@ -48,7 +52,37 @@ def run_url_state_checks(browser):
     page.go_back()
     assert "tab=domainHealth" in page.url, page.url
     assert "healthPage=2" in page.url, page.url
-    page.screenshot(path=str(SCREENSHOT_DIR / "table-url-admin-desktop.png"), full_page=True)
+    capture_screenshot(page, "table-url-admin-desktop.png")
+    page.close()
+
+
+def run_desktop_geometry_checks(browser):
+    page = browser.new_page(viewport={"width": 1440, "height": 900})
+    mock_api(page)
+    targets = [
+        ("dashboard", "#/dashboard", 1),
+        ("users", "#/users?page=1&pageSize=20", 1),
+        ("domains", "#/domain-management", 2),
+        ("share-links", "#/share-links?page=1&pageSize=10", 1),
+        ("api-keys", "#/api-keys", 1),
+        ("webhooks", "#/webhooks?page=1&perPage=10", 1),
+        ("admin-domain-health", "#/admin?tab=domainHealth&healthPage=1&healthPageSize=20", 1),
+        ("admin-share-links", "#/admin?tab=shareLinks&sharePage=1&sharePageSize=10", 1),
+        ("admin-webhooks", "#/admin?tab=webhooks&webhookPage=1&webhookPageSize=10", 1),
+        ("announcements", "#/announcements", 1),
+    ]
+    for name, hash_route, expected_action_tables in targets:
+        page.goto(f"{BASE_URL}/{hash_route}")
+        expect(page.locator("table.data-table:visible").first).to_be_visible()
+        expect(page.locator(".data-table-mobile-card").first).to_be_hidden()
+        assert_actions_column_geometry(page, name, expected_action_tables)
+        assert_no_horizontal_overflow(page, f"{name}-desktop")
+
+    page.goto(f"{BASE_URL}/#/users?page=1&pageSize=20")
+    page.locator("table.data-table .users-expand-button").first.click()
+    expect(page.locator("table.data-table .users-api-keys-detail-panel")).to_be_visible()
+    assert_actions_column_geometry(page, "users-expanded", 2)
+    assert_no_horizontal_overflow(page, "users-expanded-desktop")
     page.close()
 
 
@@ -61,20 +95,27 @@ def run_mobile_card_checks(browser):
         ("share-links", "#/share-links?page=1&pageSize=10"),
         ("webhooks", "#/webhooks?page=1&perPage=10"),
         ("api-keys", "#/api-keys"),
+        ("admin-webhooks", "#/admin?tab=webhooks&webhookPage=1&webhookPageSize=10"),
     ]
     for name, hash_route in targets:
         page.goto(f"{BASE_URL}/{hash_route}")
-        expect(page.locator(".data-table-mobile-card").first).to_be_visible()
-        expect(page.locator("table.data-table").first).to_be_hidden()
+        expect(page.locator(".data-table-mobile-card:visible").first).to_be_visible()
+        expect(page.locator("table.data-table:visible")).to_have_count(0)
         assert_no_horizontal_overflow(page, name)
-        page.screenshot(path=str(SCREENSHOT_DIR / f"table-smoke-{name}-mobile.png"), full_page=True)
+        assert_mobile_actions_geometry(page, name)
+        capture_screenshot(page, f"table-smoke-{name}-mobile.png")
 
     page.goto(f"{BASE_URL}/#/users?page=1&pageSize=20")
     page.locator(".data-table-mobile-card .users-expand-button").first.click()
     expect(page.locator(".data-table-mobile-card-span .users-api-keys-detail-panel")).to_be_visible()
     assert_no_horizontal_overflow(page, "users-expanded")
-    page.screenshot(path=str(SCREENSHOT_DIR / "table-smoke-users-expanded-mobile.png"), full_page=True)
+    capture_screenshot(page, "table-smoke-users-expanded-mobile.png")
     page.close()
+
+
+def capture_screenshot(page, filename):
+    if UPDATE_SCREENSHOTS:
+        page.screenshot(path=str(SCREENSHOT_DIR / filename), full_page=True)
 
 
 def assert_no_horizontal_overflow(page, label):
@@ -82,6 +123,136 @@ def assert_no_horizontal_overflow(page, label):
         "() => { const root = document.scrollingElement || document.documentElement; return root.scrollWidth - window.innerWidth; }"
     )
     assert overflow <= 2, f"{label} horizontal overflow: {overflow}"
+
+
+def assert_no_actions_role(page, label, scope):
+    count = page.locator(f"{scope} table.data-table [data-column-role='actions']").count()
+    assert count == 0, f"{label} unexpected actions role columns: {count}"
+
+
+def assert_actions_column_geometry(page, label, expected_action_tables):
+    page.wait_for_function(
+        """
+        (expected) => {
+          const isVisible = (element) => {
+            const rect = element.getBoundingClientRect();
+            const style = window.getComputedStyle(element);
+            return rect.width > 0 && rect.height > 0 && style.visibility !== 'hidden' && style.display !== 'none';
+          };
+          const tables = Array.from(document.querySelectorAll('table.data-table'))
+            .filter(isVisible)
+            .filter((table) => Array.from(table.querySelectorAll('tbody td[data-column-role="actions"]')).some(isVisible));
+          return tables.length >= expected;
+        }
+        """,
+        arg=expected_action_tables,
+    )
+    metrics = page.evaluate(
+        """
+        () => {
+          const isVisible = (element) => {
+            const rect = element.getBoundingClientRect();
+            const style = window.getComputedStyle(element);
+            return rect.width > 0 && rect.height > 0 && style.visibility !== 'hidden' && style.display !== 'none';
+          };
+          const widthOfContent = (cell) => {
+            const actions = cell.querySelector('.table-actions');
+            const candidates = actions
+              ? Array.from(actions.children).filter(isVisible)
+              : Array.from(cell.querySelectorAll('button, a, input, select, textarea, [role="button"]'));
+            const visibleCandidates = candidates.length > 0 ? candidates : [actions || cell];
+            const rects = candidates
+              .filter(isVisible)
+              .map((element) => element.getBoundingClientRect());
+            if (rects.length === 0 && visibleCandidates.length > 0) {
+              const fallback = visibleCandidates[0].getBoundingClientRect();
+              return fallback.width;
+            }
+            if (rects.length === 0) return 0;
+            const left = Math.min(...rects.map((rect) => rect.left));
+            const right = Math.max(...rects.map((rect) => rect.right));
+            return right - left;
+          };
+          return Array.from(document.querySelectorAll('table.data-table'))
+            .filter(isVisible)
+            .flatMap((table, tableIndex) => {
+              const tableLabel = table.getAttribute('aria-label') || `table-${tableIndex}`;
+              const actionCells = Array.from(table.querySelectorAll('tbody td[data-column-role="actions"]'))
+                .filter(isVisible);
+              return actionCells.map((cell, rowIndex) => {
+                const rect = cell.getBoundingClientRect();
+                const contentWidth = widthOfContent(cell);
+                return {
+                  tableIndex,
+                  tableLabel,
+                  rowIndex,
+                  key: cell.getAttribute('data-column-key'),
+                  cellWidth: rect.width,
+                  contentWidth,
+                  slack: contentWidth > 0 ? rect.width - contentWidth : rect.width
+                };
+              });
+            });
+        }
+        """
+    )
+    table_count = len({metric["tableIndex"] for metric in metrics})
+    assert table_count >= expected_action_tables, (
+        f"{label} actions tables: expected at least {expected_action_tables}, got {table_count}; metrics={metrics}"
+    )
+    assert metrics, f"{label} has no desktop actions cells"
+    for metric in metrics:
+        cell_width = metric["cellWidth"]
+        content_width = metric["contentWidth"]
+        slack = metric["slack"]
+        assert content_width > 0, f"{label} empty actions content: {metric}"
+        assert cell_width <= 384, f"{label} actions column too wide: {metric}"
+        assert slack <= 96 or cell_width <= content_width + 64, f"{label} actions column has too much blank space: {metric}"
+
+
+def assert_mobile_actions_geometry(page, label):
+    page.wait_for_function(
+        """
+        () => Array.from(document.querySelectorAll('.data-table-mobile-card-actions')).some((element) => {
+          const rect = element.getBoundingClientRect();
+          const style = window.getComputedStyle(element);
+          return rect.width > 0 && rect.height > 0 && style.visibility !== 'hidden' && style.display !== 'none';
+        })
+        """
+    )
+    metrics = page.evaluate(
+        """
+        () => {
+          const isVisible = (element) => {
+            const rect = element.getBoundingClientRect();
+            const style = window.getComputedStyle(element);
+            return rect.width > 0 && rect.height > 0 && style.visibility !== 'hidden' && style.display !== 'none';
+          };
+          return Array.from(document.querySelectorAll('.data-table-mobile-card-actions'))
+            .filter(isVisible)
+            .map((actions, index) => {
+              const rect = actions.getBoundingClientRect();
+              const controls = Array.from(actions.querySelectorAll('button, a, input, select, textarea, [role="button"]'))
+                .filter(isVisible)
+                .map((element) => element.getBoundingClientRect());
+              const left = controls.length ? Math.min(...controls.map((control) => control.left)) : rect.left;
+              const right = controls.length ? Math.max(...controls.map((control) => control.right)) : rect.right;
+              return {
+                index,
+                actionsWidth: rect.width,
+                controlsWidth: right - left,
+                controls: controls.length,
+                cardWidth: actions.closest('.data-table-mobile-card')?.getBoundingClientRect().width || 0
+              };
+            });
+        }
+        """
+    )
+    assert metrics, f"{label} has no mobile actions area"
+    for metric in metrics:
+        assert metric["controls"] > 0, f"{label} mobile actions have no controls: {metric}"
+        assert metric["actionsWidth"] <= metric["cardWidth"] + 2, f"{label} mobile actions overflow card: {metric}"
+        assert metric["controlsWidth"] > 0, f"{label} mobile actions controls are empty: {metric}"
 
 
 def mock_api(page):
@@ -106,7 +277,15 @@ def handle_api_route(route):
         data = []
     elif path in {"/api/notifications/unread-count", "/api/announcements/unread-count"}:
         data = {"unread": 0}
-    elif path == "/api/users":
+    elif path == "/api/stats":
+        data = stats()
+    elif path == "/api/stats/timeseries":
+        data = timeseries_stats()
+    elif path == "/api/domains/available":
+        data = domain_availability()
+    elif path == "/api/mailboxes/stats":
+        data = mailbox_stats()
+    elif path == "/api/admin/users":
         data = page_of(users(), params, "page_size")
     elif path == "/api/admin/quota-settings":
         data = quota_settings()
@@ -136,6 +315,12 @@ def handle_api_route(route):
         data = domain_check_runs(params)
     elif path == "/api/admin/audit-logs":
         data = page_of(audit_logs(), params, "per_page")
+    elif path == "/api/admin/share-links":
+        data = page_of(admin_share_links(), params, "per_page")
+    elif path == "/api/admin/webhooks":
+        data = page_of(admin_webhooks(), params, "per_page")
+    elif path == "/api/admin/announcements":
+        data = announcements()
     else:
         data = {}
 
@@ -148,7 +333,7 @@ def handle_api_route(route):
 
 def is_user_api_keys_path(path):
     parts = path.strip("/").split("/")
-    return len(parts) == 4 and parts[0] == "api" and parts[1] == "users" and parts[3] == "api-keys"
+    return len(parts) == 5 and parts[0] == "api" and parts[1] == "admin" and parts[2] == "users" and parts[4] == "api-keys"
 
 
 def is_webhook_deliveries_path(path):
@@ -233,6 +418,51 @@ def users():
     ]
 
 
+def stats():
+    return {
+        "messages": 42,
+        "domains": 3,
+        "api_keys": 6,
+        "mailboxes": 4,
+        "public_domains": 2,
+        "api_calls_today": 321,
+    }
+
+
+def timeseries_stats():
+    return {
+        "days": ["05-17", "05-18", "05-19", "05-20", "05-21", "05-22", "05-23"],
+        "messages": [3, 5, 8, 6, 9, 10, 11],
+        "domains": [1, 1, 2, 2, 2, 3, 3],
+        "api_calls": [20, 24, 28, 31, 37, 40, 45],
+    }
+
+
+def domain_availability():
+    public_domains = [
+        {"id": item["id"], "domain": item["domain"], "mode": item["mode"], "message_count": item["message_count"]}
+        for item in domains()
+        if item["mode"] == "public"
+    ]
+    return {
+        "domains": [item["domain"] for item in domains()],
+        "public_domains": public_domains,
+        "private_domains": [],
+    }
+
+
+def mailbox_stats():
+    return {
+        "public_mailbox_created": 4,
+        "public_mailbox_today": 2,
+        "public_mailbox_daily_limit": 20,
+        "api_key_public_mailbox_daily_limit": 20,
+        "private_mailbox_created": 1,
+        "has_public_domain": True,
+        "require_public_domain": False,
+    }
+
+
 def api_keys(prefix):
     return [
         {
@@ -306,6 +536,19 @@ def share_links():
     ]
 
 
+def admin_share_links():
+    return [
+        {
+            **link,
+            "owner_id": 1,
+            "owner_email": "admin@example.com" if index % 2 == 0 else "alice@example.com",
+            "owner_role": "admin" if index % 2 == 0 else "user",
+            "mailbox_email": f"box{index + 1}@example.com",
+        }
+        for index, link in enumerate(share_links())
+    ]
+
+
 def mailboxes():
     return [
         {
@@ -340,6 +583,20 @@ def webhooks():
             "updated_at": NOW,
         }
         for index in range(12)
+    ]
+
+
+def admin_webhooks():
+    return [
+        {
+            **webhook,
+            "owner_id": 1,
+            "owner_email": "admin@example.com" if index % 2 == 0 else "alice@example.com",
+            "owner_role": "admin" if index % 2 == 0 else "user",
+            "domain_name": "example.com" if webhook["scope"] == "domain" else None,
+            "mailbox_email": f"box{index + 1}@example.com" if webhook["scope"] == "mailbox" else None,
+        }
+        for index, webhook in enumerate(webhooks())
     ]
 
 
@@ -461,6 +718,19 @@ def audit_logs():
             "created_at": NOW,
         }
         for index in range(22)
+    ]
+
+
+def announcements():
+    return [
+        {
+            "id": index + 1,
+            "title": f"Announcement {index + 1}",
+            "content": "Maintenance window and product update notes.",
+            "reader_count": index,
+            "created_at": NOW,
+        }
+        for index in range(4)
     ]
 
 

@@ -21,11 +21,13 @@ services:
       EXPECTED_MX: "${EXPECTED_MX:-mail.example.com}"
       MX_STRICT: "${MX_STRICT:-false}"
       DATABASE_DRIVER: "postgres"
-      DATABASE_URL: "${DATABASE_URL:-postgres://${POSTGRES_USER:-hloolmail}:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@postgres:5432/${POSTGRES_DB:-hloolmail}?sslmode=disable}"
-      FRONTEND_DIST: "${FRONTEND_DIST:-}"
+      DATABASE_URL: "${HLOOLMAIL_DATABASE_URL:-postgres://${POSTGRES_USER:-hloolmail}:${POSTGRES_PASSWORD:-local-dev-only-change-me}@postgres:5432/${POSTGRES_DB:-hloolmail}?sslmode=disable}"
+      FRONTEND_DIST: "${HLOOLMAIL_FRONTEND_DIST:-}"
       MESSAGE_RETENTION_HOURS: "${MESSAGE_RETENTION_HOURS:-24}"
       AUDIT_LOG_RETENTION_DAYS: "${AUDIT_LOG_RETENTION_DAYS:-180}"
       AUDIT_ACTIVITY_RETENTION_DAYS: "${AUDIT_ACTIVITY_RETENTION_DAYS:-30}"
+      WEBHOOKS_ENABLED: "${WEBHOOKS_ENABLED:-true}"
+      DISABLE_PENDING_DOMAIN_DATA_PROTECTION: "${DISABLE_PENDING_DOMAIN_DATA_PROTECTION:-false}"
       MAX_MESSAGE_BYTES: "${MAX_MESSAGE_BYTES:-10485760}"
       MAX_ATTACHMENT_BYTES: "${MAX_ATTACHMENT_BYTES:-10485760}"
       DEV_MODE: "${DEV_MODE:-false}"
@@ -45,17 +47,15 @@ services:
       CONFIG_ENV_PATH: "/app/storage/.env"
     volumes:
       - app-storage:/app/storage
-    depends_on:
-      postgres:
-        condition: service_healthy
     restart: unless-stopped
 
   postgres:
     image: postgres:16-alpine
+    entrypoint: ["sh", "-ec", "if [ -z \"$$POSTGRES_PASSWORD\" ] || [ \"$$POSTGRES_PASSWORD\" = \"local-dev-only-change-me\" ]; then echo 'POSTGRES_PASSWORD must be set in .env for docker compose deployments.' >&2; exit 1; fi; exec docker-entrypoint.sh postgres"]
     environment:
       POSTGRES_DB: "${POSTGRES_DB:-hloolmail}"
       POSTGRES_USER: "${POSTGRES_USER:-hloolmail}"
-      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}"
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:-local-dev-only-change-me}"
     volumes:
       - postgres-data:/var/lib/postgresql/data
     healthcheck:

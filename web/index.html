@@ -1,16 +1,59 @@
 <!doctype html>
-<html lang="en">
+<html lang="zh-CN">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>HLOOL Mail</title>
+    <title>HLOOL Mail - 自托管临时邮箱与私有域名收信平台</title>
+    <meta name="description" content="HLOOL Mail 是自托管临时邮箱与私有域名收信平台，提供 SMTP catch-all、Web Console、API Key、Webhook、Share Link 和 CLI，适合团队、脚本、测试平台和 AI 助手自动化收信。" />
+    <meta name="keywords" content="HLOOL Mail, 自托管邮箱, 临时邮箱, 私有域名邮箱, SMTP catch-all, 邮箱 API, Webhook, 自动化收信" />
+    <meta name="robots" content="index,follow,max-image-preview:large" />
+    <meta name="application-name" content="HLOOL Mail" />
+    <meta name="theme-color" content="#0f172a" />
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="HLOOL Mail" />
+    <meta property="og:title" content="HLOOL Mail - 自托管临时邮箱与私有域名收信平台" />
+    <meta property="og:description" content="用自己的域名搭建可控的临时邮箱和收信自动化服务，支持 Web Console、API Key、Webhook、Share Link 和 CLI。" />
+    <meta property="og:image" content="/brand-logo.svg" />
+    <meta name="twitter:card" content="summary" />
+    <meta name="twitter:title" content="HLOOL Mail - 自托管临时邮箱与私有域名收信平台" />
+    <meta name="twitter:description" content="自托管临时邮箱、私有域名收信、API 自动化和 Webhook 投递。" />
+    <link rel="canonical" href="/" />
     <link rel="icon" type="image/svg+xml" href="/brand-logo.svg" />
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Public+Sans:ital,wght@0,100..900;1,100..900&display=swap" rel="stylesheet">
   </head>
   <body>
-    <div id="root"></div>
+    <div id="root">
+      <main itemscope itemtype="https://schema.org/SoftwareApplication">
+        <h1 itemprop="name">HLOOL Mail 自托管临时邮箱与私有域名收信平台</h1>
+        <p itemprop="description">
+          HLOOL Mail 用来搭建自部署、支持多用户的匿名邮箱和私有域名收信服务。把域名 MX 指向你的 HLOOL Mail 收信主机后，即可为团队、脚本、测试平台、CI 或 AI 助手提供可控的收信能力。
+        </p>
+        <section>
+          <h2>核心能力</h2>
+          <ul>
+            <li>SMTP catch-all 收信和 Web Console 邮箱管理。</li>
+            <li>API Key 自动生成邮箱、读取邮件和轮询验证码。</li>
+            <li>Webhook 在新邮件到达后投递到自动化系统。</li>
+            <li>Share Link 安全分享邮箱收件箱给外部访问者。</li>
+            <li>Docker、二进制和 CLI 部署方式。</li>
+          </ul>
+        </section>
+        <section>
+          <h2>适用场景</h2>
+          <p>
+            适合需要自托管临时邮箱、私有域名邮箱、邮箱 API、测试验证码收信、自动化账号注册、CI 邮件校验和 AI 助手邮件读取的团队。
+          </p>
+        </section>
+        <p>
+          <a href="/api/docs.md">查看 HLOOL Mail API 文档</a>
+          <a href="https://github.com/hloolx/HloolMail" rel="noopener noreferrer">查看开源项目</a>
+        </p>
+        <meta itemprop="applicationCategory" content="DeveloperApplication" />
+        <meta itemprop="operatingSystem" content="Linux, macOS, Windows, Docker" />
+      </main>
+    </div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

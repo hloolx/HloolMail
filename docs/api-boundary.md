@@ -37,14 +37,29 @@ backend worker when `WEBHOOKS_ENABLED` is not `false`.
 - Webhook management endpoints must be session-only.
 - Share is mailbox-only in the public API and docs. Public reads use token plus mailbox access key.
 - Public docs/OpenAPI/shared-token reads and session-only Web Console routes must not consume API-key quota, even if an API key header is sent.
+- Ordinary workspace routes must stay owner-scoped. Admin accounts do not get cross-user data from ordinary share/mailbox/stats/webhook/domain routes.
+- Cross-user or global operational views belong under `/api/admin/*` and must require an admin web session. Non-admin sessions must receive forbidden responses.
+- API-key behavior must remain compatible: API keys keep their account-scoped automation surface and must not grant session-only or admin-global access.
 
 ## Boundary Matrix
 
 | Surface | Auth | Enters API-key automation OpenAPI | Current routes | Planned or reserved routes | Notes |
 | --- | --- | --- | --- | --- | --- |
 | API-key automation | `X-API-Key` | Yes | `POST /api/generate-email`, `GET /api/domains/available`, mailbox routes, email routes, `GET /api/stats` | None | This is the stable automation surface for agents and scripts. `GET /api/domains/available` is the domain-selection source of truth for both public domains and API-key-accessible private domains. `generate-email` may create a mailbox share when `share` is enabled. |
-| Web session | `gptmail_session` cookie | No | auth/user/passkey/OAuth identity, domain management, API-key management, share-link management, webhook management, notifications, announcements, admin, install/web setup, SSE | None | API key headers must not grant access to session-only management routes. |
+| Web session | `gptmail_session` cookie | No | auth/user/passkey/OAuth identity, domain management, API-key management, share-link management, webhook management, notifications, announcements, admin, install/web setup, SSE | None | Ordinary Web Console routes are owner-scoped even for admins. API key headers must not grant access to session-only management routes. |
 | Public | None | Public metadata only, not API-key automation | `GET /api/health`, `GET /api/version`, `GET /api/version/check`, `GET /api/docs.md`, `GET /api/skill.md`, `GET /api/openapi.json`, `GET /api/openapi.yaml`, `GET /api/shared/:token`, `GET /api/shared/:token/messages`, `GET /api/shared/:token/messages/:message_id`, login/register/OAuth/install bootstrap routes | None | Public docs/meta/shared mailbox read paths must skip API-key authentication and quota consumption. |
+
+## 个人工作区 vs 管理后台
+
+普通工作区页面和普通 API 路由只代表当前 owner 的可见范围。管理员进入普通页面时也按普通 owner scope 处理；如果需要跨用户审计、汇总或处置，必须进入管理后台并调用 `/api/admin/*`。
+
+归位规则:
+
+- `share`: `/api/share-links*` 只管理当前账号自己的邮箱分享；跨用户分享链接的查看、撤销、删除和访问日志只放在 `/api/admin/share-links*`，且不得返回完整 token 或 share key。
+- `mailbox`: `/api/mailboxes*`、`/api/emails*`、`/api/email/*` 只返回当前 session 或 API key 有权访问的邮箱与邮件。跨用户邮箱/邮件数量只能以管理后台经过裁剪的统计字段出现，不在普通邮箱路由开放。
+- `stats`: `/api/stats` 和 `/api/stats/timeseries` 是当前工作区视角；全站用户、域名、邮件、配额和调用量汇总走 `/api/admin/stats`、`/api/admin/quota-alerts` 等管理接口。
+- `webhook`: `/api/webhooks*` 是当前账号的 session-only 管理面，`scope=all` 只能表示当前 owner 可见范围内的全部事件，不表示全站事件。
+- `domain`: `/api/domains*` 是当前账号的域名管理面；管理员在普通域名页也只看和操作自己 owner 范围内的域名。`GET /api/domains/available` 只返回可选公共域名和当前 actor 可访问的私有域名。跨用户域名健康、MX 检测和处置走 `/api/admin/domain-health`、`/api/admin/domains/:id/*`、`/api/admin/domain-check-*`。
 
 ## API-key Automation Surface
 
@@ -75,13 +90,13 @@ API-key automation OpenAPI group:
 
 | Family | Current or planned paths | Boundary |
 | --- | --- | --- |
-| Webhooks | Current: `GET/POST /api/webhooks`, `PATCH/DELETE /api/webhooks/:id`, `POST /api/webhooks/:id/rotate-secret`, `POST /api/webhooks/:id/test`, `GET /api/webhooks/:id/deliveries` | Session-only management. Delivery runtime is backend worker initiated. |
-| Share-link management | Current: `POST /api/share-links`, `GET /api/share-links`, `GET /api/share-links/:id`, `PATCH /api/share-links/:id`, `DELETE /api/share-links/:id`, `POST /api/share-links/:id/revoke`, `POST /api/share-links/:id/rotate-token`, `POST /api/share-links/:id/rotate-key`, `GET /api/share-links/:id/access-logs` | Session-only management for mailbox shares. `rotate-token` regenerates a complete one-time mailbox access URL. |
+| Webhooks | Current: `GET/POST /api/webhooks`, `PATCH/DELETE /api/webhooks/:id`, `POST /api/webhooks/:id/rotate-secret`, `POST /api/webhooks/:id/test`, `GET /api/webhooks/:id/deliveries`; admin-global: `GET /api/admin/webhooks`, `POST /api/admin/webhooks/:id/disable`, `DELETE /api/admin/webhooks/:id`, `GET /api/admin/webhooks/:id/deliveries` | Session-only owner-scoped management. Admin-global webhook routes require a logged-in admin web session, may list/disable/delete and inspect deliveries, and must not reveal or rotate webhook secrets. Delivery runtime is backend worker initiated. |
+| Share-link management | Current: `POST /api/share-links`, `GET /api/share-links`, `GET /api/share-links/:id`, `PATCH /api/share-links/:id`, `DELETE /api/share-links/:id`, `POST /api/share-links/:id/revoke`, `POST /api/share-links/:id/rotate-token`, `POST /api/share-links/:id/rotate-key`, `GET /api/share-links/:id/access-logs`; admin-global: `GET /api/admin/share-links`, `POST /api/admin/share-links/:id/revoke`, `DELETE /api/admin/share-links/:id`, `GET /api/admin/share-links/:id/access-logs` | Session-only owner-scoped management for mailbox shares. Admin-global share routes require a logged-in admin web session, list and disable outward-facing links, and must not reveal full token/key values. `rotate-token` remains owner-scoped and regenerates a complete one-time mailbox access URL. |
 | SSE | Current: `GET /api/inbox-stream`, `GET /api/notification-stream`, `GET /api/announcement-stream` | Session-only web realtime. Excluded from OpenAPI automation. |
-| Stats charts | Current: `GET /api/stats/timeseries` | Session-only Web Console chart data. API-key automation should not access it. |
-| Domain management | Current: `/api/domains`, `/api/domains/request`, `/api/domains/batch-request`, `/api/domains/check-mx`, `/api/domains/:id`, `/api/domains/:id/mx-auto-retry` | Web-console task, except `GET /api/domains/available` which is API-key automation. |
+| Stats charts | Current: `GET /api/stats/timeseries`; admin-global: `GET /api/admin/stats/timeseries` | Ordinary chart data is owner-scoped session-only Web Console data. Admin-global trend data requires a logged-in admin web session. API-key automation should not access either timeseries route. |
+| Domain management | Current: `/api/domains`, `/api/domains/request`, `/api/domains/batch-request`, `/api/domains/check-mx`, `/api/domains/:id`, `/api/domains/:id/mx-auto-retry`; admin-global: `POST /api/admin/domains/:id/check-mx`, `PATCH /api/admin/domains/:id`, `DELETE /api/admin/domains/:id` | Ordinary domain management is owner-scoped for all users, including admins. Admin-global domain actions require a logged-in admin web session. `GET /api/domains/available` remains API-key automation and returns public domains plus actor-owned private domains only. |
 | API-key management | Current: `/api/api-keys`, `/api/api-keys/:id`, `/api/api-keys/:id/reveal` | Session-only; API keys cannot create, manage, or reveal API keys. Reveal is intentional Web Console behavior; see `docs/security-model.md`. |
-| Admin | Current: `/api/admin/*`, `/api/users*` | Admin/session-only. |
+| Admin | Current: `/api/admin/*` including `/api/admin/users*` | Admin/session-only. Cross-user management must stay in this namespace. |
 | Notifications and announcements | Current: `/api/notifications*`, `/api/announcements*` | Web-console state, not automation API. |
 | Auth and account | Current: `/api/auth/*`, `/api/user/oauth-identities*`, `/api/user/passkeys*`, `/api/oauth/*` | Browser account/session flows. |
 | Install/setup | Current: `/api/install*`, `/api/auth/login-settings` | Public or setup web flow, not automation API. |
@@ -89,6 +104,20 @@ API-key automation OpenAPI group:
 Webhook and share-link management may appear in an OpenAPI document only under a
 clearly labeled "Web session API" group using cookie/session auth. They must not
 appear in the API-key automation group.
+
+## Final Review Checklist
+
+- Response field redaction: ordinary responses and admin-global responses must not expose secret material such as full share token/key, webhook secret, API key secret, or unnecessary raw message fields. Public shared mailbox detail must not expose `headers_json` and must sanitize `html_content`.
+- Ordinary route owner scope: `/api/share-links*`, mailbox/email routes, `/api/stats*`, `/api/webhooks*`, and `/api/domains*` must keep owner filters for normal users and admins using ordinary pages.
+- Admin route authorization: every `/api/admin/*` route must require a valid admin web session, not an API key.
+- Non-admin forbidden: authenticated non-admin sessions must receive forbidden responses from admin-global routes, including share/domain/quota/audit/admin stats surfaces.
+- API key compatibility: existing API-key automation endpoints, quotas, usage logging, public docs, public shared reads, and session-only route skip behavior must not regress.
+
+## Frontend Copy Boundary
+
+- Ordinary page labels should say "workspace", "my", "current account", or otherwise avoid implying cross-user/global visibility.
+- Admin Console labels may say "global", "all users", or "cross-user" only when backed by `/api/admin/*`.
+- Webhook "all" copy means all events in the current owner scope unless it appears in admin-only documentation.
 
 ## Public Surface
 
@@ -109,6 +138,11 @@ Share links are mailbox-only:
 - `resource_type` is `mailbox`.
 - `CreateShareLinkRequest` uses `mailbox_id`.
 - `PatchShareLinkRequest` updates share metadata such as `expires_at`, not credentials.
+- `/api/share-links` is owner-scoped for all users, including administrators.
+- `/api/admin/share-links` is the admin-global visibility and disposal surface
+  for outward-facing mailbox shares. It requires a logged-in admin web session,
+  must not accept token-only admin auth, and must not reveal full token/key
+  values.
 - Full share token/key values are one-time secrets. Management APIs can rotate
   them to produce a new complete `access_url`, but cannot reveal the old link.
 - Do not add a public `POST /api/shared/:token/access` unlock path; the public
@@ -117,6 +151,17 @@ Share links are mailbox-only:
 - Public mailbox message details must not expose `headers_json`.
 - Public mailbox message details must sanitize `html_content`.
 - Public share reads must not change `seen`.
+
+## Webhook Boundary
+
+- `/api/webhooks` is owner-scoped for all users, including administrators.
+- `scope=all` means all events owned by the current owner, not all users.
+- Admins must not use ordinary webhook routes to list, edit, rotate, test,
+  delete, or inspect deliveries for another owner's webhook.
+- `/api/admin/webhooks` is the admin-global visibility and disposal surface.
+  It requires a logged-in admin web session, must not accept token-only admin
+  auth, must not reveal full webhook secrets or secret previews, and must not
+  expose secret rotation.
 
 ## Phase 0 Route Table From `internal/http/router.go`
 
@@ -175,10 +220,6 @@ At phase 0, the router registered 82 explicit API routes:
 | `PATCH` | `/api/api-keys/:id` | `apiKeyGroup` | `patchAPIKey` |
 | `DELETE` | `/api/api-keys/:id` | `apiKeyGroup` | `deleteAPIKey` |
 | `POST` | `/api/api-keys/:id/reveal` | `apiKeyGroup` | `revealAPIKey` |
-| `GET` | `/api/users` | `userGroup` | `listUsers` |
-| `POST` | `/api/users` | `userGroup` | `createUser` |
-| `PATCH` | `/api/users/:id` | `userGroup` | `patchUser` |
-| `DELETE` | `/api/users/:id` | `userGroup` | `deleteUser` |
 | `GET` | `/api/notifications` | `notificationGroup` | `listNotifications` |
 | `GET` | `/api/notifications/unread-count` | `notificationGroup` | `unreadNotificationCount` |
 | `PATCH` | `/api/notifications/:id/read` | `notificationGroup` | `markNotificationRead` |
@@ -189,7 +230,17 @@ At phase 0, the router registered 82 explicit API routes:
 | `PATCH` | `/api/announcements/:id/read` | `announcementGroup` | `markAnnouncementRead` |
 | `GET` | `/api/announcement-stream` | `api` | `announcementStream` |
 | `GET` | `/api/admin/stats` | `adminGroup` | `adminStats` |
+| `GET` | `/api/admin/stats/timeseries` | `adminGroup` | `adminStatsTimeseries` |
+| `GET` | `/api/admin/users` | `adminGroup` | `listUsers` |
+| `POST` | `/api/admin/users` | `adminGroup` | `createUser` |
+| `GET` | `/api/admin/users/:id/api-keys` | `adminGroup` | `listUserAPIKeys` |
+| `POST` | `/api/admin/users/:id/api-keys/:key_id/reveal` | `adminGroup` | `revealUserAPIKey` |
+| `PATCH` | `/api/admin/users/:id` | `adminGroup` | `patchUser` |
+| `DELETE` | `/api/admin/users/:id` | `adminGroup` | `deleteUser` |
 | `GET` | `/api/admin/domain-health` | `adminGroup` | `adminDomainHealth` |
+| `POST` | `/api/admin/domains/:id/check-mx` | `adminGroup` | `adminCheckDomainMX` |
+| `PATCH` | `/api/admin/domains/:id` | `adminGroup` | `patchAdminDomain` |
+| `DELETE` | `/api/admin/domains/:id` | `adminGroup` | `deleteAdminDomain` |
 | `GET` | `/api/admin/domain-check-settings` | `adminGroup` | `adminDomainCheckSettings` |
 | `PATCH` | `/api/admin/domain-check-settings` | `adminGroup` | `patchAdminDomainCheckSettings` |
 | `POST` | `/api/admin/domain-check-runs` | `adminGroup` | `createAdminDomainCheckRun` |
