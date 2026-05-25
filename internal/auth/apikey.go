@@ -6,6 +6,7 @@ import (
 	"errors"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"gptmail/internal/models"
@@ -25,6 +26,13 @@ var (
 )
 
 const apiKeyPrefixLength = 24
+const defaultHashCost = 12
+
+var hashCost atomic.Int32
+
+func init() {
+	hashCost.Store(defaultHashCost)
+}
 
 type apiQuotaError string
 
@@ -54,12 +62,19 @@ func GenerateAPIKey() (plain string, prefix string, err error) {
 }
 
 func HashSecret(secret string) (string, error) {
-	hash, err := bcrypt.GenerateFromPassword([]byte(secret), 12)
+	hash, err := bcrypt.GenerateFromPassword([]byte(secret), int(hashCost.Load()))
 	return string(hash), err
 }
 
 func VerifySecret(hash, secret string) bool {
 	return bcrypt.CompareHashAndPassword([]byte(hash), []byte(secret)) == nil
+}
+
+func SetHashCostForTesting(cost int) func() {
+	previous := hashCost.Swap(int32(cost))
+	return func() {
+		hashCost.Store(previous)
+	}
 }
 
 func (s APIKeyService) Create(name string, dailyLimit, totalLimit int64) (*models.APIKey, string, error) {
