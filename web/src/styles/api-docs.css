@@ -559,6 +559,16 @@
   line-height: 1.75;
 }
 
+.api-docs-note code {
+  width: fit-content;
+  border: 1px solid var(--border);
+  border-radius: 0.42rem;
+  background: var(--background);
+  padding: 0.18rem 0.42rem;
+  color: var(--foreground);
+  font-size: 0.78rem;
+}
+
 .api-docs-md-preview {
   max-height: 32rem;
   overflow: auto;

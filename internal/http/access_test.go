@@ -3445,6 +3445,9 @@ func TestInstallStatusRedactsInstalledAnonymousInternalResponse(t *testing.T) {
 	if err := db.Create(&admin).Error; err != nil {
 		t.Fatal(err)
 	}
+	if err := db.Create(&models.APIInterfaceSettings{ID: 1, YYDSCompatibilityEnabled: true}).Error; err != nil {
+		t.Fatal(err)
+	}
 	router := testRouterWithConfig(t, db, func(cfg *config.Config) {
 		cfg.HTTPAddr = ":3000"
 		cfg.SMTPAddr = ":2525"
@@ -3470,10 +3473,17 @@ func TestInstallStatusRedactsInstalledAnonymousInternalResponse(t *testing.T) {
 	if !anonymous.Success || anonymous.Data["installed"] != true {
 		t.Fatalf("unexpected anonymous status: %s", status.Body.String())
 	}
-	for _, required := range []string{"config", "site_api_calls_today", "registered_users", "hosted_domains"} {
+	for _, required := range []string{"config", "site_api_calls_today", "registered_users", "hosted_domains", "api_interfaces"} {
 		if _, exists := anonymous.Data[required]; !exists {
 			t.Fatalf("anonymous install status missing public %q: %s", required, status.Body.String())
 		}
+	}
+	apiInterfaces, ok := anonymous.Data["api_interfaces"].(map[string]any)
+	if !ok {
+		t.Fatalf("anonymous install status api_interfaces should be an object: %s", status.Body.String())
+	}
+	if apiInterfaces["yyds_compatibility_enabled"] != true {
+		t.Fatalf("anonymous install status should expose enabled YYDS compatibility flag: %s", status.Body.String())
 	}
 	publicConfig, ok := anonymous.Data["config"].(map[string]any)
 	if !ok {
@@ -3911,7 +3921,7 @@ func httpTestDB(t *testing.T) *gorm.DB {
 		t.Fatal(err)
 	}
 	sqlDB.SetMaxOpenConns(1)
-	if err := db.AutoMigrate(&models.User{}, &models.PendingRegistration{}, &models.RegistrationCaptcha{}, &models.OAuthIdentity{}, &models.OAuthProviderSetting{}, &models.Domain{}, &models.Mailbox{}, &models.Message{}, &models.MessageAttachment{}, &models.ShareLink{}, &models.ShareLinkAccessLog{}, &models.WebhookEndpoint{}, &models.WebhookDelivery{}, &models.EmailDelivery{}, &models.APIKey{}, &models.SessionToken{}, &models.APIUsageLog{}, &models.Notification{}, &models.Announcement{}, &models.AnnouncementRead{}, &models.AuditLog{}, &models.SystemQuotaSettings{}, &models.LoginSettings{}); err != nil {
+	if err := db.AutoMigrate(&models.User{}, &models.PendingRegistration{}, &models.RegistrationCaptcha{}, &models.OAuthIdentity{}, &models.OAuthProviderSetting{}, &models.Domain{}, &models.Mailbox{}, &models.Message{}, &models.MessageAttachment{}, &models.ShareLink{}, &models.ShareLinkAccessLog{}, &models.WebhookEndpoint{}, &models.WebhookDelivery{}, &models.EmailDelivery{}, &models.APIKey{}, &models.SessionToken{}, &models.APIUsageLog{}, &models.Notification{}, &models.Announcement{}, &models.AnnouncementRead{}, &models.AuditLog{}, &models.SystemQuotaSettings{}, &models.APIInterfaceSettings{}, &models.LoginSettings{}); err != nil {
 		t.Fatal(err)
 	}
 	return db

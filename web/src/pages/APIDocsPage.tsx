@@ -94,6 +94,7 @@ export function APIDocsPage() {
   const browserBaseURL = window.location.origin;
   const installStatus = useQuery({ queryKey: ['install-status'], queryFn: () => api<InstallStatus>('/api/install/status'), retry: false });
   const config = installStatus.data?.config;
+  const yydsCompatibilityEnabled = Boolean(installStatus.data?.api_interfaces?.yyds_compatibility_enabled);
   const configuredBaseURL = (config?.public_base_url || browserBaseURL).replace(/\/$/, '');
   const markdownURL = new URL(API_DOCS_MD_PATH, configuredBaseURL).href;
   const skillURL = new URL(API_SKILL_MD_PATH, configuredBaseURL).href;
@@ -558,6 +559,13 @@ export function APIDocsPage() {
                 <h2>{text.apiDocs.responseTitle}</h2>
                 <p>{text.apiDocs.responseDesc}</p>
               </section>
+              {yydsCompatibilityEnabled && (
+                <section className="api-docs-note">
+                  <h2>{text.apiDocs.yydsCompatTitle}</h2>
+                  <p>{text.apiDocs.yydsCompatDesc}</p>
+                  <code>/yyds/v1</code>
+                </section>
+              )}
             </div>
 
             <ApiDocsHistory

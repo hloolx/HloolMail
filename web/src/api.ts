@@ -383,6 +383,9 @@ export type InstallStatus = {
   site_api_calls_today?: number;
   registered_users?: number;
   hosted_domains?: number;
+  api_interfaces?: {
+    yyds_compatibility_enabled: boolean;
+  };
   config?: {
     http_addr: string;
     smtp_addr: string;

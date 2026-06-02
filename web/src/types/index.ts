@@ -112,6 +112,13 @@ export type DomainCheckSettings = {
   updated_at?: string;
 };
 
+export type APIInterfaceSettings = {
+  id: number;
+  yyds_compatibility_enabled: boolean;
+  created_at?: string;
+  updated_at?: string;
+};
+
 export type DomainCheckResultRecord = {
   id: number;
   run_id: number;

@@ -22,7 +22,7 @@ import {
 import { toast } from 'sonner';
 import { api, patchJSON, postJSON } from '../api';
 import type { PaginatedResponse } from '../api';
-import type { AdminDomainHealth, AdminGrowthCounts, AdminQuotaAlert, AdminStats, DomainCheckRun, DomainCheckRunsPage, DomainCheckSettings, TimeseriesStats } from '../types';
+import type { AdminDomainHealth, AdminGrowthCounts, AdminQuotaAlert, AdminStats, APIInterfaceSettings, DomainCheckRun, DomainCheckRunsPage, DomainCheckSettings, TimeseriesStats } from '../types';
 import { formatDomainExpiry, relativeTime } from '../lib/display';
 import { notifySuccess } from '../lib/feedback';
 import { useAppStore, type Page } from '../store';
@@ -36,7 +36,7 @@ import { AdminAuditLog } from './AdminAuditLog';
 import { AdminShareLinksPanel } from './AdminShareLinksPanel';
 import { AdminWebhooksPanel } from './AdminWebhooksPanel';
 
-const ADMIN_TAB_OPTIONS = ['dns', 'domainHealth', 'shareLinks', 'webhooks', 'quotaAlerts', 'audit'] as const;
+const ADMIN_TAB_OPTIONS = ['dns', 'domainHealth', 'shareLinks', 'webhooks', 'apiInterfaces', 'quotaAlerts', 'audit'] as const;
 const DOMAIN_HEALTH_PAGE_SIZE_OPTIONS = [10, 20, 50, 100];
 const DOMAIN_HEALTH_MODE_OPTIONS = ['all', 'public', 'private'] as const;
 const DOMAIN_HEALTH_STATUS_OPTIONS = ['all', 'active', 'inactive'] as const;
@@ -122,6 +122,7 @@ export function AdminPage() {
   };
   const saveDnsSettingsButtonRef = useRef<HTMLButtonElement | null>(null);
   const runDnsCheckButtonRef = useRef<HTMLButtonElement | null>(null);
+  const saveAPIInterfaceSettingsButtonRef = useRef<HTMLButtonElement | null>(null);
   const domainHealthFeedbackOriginRef = useRef<HTMLElement | null>(null);
 
   const stats = useQuery({ queryKey: ['admin-stats'], queryFn: () => api<AdminStats>('/api/admin/stats'), retry: false, staleTime: 30_000 });
@@ -157,6 +158,12 @@ export function AdminPage() {
     staleTime: 30_000,
     refetchInterval: (query) => query.state.data?.runs?.some((run: DomainCheckRun) => run.status === 'running') ? 5000 : false
   });
+  const apiInterfaceSettings = useQuery({
+    queryKey: ['admin-api-interface-settings'],
+    queryFn: () => api<APIInterfaceSettings>('/api/admin/api-interface-settings'),
+    retry: false,
+    staleTime: 30_000
+  });
   const [settingsForm, setSettingsForm] = useState({
     enabled: true,
     interval_minutes: '30',
@@ -166,6 +173,9 @@ export function AdminPage() {
     check_inactive: false,
     failure_threshold: '2',
     recovery_threshold: '1'
+  });
+  const [apiInterfaceForm, setAPIInterfaceForm] = useState({
+    yyds_compatibility_enabled: false
   });
 
   useEffect(() => {
@@ -183,6 +193,14 @@ export function AdminPage() {
     });
   }, [domainCheckSettings.data]);
 
+  useEffect(() => {
+    const settings = apiInterfaceSettings.data;
+    if (!settings) return;
+    setAPIInterfaceForm({
+      yyds_compatibility_enabled: settings.yyds_compatibility_enabled
+    });
+  }, [apiInterfaceSettings.data]);
+
   const refreshAdminData = () => {
     queryClient.invalidateQueries({ queryKey: ['admin-stats'] });
     queryClient.invalidateQueries({ queryKey: ['admin-stats-timeseries'] });
@@ -193,6 +211,7 @@ export function AdminPage() {
     queryClient.invalidateQueries({ queryKey: ['admin-domain-check-settings'] });
     queryClient.invalidateQueries({ queryKey: ['admin-domain-check-runs'] });
     queryClient.invalidateQueries({ queryKey: ['admin-quota-settings'] });
+    queryClient.invalidateQueries({ queryKey: ['admin-api-interface-settings'] });
   };
 
   function validateNumberFields(): boolean {
@@ -236,6 +255,20 @@ export function AdminPage() {
     onSuccess: (result) => {
       refreshAdminData();
       notifySuccess(result.reused ? text.admin.dnsCheck.alreadyRunning : text.admin.dnsCheck.started, { origin: runDnsCheckButtonRef.current });
+    },
+    onError: (error) => toast.error(error.message)
+  });
+
+  const saveAPIInterfaceSettings = useMutation({
+    mutationFn: () => patchJSON<APIInterfaceSettings>('/api/admin/api-interface-settings', {
+      yyds_compatibility_enabled: apiInterfaceForm.yyds_compatibility_enabled
+    }),
+    onSuccess: (settings) => {
+      setAPIInterfaceForm({
+        yyds_compatibility_enabled: settings.yyds_compatibility_enabled
+      });
+      refreshAdminData();
+      notifySuccess(text.admin.apiInterfaces.saved, { origin: saveAPIInterfaceSettingsButtonRef.current });
     },
     onError: (error) => toast.error(error.message)
   });
@@ -310,7 +343,7 @@ export function AdminPage() {
   const runsPage = domainCheckRuns.data;
   const lastRun = domainCheckSettings.data?.last_run;
   const hasRunningCheck = runRows.some((run) => run.status === 'running') || lastRun?.status === 'running';
-  const isLoading = stats.isLoading || adminTimeseries.isLoading || domainHealth.isLoading || quotaAlerts.isLoading || domainCheckSettings.isLoading || domainCheckRuns.isLoading;
+  const isLoading = stats.isLoading || adminTimeseries.isLoading || domainHealth.isLoading || quotaAlerts.isLoading || domainCheckSettings.isLoading || domainCheckRuns.isLoading || apiInterfaceSettings.isLoading;
   const [domainHealthHiddenColumnKeys, setDomainHealthHiddenColumnKeys] = useState<string[]>([]);
   const domainHealthColumns = useMemo<DataTableColumn[]>(() => [
     { key: 'domain', header: text.admin.domainHealth.colDomain, minWidth: '14rem', hideable: false, mobileTitle: true },
@@ -365,6 +398,7 @@ export function AdminPage() {
           { value: 'domainHealth', label: text.admin.domainHealth.title, badge: stats.data?.failed_domains ? String(stats.data.failed_domains) : undefined },
           { value: 'shareLinks', label: text.admin.shareLinks.title },
           { value: 'webhooks', label: text.admin.webhooks.title },
+          { value: 'apiInterfaces', label: text.admin.apiInterfaces.title },
           { value: 'quotaAlerts', label: text.admin.quotaAlerts.title, badge: quotaPage?.total ? String(quotaPage.total) : undefined },
           { value: 'audit', label: text.admin.auditLogs.title }
         ]}
@@ -536,7 +570,7 @@ export function AdminPage() {
         </div>
       </section>
 
-      <div className="admin-tab-panels" hidden={activeAdminTab !== 'domainHealth' && activeAdminTab !== 'shareLinks' && activeAdminTab !== 'webhooks' && activeAdminTab !== 'quotaAlerts'}>
+      <div className="admin-tab-panels" hidden={activeAdminTab !== 'domainHealth' && activeAdminTab !== 'shareLinks' && activeAdminTab !== 'webhooks' && activeAdminTab !== 'apiInterfaces' && activeAdminTab !== 'quotaAlerts'}>
         <section className="panel admin-table-panel" id="admin-domain-health" hidden={activeAdminTab !== 'domainHealth'}>
           <div className="panel-header admin-panel-header">
             <div>
@@ -676,6 +710,68 @@ export function AdminPage() {
         <div hidden={activeAdminTab !== 'webhooks'}>
           {activeAdminTab === 'webhooks' && <AdminWebhooksPanel />}
         </div>
+
+        <section className="panel admin-table-panel admin-api-interface-panel" id="admin-api-interfaces" hidden={activeAdminTab !== 'apiInterfaces'}>
+          <div className="panel-header admin-panel-header">
+            <div>
+              <h2>{text.admin.apiInterfaces.title}</h2>
+              <p>{text.admin.apiInterfaces.desc}</p>
+            </div>
+            <button
+              ref={saveAPIInterfaceSettingsButtonRef}
+              className="btn-secondary"
+              type="button"
+              onClick={() => saveAPIInterfaceSettings.mutate()}
+              disabled={saveAPIInterfaceSettings.isPending || apiInterfaceSettings.isError}
+              title={apiInterfaceSettings.isError ? text.admin.apiInterfaces.settingsError : undefined}
+              aria-label={text.admin.apiInterfaces.save}
+            >
+              <Save size={15} aria-hidden="true" />
+              {text.admin.apiInterfaces.save}
+            </button>
+          </div>
+          {apiInterfaceSettings.isError && (
+            <div className="admin-risk admin-risk-warning" role="alert">
+              <ShieldAlert size={16} />
+              <span><small>{text.admin.apiInterfaces.settingsError}</small></span>
+            </div>
+          )}
+          <div className="admin-api-interface-grid">
+            <div className="admin-api-interface-card">
+              <div className="admin-api-interface-title">
+                <span className={`admin-api-interface-mark ${apiInterfaceForm.yyds_compatibility_enabled ? 'admin-api-interface-mark-on' : ''}`}>
+                  <KeyRound size={16} aria-hidden="true" />
+                </span>
+                <span>
+                  <b>{text.admin.apiInterfaces.yydsTitle}</b>
+                  <small>{text.admin.apiInterfaces.yydsPath}</small>
+                </span>
+              </div>
+              <div className="toggle-row">
+                <span className="toggle-row-label">
+                  {text.admin.apiInterfaces.yydsEnabled}
+                  <InfoTip text={text.admin.apiInterfaces.yydsEnabledDesc} />
+                </span>
+                <button
+                  type="button"
+                  className={`toggle-switch ${apiInterfaceForm.yyds_compatibility_enabled ? 'on' : ''}`}
+                  onClick={() => setAPIInterfaceForm((current) => ({ ...current, yyds_compatibility_enabled: !current.yyds_compatibility_enabled }))}
+                  role="switch"
+                  aria-checked={apiInterfaceForm.yyds_compatibility_enabled}
+                >
+                  <span className="toggle-switch-knob" />
+                </button>
+              </div>
+            </div>
+            <div className="admin-api-interface-card">
+              <div className="admin-api-interface-meta">
+                <span>{text.admin.apiInterfaces.basePathLabel}</span>
+                <code>/yyds/v1</code>
+              </div>
+              <p>{text.admin.apiInterfaces.scopeNote}</p>
+            </div>
+          </div>
+        </section>
 
         <section className="panel admin-table-panel" id="admin-quota-alerts" hidden={activeAdminTab !== 'quotaAlerts'}>
           <div className="panel-header admin-panel-header">

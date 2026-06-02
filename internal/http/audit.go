@@ -177,6 +177,8 @@ func classifyAuditAction(action string) auditProfile {
 		return auditProfile{category: auditCategorySystem, severity: auditSeverityInfo, targetType: "domain_check_run"}
 	case "domain_check_settings.patch":
 		return auditProfile{category: auditCategorySecurity, severity: auditSeverityInfo, targetType: "domain_check_settings"}
+	case "api_interface_settings.patch":
+		return auditProfile{category: auditCategorySecurity, severity: auditSeverityWarning, targetType: "api_interface_settings"}
 	case "oauth_provider.patch", "login_settings.patch":
 		return auditProfile{category: auditCategorySecurity, severity: auditSeverityWarning, targetType: "login_settings"}
 	case "api_key.reveal", "api_key.delete":
@@ -211,7 +213,7 @@ func auditTargetID(targetType, target string) string {
 	if target == "" {
 		return ""
 	}
-	if targetType == "mailbox" || targetType == "domain" || targetType == "oauth_provider" || targetType == "api_key" || targetType == "user" || targetType == "domain_check_run" || targetType == "domain_check_settings" || targetType == "login_settings" {
+	if targetType == "mailbox" || targetType == "domain" || targetType == "oauth_provider" || targetType == "api_key" || targetType == "user" || targetType == "domain_check_run" || targetType == "domain_check_settings" || targetType == "api_interface_settings" || targetType == "login_settings" {
 		return target
 	}
 	return target

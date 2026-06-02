@@ -15,7 +15,7 @@ func Markdown(cfg Config) string {
 		"Markdown 文档: `" + baseURL + "/api/docs.md`",
 		"OpenAPI JSON: `" + baseURL + "/api/openapi.json`",
 		"OpenAPI YAML: `" + baseURL + "/api/openapi.yaml`",
-		"本文档中的所有 HTTP 端点都使用 `/api/` 前缀。",
+		"主自动化端点使用 `/api/` 前缀。",
 		"HLOOL Mail 是开源且可自部署的项目。复制示例到其他环境时，请把 Base URL 换成用户自己的 HLOOL Mail 实例地址，不要假设存在固定官方 API 域名。",
 		"",
 		"## 认证",

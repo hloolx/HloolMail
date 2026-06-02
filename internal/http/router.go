@@ -201,6 +201,8 @@ func NewRouter(h *Handler) *gin.Engine {
 	adminGroup.GET("/admin/login-settings", h.adminLoginSettings)
 	adminGroup.PATCH("/admin/login-settings", h.patchAdminLoginSettings)
 	adminGroup.POST("/admin/login-settings/test-email", h.testAdminLoginSettingsEmail)
+	adminGroup.GET("/admin/api-interface-settings", h.adminAPIInterfaceSettings)
+	adminGroup.PATCH("/admin/api-interface-settings", h.patchAdminAPIInterfaceSettings)
 	adminGroup.GET("/admin/quota-settings", h.adminQuotaSettings)
 	adminGroup.PATCH("/admin/quota-settings", h.patchAdminQuotaSettings)
 	adminGroup.GET("/admin/share-links", h.listAdminShareLinks)
@@ -216,6 +218,21 @@ func NewRouter(h *Handler) *gin.Engine {
 	adminGroup.POST("/admin/announcements", h.adminCreateAnnouncement)
 	adminGroup.DELETE("/admin/announcements/:id", h.adminDeleteAnnouncement)
 
+	yyds := router.Group("/yyds/v1", h.yydsCompatibilityMiddleware(), h.perAPIRateLimit(2, 20))
+	yyds.GET("/domains", h.yydsListDomains)
+	yyds.POST("/accounts", h.yydsCreateAccount)
+	yyds.POST("/accounts/wildcard", h.yydsCreateWildcardAccount)
+	yyds.POST("/token", h.yydsUnsupportedTempToken)
+	yyds.GET("/accounts/me", h.yydsUnsupportedTempToken)
+	yyds.GET("/accounts/:id", h.yydsGetAccount)
+	yyds.DELETE("/accounts/:id", h.yydsDeleteAccount)
+	yyds.GET("/messages", h.yydsListMessages)
+	yyds.POST("/messages/mark-read", h.yydsMarkMailboxRead)
+	yyds.GET("/messages/:id", h.yydsGetMessage)
+	yyds.PATCH("/messages/:id", h.yydsPatchMessage)
+	yyds.DELETE("/messages/:id", h.yydsDeleteMessage)
+	yyds.GET("/sources/:id", h.yydsGetMessageSource)
+
 	embeddedFrontend, hasEmbeddedFrontend := frontend.Embedded()
 	mountFrontend(router, h.Config.FrontendDist, embeddedFrontend, hasEmbeddedFrontend)
 	return router
@@ -229,6 +246,10 @@ func mountFrontend(router *gin.Engine, dist string, embedded fs.FS, hasEmbedded 
 		return
 	}
 	router.NoRoute(func(c *gin.Context) {
+		if isYYDSCompatibilityPath(c.Request.URL.Path) {
+			yydsCompatibilityRouteNotFound(c)
+			return
+		}
 		c.JSON(http.StatusNotFound, envelope{Success: false, Data: nil, Error: "not found", Usage: usage(c)})
 	})
 }
@@ -243,6 +264,10 @@ func mountFrontendDir(router *gin.Engine, dist string) bool {
 		router.StaticFS("/assets", noDirFS{http.Dir(assets)})
 	}
 	router.NoRoute(func(c *gin.Context) {
+		if isYYDSCompatibilityPath(c.Request.URL.Path) {
+			yydsCompatibilityRouteNotFound(c)
+			return
+		}
 		if strings.HasPrefix(c.Request.URL.Path, "/api/") {
 			apiRouteNotFound(c)
 			return
@@ -274,6 +299,10 @@ func mountFrontendFS(router *gin.Engine, embedded fs.FS) bool {
 	}
 	frontendFiles := noDirFS{http.FS(embedded)}
 	router.NoRoute(func(c *gin.Context) {
+		if isYYDSCompatibilityPath(c.Request.URL.Path) {
+			yydsCompatibilityRouteNotFound(c)
+			return
+		}
 		if strings.HasPrefix(c.Request.URL.Path, "/api/") {
 			apiRouteNotFound(c)
 			return
@@ -295,6 +324,10 @@ func mountFrontendFS(router *gin.Engine, embedded fs.FS) bool {
 
 func apiRouteNotFound(c *gin.Context) {
 	c.JSON(http.StatusNotFound, envelope{Success: false, Data: nil, Error: "api route not found", Usage: usage(c)})
+}
+
+func yydsCompatibilityRouteNotFound(c *gin.Context) {
+	c.JSON(http.StatusNotFound, envelope{Success: false, Data: nil, Error: "yyds route not found", Usage: usage(c)})
 }
 
 func serveFrontendFSFile(c *gin.Context, fileSystem http.FileSystem, name string) {

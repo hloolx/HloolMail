@@ -52,6 +52,14 @@ func (h *Handler) installStatus(c *gin.Context) {
 		"registered_users":     registeredUsers,
 		"hosted_domains":       hostedDomains,
 	}
+	var apiInterfaceSettings models.APIInterfaceSettings
+	yydsCompatibilityEnabled := false
+	if err := h.DB.First(&apiInterfaceSettings, 1).Error; err == nil {
+		yydsCompatibilityEnabled = apiInterfaceSettings.YYDSCompatibilityEnabled
+	}
+	resp["api_interfaces"] = gin.H{
+		"yyds_compatibility_enabled": yydsCompatibilityEnabled,
+	}
 
 	// Public config: always safe to expose (DNS records are public by nature,
 	// public_base_url is the address users already use to reach this service).

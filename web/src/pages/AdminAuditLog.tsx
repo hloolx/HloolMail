@@ -29,6 +29,7 @@ const auditActionOptions = [
   'domain.request',
   'oauth_provider.patch',
   'domain_check_settings.patch',
+  'api_interface_settings.patch',
   'mailbox.create',
   'mailbox.reuse',
   'mailbox.delete',
@@ -39,7 +40,7 @@ const auditActionOptions = [
 const AUDIT_PAGE_SIZE_OPTIONS = [10, 20, 50, 100];
 const AUDIT_CATEGORY_OPTIONS = ['security', 'activity', 'system', 'all'] as const;
 const AUDIT_SEVERITY_OPTIONS = ['all', 'critical', 'warning', 'info'] as const;
-const AUDIT_TARGET_OPTIONS = ['all', 'user', 'domain', 'api_key', 'mailbox', 'oauth_provider'] as const;
+const AUDIT_TARGET_OPTIONS = ['all', 'user', 'domain', 'api_key', 'mailbox', 'oauth_provider', 'api_interface_settings'] as const;
 
 export function AdminAuditLog() {
   const text = useText();
@@ -158,6 +159,7 @@ export function AdminAuditLog() {
             <option value="api_key">{text.admin.auditLogs.targetAPIKey}</option>
             <option value="mailbox">{text.admin.auditLogs.targetMailbox}</option>
             <option value="oauth_provider">{text.admin.auditLogs.targetOAuth}</option>
+            <option value="api_interface_settings">{text.admin.auditLogs.targetAPIInterface}</option>
           </select>
         </label>
       </div>

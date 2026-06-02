@@ -125,6 +125,7 @@ func AutoMigrate(db *gorm.DB) error {
 		&models.DomainCheckResultRecord{},
 		&models.AuditLog{},
 		&models.SystemQuotaSettings{},
+		&models.APIInterfaceSettings{},
 		&models.LoginSettings{},
 	); err != nil {
 		return err
@@ -487,6 +488,25 @@ func EnsureSystemQuotaSettings(db *gorm.DB) (*models.SystemQuotaSettings, error)
 	}
 	if err := db.Create(&settings).Error; err != nil {
 		// race: another request may have created it
+		if err2 := db.First(&settings).Error; err2 != nil {
+			return nil, err
+		}
+		return &settings, nil
+	}
+	return &settings, nil
+}
+
+func EnsureAPIInterfaceSettings(db *gorm.DB) (*models.APIInterfaceSettings, error) {
+	var settings models.APIInterfaceSettings
+	err := db.First(&settings).Error
+	if err == nil {
+		return &settings, nil
+	}
+	if err != gorm.ErrRecordNotFound {
+		return nil, err
+	}
+	settings = models.APIInterfaceSettings{ID: 1}
+	if err := db.Create(&settings).Error; err != nil {
 		if err2 := db.First(&settings).Error; err2 != nil {
 			return nil, err
 		}

@@ -3,6 +3,7 @@ package httpapi
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"sort"
 	"strconv"
@@ -881,6 +882,45 @@ func (h *Handler) patchAdminQuotaSettings(c *gin.Context) {
 		return
 	}
 	h.audit("quota_settings.patch", actor(c), "system-quota-settings", "")
+	ok(c, settings)
+}
+
+func (h *Handler) adminAPIInterfaceSettings(c *gin.Context) {
+	if !h.requireAdmin(c) {
+		return
+	}
+	settings, err := db.EnsureAPIInterfaceSettings(h.DB)
+	if err != nil {
+		fail(c, http.StatusInternalServerError, err.Error())
+		return
+	}
+	ok(c, settings)
+}
+
+func (h *Handler) patchAdminAPIInterfaceSettings(c *gin.Context) {
+	if !h.requireAdmin(c) {
+		return
+	}
+	settings, err := db.EnsureAPIInterfaceSettings(h.DB)
+	if err != nil {
+		fail(c, http.StatusInternalServerError, err.Error())
+		return
+	}
+	var input struct {
+		YYDSCompatibilityEnabled *bool `json:"yyds_compatibility_enabled"`
+	}
+	if err := c.ShouldBindJSON(&input); err != nil {
+		fail(c, http.StatusBadRequest, "invalid json")
+		return
+	}
+	if input.YYDSCompatibilityEnabled != nil {
+		settings.YYDSCompatibilityEnabled = *input.YYDSCompatibilityEnabled
+	}
+	if err := h.DB.Save(settings).Error; err != nil {
+		fail(c, http.StatusInternalServerError, err.Error())
+		return
+	}
+	h.audit("api_interface_settings.patch", actor(c), "api-interface-settings", fmt.Sprintf("yyds_compatibility_enabled=%t", settings.YYDSCompatibilityEnabled))
 	ok(c, settings)
 }
 

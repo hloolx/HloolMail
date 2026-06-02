@@ -106,7 +106,7 @@ function endpointsFromProjection(items: OpenAPIFrontendOperation[]): DocEndpoint
     const method = normalizeMethod(item.method);
     const path = normalizePathTemplate(item.path || item.requestPath || '');
     const auth = normalizeAuth(item.auth);
-    if (!method || !path || auth === 'session') continue;
+    if (!method || !path || auth === 'session' || !path.startsWith('/api/')) continue;
     const title = item.title || fallbackTitle(method, path);
     const description = item.description || title;
     endpoints.push({
@@ -137,6 +137,7 @@ function deriveEndpointsFromPaths(spec?: OpenAPIDocument | null): DocEndpoint[] 
       if (auth === 'session') continue;
       const typedMethod = method.toUpperCase() as DocMethod;
       const path = normalizePathTemplate(rawPath);
+      if (!path.startsWith('/api/')) continue;
       endpoints.push({
         method: typedMethod,
         path,
@@ -233,7 +234,7 @@ export function apiSkillPrompt(skillURL: string, docsURL: string) {
     '然后读取这里的 API 参考：',
     docsURL,
     '',
-    '只使用文档中列出的 /api/ 端点。调用受保护接口前，先向我索要 X-API-Key 和目标邮箱/域名。验证码场景中，每 3 秒调用一次 GET /api/emails/next?email=MAILBOX，最多等待 120 秒。若 has_email=false 就继续轮询；若 has_email=true，就从 message.subject、message.text_content 或 message.html_content 中提取验证码。该端点会自动将返回邮件标记为已读。'
+    '默认只使用文档中列出的 /api/ 端点。调用受保护接口前，先向我索要 X-API-Key 和目标邮箱/域名。验证码场景中，每 3 秒调用一次 GET /api/emails/next?email=MAILBOX，最多等待 120 秒。若 has_email=false 就继续轮询；若 has_email=true，就从 message.subject、message.text_content 或 message.html_content 中提取验证码。该端点会自动将返回邮件标记为已读。'
   ].join('\n');
 }
 

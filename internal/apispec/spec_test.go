@@ -37,6 +37,8 @@ func TestSpecScopeExcludesVersionedInternalAndStreams(t *testing.T) {
 		"/api/notification-stream",
 		"/api/announcement-stream",
 		"/api/api-keys",
+		"/yyds",
+		"YYDS",
 		"SSE",
 	} {
 		if strings.Contains(body, forbidden) {
@@ -45,7 +47,7 @@ func TestSpecScopeExcludesVersionedInternalAndStreams(t *testing.T) {
 	}
 	for path := range doc.Paths {
 		if !strings.HasPrefix(path, "/api/") {
-			t.Fatalf("path %q does not use /api prefix", path)
+			t.Fatalf("path %q does not use documented public API prefixes", path)
 		}
 	}
 }
@@ -127,6 +129,8 @@ func TestMarkdownAndSkillStayOnPublicAutomationBoundary(t *testing.T) {
 			"/api/notification-stream",
 			"/api/announcement-stream",
 			"/api/api-keys",
+			"/yyds",
+			"YYDS",
 			"SSE",
 			"/api/shared/:token/access",
 			"PublicSharedMessage",

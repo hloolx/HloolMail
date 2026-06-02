@@ -546,6 +546,13 @@ type SystemQuotaSettings struct {
 	UpdatedAt                   time.Time `json:"updated_at"`
 }
 
+type APIInterfaceSettings struct {
+	ID                       uint      `gorm:"primaryKey" json:"id"`
+	YYDSCompatibilityEnabled bool      `gorm:"not null;default:false" json:"yyds_compatibility_enabled"`
+	CreatedAt                time.Time `json:"created_at"`
+	UpdatedAt                time.Time `json:"updated_at"`
+}
+
 type LoginSettings struct {
 	ID                         uint       `gorm:"primaryKey" json:"id"`
 	TurnstileEnabled           bool       `gorm:"not null;default:false" json:"turnstile_enabled"`

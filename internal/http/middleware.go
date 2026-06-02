@@ -52,7 +52,7 @@ func (h *Handler) optionalAPIKey() gin.HandlerFunc {
 		// These paths are intentionally outside API-key automation. Ignore any
 		// X-API-Key header so public docs/share reads and Web Console session
 		// routes do not consume API-key quota or create APIUsageLog rows.
-		if isPublicDocsPath(c.Request.URL.Path) || isPublicSharedPath(c.Request.URL.Path) || isSessionOnlyWebPath(c.Request.URL.Path) || isSessionOnlyManagementPath(c.Request.URL.Path) {
+		if isPublicDocsPath(c.Request.URL.Path) || isPublicSharedPath(c.Request.URL.Path) || isYYDSCompatibilityPath(c.Request.URL.Path) || isSessionOnlyWebPath(c.Request.URL.Path) || isSessionOnlyManagementPath(c.Request.URL.Path) {
 			c.Next()
 			return
 		}
@@ -67,55 +67,10 @@ func (h *Handler) optionalAPIKey() gin.HandlerFunc {
 			c.Next()
 			return
 		}
-		if !h.allowAPIKeyAuthAttempt(c) {
-			fail(c, http.StatusTooManyRequests, "rate limit exceeded")
+		if !h.authenticateAPIKeyRequest(c, plain) {
 			c.Abort()
 			return
 		}
-		key, err := h.APIKeys.Authenticate(plain)
-		if err != nil {
-			h.logAPIKeyAuthFailure(c, plain, err)
-			status := http.StatusUnauthorized
-			if errors.Is(err, auth.ErrAPIKeyDisabled) || errors.Is(err, auth.ErrAPIKeyExpired) {
-				status = http.StatusForbidden
-			}
-			fail(c, status, err.Error())
-			c.Abort()
-			return
-		}
-		if key.OwnerID != nil {
-			var owner models.User
-			if err := h.DB.First(&owner, "id = ? AND enabled = ?", *key.OwnerID, true).Error; err != nil {
-				fail(c, http.StatusForbidden, "api key owner disabled or not found")
-				c.Abort()
-				return
-			}
-			c.Set(apiKeyUserContext, &owner)
-		}
-		if err := h.APIKeys.Consume(key); err != nil {
-			status := http.StatusTooManyRequests
-			if errors.Is(err, auth.ErrAPIKeyDisabled) || errors.Is(err, auth.ErrAPIKeyExpired) {
-				status = http.StatusForbidden
-			} else if errors.Is(err, auth.ErrAPIKeyMissing) || errors.Is(err, auth.ErrAPIKeyInvalid) {
-				status = http.StatusUnauthorized
-			}
-			fail(c, status, err.Error())
-			c.Abort()
-			return
-		}
-		var ownerID *uint
-		if key.OwnerID != nil {
-			ownerID = key.OwnerID
-		}
-		h.DB.Create(&models.APIUsageLog{
-			APIKeyID:  &key.ID,
-			UserID:    ownerID,
-			Path:      c.Request.URL.Path,
-			Method:    c.Request.Method,
-			IP:        c.ClientIP(),
-			UserAgent: c.Request.UserAgent(),
-		})
-		c.Set(apiKeyContext, key)
 		c.Next()
 	}
 }
@@ -131,6 +86,10 @@ func isPublicDocsPath(path string) bool {
 
 func isPublicSharedPath(path string) bool {
 	return strings.HasPrefix(path, "/api/shared/")
+}
+
+func isYYDSCompatibilityPath(path string) bool {
+	return path == "/yyds/v1" || strings.HasPrefix(path, "/yyds/v1/")
 }
 
 func isSessionOnlyStreamPath(path string) bool {
@@ -215,6 +174,55 @@ func (h *Handler) logAPIKeyAuthFailure(c *gin.Context, plain string, err error) 
 	)
 }
 
+func (h *Handler) authenticateAPIKeyRequest(c *gin.Context, plain string) bool {
+	if !h.allowAPIKeyAuthAttempt(c) {
+		fail(c, http.StatusTooManyRequests, "rate limit exceeded")
+		return false
+	}
+	key, err := h.APIKeys.Authenticate(plain)
+	if err != nil {
+		h.logAPIKeyAuthFailure(c, plain, err)
+		status := http.StatusUnauthorized
+		if errors.Is(err, auth.ErrAPIKeyDisabled) || errors.Is(err, auth.ErrAPIKeyExpired) {
+			status = http.StatusForbidden
+		}
+		fail(c, status, err.Error())
+		return false
+	}
+	if key.OwnerID != nil {
+		var owner models.User
+		if err := h.DB.First(&owner, "id = ? AND enabled = ?", *key.OwnerID, true).Error; err != nil {
+			fail(c, http.StatusForbidden, "api key owner disabled or not found")
+			return false
+		}
+		c.Set(apiKeyUserContext, &owner)
+	}
+	if err := h.APIKeys.Consume(key); err != nil {
+		status := http.StatusTooManyRequests
+		if errors.Is(err, auth.ErrAPIKeyDisabled) || errors.Is(err, auth.ErrAPIKeyExpired) {
+			status = http.StatusForbidden
+		} else if errors.Is(err, auth.ErrAPIKeyMissing) || errors.Is(err, auth.ErrAPIKeyInvalid) {
+			status = http.StatusUnauthorized
+		}
+		fail(c, status, err.Error())
+		return false
+	}
+	var ownerID *uint
+	if key.OwnerID != nil {
+		ownerID = key.OwnerID
+	}
+	h.DB.Create(&models.APIUsageLog{
+		APIKeyID:  &key.ID,
+		UserID:    ownerID,
+		Path:      c.Request.URL.Path,
+		Method:    c.Request.Method,
+		IP:        c.ClientIP(),
+		UserAgent: c.Request.UserAgent(),
+	})
+	c.Set(apiKeyContext, key)
+	return true
+}
+
 func apiKeyAttemptFingerprint(plain string) string {
 	sum := sha256.Sum256([]byte(strings.TrimSpace(plain)))
 	return hex.EncodeToString(sum[:])[:16]
@@ -251,6 +259,10 @@ func (h *Handler) cors() gin.HandlerFunc {
 
 func (h *Handler) requireSameOriginSessionWrite() gin.HandlerFunc {
 	return func(c *gin.Context) {
+		if isYYDSCompatibilityPath(c.Request.URL.Path) {
+			c.Next()
+			return
+		}
 		if !isUnsafeMethod(c.Request.Method) || currentUser(c) == nil || currentAPIKey(c) != nil || h.isAdminTokenRequest(c) {
 			c.Next()
 			return
