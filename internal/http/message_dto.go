@@ -63,6 +63,7 @@ type ShareLinkDTO struct {
 	ID             uint       `json:"id"`
 	ResourceType   string     `json:"resource_type"`
 	MailboxID      *uint      `json:"mailbox_id,omitempty"`
+	MailboxEmail   string     `json:"mailbox_email,omitempty"`
 	Token          string     `json:"token,omitempty"`
 	AccessKey      string     `json:"access_key,omitempty"`
 	TokenPrefix    string     `json:"token_prefix"`
@@ -171,6 +172,9 @@ type UserDTO struct {
 	PublicMailboxToday    int64      `json:"public_mailbox_today"`
 	PublicMailboxDate     string     `json:"public_mailbox_date,omitempty"`
 	PrivateMailboxCreated int64      `json:"private_mailbox_created"`
+	OnboardingRequired    bool       `json:"onboarding_required"`
+	OnboardingCompletedAt *time.Time `json:"onboarding_completed_at,omitempty"`
+	OnboardingSkippedAt   *time.Time `json:"onboarding_skipped_at,omitempty"`
 	CreatedAt             time.Time  `json:"created_at"`
 	UpdatedAt             time.Time  `json:"updated_at"`
 }
@@ -280,6 +284,9 @@ func userDTO(user models.User) UserDTO {
 		PublicMailboxToday:    user.PublicMailboxToday,
 		PublicMailboxDate:     user.PublicMailboxDate,
 		PrivateMailboxCreated: user.PrivateMailboxCreated,
+		OnboardingRequired:    user.OnboardingRequired,
+		OnboardingCompletedAt: user.OnboardingCompletedAt,
+		OnboardingSkippedAt:   user.OnboardingSkippedAt,
 		CreatedAt:             user.CreatedAt,
 		UpdatedAt:             user.UpdatedAt,
 	}

@@ -163,6 +163,134 @@ func TestPatchUserProfileRequiresLogin(t *testing.T) {
 	}
 }
 
+func TestUserOnboardingRequiresNewUserAndCanComplete(t *testing.T) {
+	db := httpTestDB(t)
+	createInstalledAdmin(t, db)
+	router := testRouter(t, db)
+
+	adminLogin := perform(router, http.MethodPost, "/api/auth/login", map[string]any{
+		"email":    "admin@example.com",
+		"password": "password123",
+	}, nil)
+	if adminLogin.Code != http.StatusOK {
+		t.Fatalf("admin login = %d: %s", adminLogin.Code, adminLogin.Body.String())
+	}
+	adminHeaders := sessionHeaders(adminLogin)
+	settings := perform(router, http.MethodPatch, "/api/admin/quota-settings", map[string]any{
+		"enable_user_onboarding":          true,
+		"require_public_domain_for_quota": true,
+	}, adminHeaders)
+	if settings.Code != http.StatusOK {
+		t.Fatalf("patch quota settings = %d: %s", settings.Code, settings.Body.String())
+	}
+
+	created := perform(router, http.MethodPost, "/api/admin/users", map[string]any{
+		"email":       "onboarding@example.com",
+		"nickname":    "Onboarding",
+		"password":    "password123",
+		"role":        models.UserRoleUser,
+		"daily_limit": 1000,
+		"total_limit": 0,
+	}, adminHeaders)
+	if created.Code != http.StatusCreated {
+		t.Fatalf("create user = %d: %s", created.Code, created.Body.String())
+	}
+	var createdPayload testEnvelope[UserDTO]
+	if err := json.Unmarshal(created.Body.Bytes(), &createdPayload); err != nil {
+		t.Fatal(err)
+	}
+	if !createdPayload.Data.OnboardingRequired {
+		t.Fatalf("new user onboarding_required = false, want true: %+v", createdPayload.Data)
+	}
+
+	userLogin := perform(router, http.MethodPost, "/api/auth/login", map[string]any{
+		"email":    "onboarding@example.com",
+		"password": "password123",
+	}, nil)
+	if userLogin.Code != http.StatusOK {
+		t.Fatalf("user login = %d: %s", userLogin.Code, userLogin.Body.String())
+	}
+	userHeaders := sessionHeaders(userLogin)
+	status := perform(router, http.MethodGet, "/api/user/onboarding", nil, userHeaders)
+	if status.Code != http.StatusOK {
+		t.Fatalf("get onboarding = %d: %s", status.Code, status.Body.String())
+	}
+	var statusPayload testEnvelope[userOnboardingStatus]
+	if err := json.Unmarshal(status.Body.Bytes(), &statusPayload); err != nil {
+		t.Fatal(err)
+	}
+	if !statusPayload.Data.Enabled || !statusPayload.Data.Required || !statusPayload.Data.RequirePublicDomainForQuota {
+		t.Fatalf("onboarding status = %+v, want enabled required require-domain", statusPayload.Data)
+	}
+	if statusPayload.Data.CanComplete || statusPayload.Data.NextStep != "domain" || statusPayload.Data.HasReadyPublicDomain || statusPayload.Data.HasMailbox || statusPayload.Data.HasAPIKey {
+		t.Fatalf("initial onboarding progress = %+v, want blocked at domain", statusPayload.Data)
+	}
+
+	blockedComplete := perform(router, http.MethodPatch, "/api/user/onboarding", map[string]any{
+		"completed": true,
+	}, userHeaders)
+	if blockedComplete.Code != http.StatusBadRequest {
+		t.Fatalf("complete unfinished onboarding = %d, want %d: %s", blockedComplete.Code, http.StatusBadRequest, blockedComplete.Body.String())
+	}
+
+	ownerID := createdPayload.Data.ID
+	domain := models.Domain{
+		Domain:     "onboarding-public.test",
+		Mode:       models.DomainModePublic,
+		OwnerID:    &ownerID,
+		Active:     true,
+		MXVerified: true,
+	}
+	if err := db.Create(&domain).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&models.Mailbox{
+		OwnerID:   ownerID,
+		Email:     "first@onboarding-public.test",
+		LocalPart: "first",
+		Host:      "onboarding-public.test",
+		DomainID:  domain.ID,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := (auth.APIKeyService{DB: db}).CreateFor(&ownerID, "onboarding-key", 20, 0, nil); err != nil {
+		t.Fatal(err)
+	}
+	readyStatus := perform(router, http.MethodGet, "/api/user/onboarding", nil, userHeaders)
+	if readyStatus.Code != http.StatusOK {
+		t.Fatalf("get ready onboarding = %d: %s", readyStatus.Code, readyStatus.Body.String())
+	}
+	var readyPayload testEnvelope[userOnboardingStatus]
+	if err := json.Unmarshal(readyStatus.Body.Bytes(), &readyPayload); err != nil {
+		t.Fatal(err)
+	}
+	if !readyPayload.Data.CanComplete || readyPayload.Data.NextStep != "api-docs" || !readyPayload.Data.HasReadyPublicDomain || !readyPayload.Data.HasMailbox || !readyPayload.Data.HasAPIKey {
+		t.Fatalf("ready onboarding progress = %+v, want completable api-docs", readyPayload.Data)
+	}
+
+	completed := perform(router, http.MethodPatch, "/api/user/onboarding", map[string]any{
+		"completed": true,
+	}, userHeaders)
+	if completed.Code != http.StatusOK {
+		t.Fatalf("complete onboarding = %d: %s", completed.Code, completed.Body.String())
+	}
+	var completedPayload testEnvelope[userOnboardingStatus]
+	if err := json.Unmarshal(completed.Body.Bytes(), &completedPayload); err != nil {
+		t.Fatal(err)
+	}
+	if !completedPayload.Data.Completed || completedPayload.Data.Required {
+		t.Fatalf("completed onboarding status = %+v, want completed and not required", completedPayload.Data)
+	}
+
+	var reloaded models.User
+	if err := db.First(&reloaded, createdPayload.Data.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if reloaded.OnboardingRequired || reloaded.OnboardingCompletedAt == nil || reloaded.OnboardingSkippedAt != nil {
+		t.Fatalf("stored onboarding fields = required:%t completed:%v skipped:%v", reloaded.OnboardingRequired, reloaded.OnboardingCompletedAt, reloaded.OnboardingSkippedAt)
+	}
+}
+
 func TestPatchUserProfileRejectsInvalidNicknames(t *testing.T) {
 	cases := []struct {
 		name     string

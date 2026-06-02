@@ -36,6 +36,111 @@
   min-height: calc(100vh - var(--app-header-height) - var(--app-inset-gap));
 }
 
+.onboarding-guide {
+  position: fixed;
+  inset: 0;
+  z-index: 90;
+  pointer-events: none;
+}
+
+.onboarding-guide-scrim {
+  position: absolute;
+  inset: 0;
+  background:
+    linear-gradient(180deg, rgba(16, 16, 16, 0.02), rgba(16, 16, 16, 0.1)),
+    color-mix(in srgb, var(--shell) 34%, transparent);
+}
+
+.onboarding-guide-panel {
+  position: absolute;
+  z-index: 92;
+  right: clamp(1rem, 3vw, 2rem);
+  bottom: clamp(1rem, 3vw, 2rem);
+  width: min(27rem, calc(100vw - 2rem));
+  display: grid;
+  gap: 0.9rem;
+  padding: 1rem;
+  border: 1px solid color-mix(in srgb, var(--focus) 42%, var(--border));
+  border-radius: 0.75rem;
+  background: color-mix(in srgb, var(--panel) 94%, var(--focus-soft));
+  box-shadow:
+    0 18px 50px rgba(0, 0, 0, 0.16),
+    0 0 0 1px rgba(255, 255, 255, 0.16) inset;
+  pointer-events: auto;
+}
+
+.onboarding-guide-head {
+  display: grid;
+  grid-template-columns: 2.25rem minmax(0, 1fr);
+  gap: 0.7rem;
+  align-items: center;
+}
+
+.onboarding-guide-icon {
+  width: 2.25rem;
+  height: 2.25rem;
+  display: grid;
+  place-items: center;
+  border-radius: 0.65rem;
+  color: var(--accent-foreground);
+  background: var(--accent);
+}
+
+.onboarding-guide-head span {
+  display: block;
+  margin-bottom: 0.15rem;
+  color: var(--muted);
+  font-size: 0.76rem;
+}
+
+.onboarding-guide-head h2 {
+  margin: 0;
+  font-size: 1rem;
+  line-height: 1.25;
+  letter-spacing: 0;
+}
+
+.onboarding-guide-panel p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.9rem;
+  line-height: 1.55;
+}
+
+.onboarding-guide-dots {
+  display: flex;
+  gap: 0.35rem;
+}
+
+.onboarding-guide-dots span {
+  width: 1.25rem;
+  height: 0.25rem;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--muted) 28%, transparent);
+}
+
+.onboarding-guide-dots span.active {
+  background: var(--focus);
+}
+
+.onboarding-guide-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.55rem;
+  flex-wrap: wrap;
+}
+
+html[data-onboarding-active='add-domain'] [data-onboarding-target='add-domain'],
+html[data-onboarding-active='create-mailbox'] [data-onboarding-target='create-mailbox'],
+html[data-onboarding-active='create-api-key'] [data-onboarding-target='create-api-key'],
+html[data-onboarding-active='api-docs-explorer'] [data-onboarding-target='api-docs-explorer'] {
+  position: relative;
+  z-index: 91;
+  outline: 3px solid var(--focus);
+  outline-offset: 5px;
+  box-shadow: 0 0 0 9px var(--focus-soft), 0 14px 32px rgba(0, 0, 0, 0.16);
+}
+
 @media (max-width: 1023px) {
   .app-frame,
   .app-frame-collapsed {
@@ -45,6 +150,14 @@
   .app-main {
     width: 100%;
     padding-left: 0;
+  }
+}
+
+@media (max-width: 640px) {
+  .onboarding-guide-panel {
+    right: 0.75rem;
+    bottom: 0.75rem;
+    width: calc(100vw - 1.5rem);
   }
 }
 

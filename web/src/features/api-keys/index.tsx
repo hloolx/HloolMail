@@ -117,6 +117,7 @@ export function ApiKeysFeature({ user }: { user: User }) {
               <Button
                 variant="primary"
                 ref={createTriggerRef}
+                data-onboarding-target="create-api-key"
                 onClick={() => setCreateOpen(true)}
                 leadingIcon={<KeyRound size={16} />}
               >

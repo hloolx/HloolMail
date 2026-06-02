@@ -49,6 +49,13 @@ func TestDataRejectsOversizedAttachment(t *testing.T) {
 	}
 }
 
+func TestSessionDoesNotSupportSMTPAuth(t *testing.T) {
+	var session any = &Session{}
+	if _, ok := session.(gosmtp.AuthSession); ok {
+		t.Fatal("session should not advertise SMTP AUTH")
+	}
+}
+
 func TestDataSanitizesStorageErrors(t *testing.T) {
 	session, db := newSMTPTestSession(t, config.Config{
 		MaxMessageBytes:  4096,

@@ -25,7 +25,6 @@ func Start(ctx context.Context, service Service) *gosmtp.Server {
 	server.Domain = service.Config.MailHostname
 	server.MaxMessageBytes = service.Config.MaxMessageBytes
 	server.MaxRecipients = 100
-	server.AllowInsecureAuth = true
 
 	go func() {
 		slog.Info("smtp listening", "addr", server.Addr)

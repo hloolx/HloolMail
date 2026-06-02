@@ -86,6 +86,9 @@ func (h *Handler) notificationStream(c *gin.Context) {
 	if !loggedIn {
 		return
 	}
+	if !h.requireSameOriginSessionRead(c) {
+		return
+	}
 	if h.Hub == nil {
 		fail(c, http.StatusInternalServerError, "notification stream unavailable")
 		return

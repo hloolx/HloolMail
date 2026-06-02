@@ -133,6 +133,7 @@ export type ShareLinkDTO = {
   id: number;
   resource_type: ShareResourceType;
   mailbox_id?: number;
+  mailbox_email?: string;
   token?: string;
   access_key?: string;
   token_prefix: string;
@@ -313,6 +314,9 @@ export type User = {
   public_mailbox_today: number;
   public_mailbox_date?: string;
   private_mailbox_created: number;
+  onboarding_required?: boolean;
+  onboarding_completed_at?: string;
+  onboarding_skipped_at?: string;
   last_used_at?: string;
   created_at: string;
 };
@@ -344,8 +348,24 @@ export type SystemQuotaSettings = {
   public_domain_mailbox_limit: number;
   user_daily_public_mailbox_limit: number;
   require_public_domain_for_quota: boolean;
+  enable_user_onboarding: boolean;
   created_at: string;
   updated_at: string;
+};
+
+export type UserOnboardingStatus = {
+  enabled: boolean;
+  required: boolean;
+  require_public_domain_for_quota: boolean;
+  has_ready_public_domain: boolean;
+  has_mailbox: boolean;
+  has_api_key: boolean;
+  can_complete: boolean;
+  next_step?: 'domain' | 'mailbox' | 'api-key' | 'api-docs' | OpenString;
+  completed: boolean;
+  skipped: boolean;
+  completed_at?: string;
+  skipped_at?: string;
 };
 
 export type AppNotification = {

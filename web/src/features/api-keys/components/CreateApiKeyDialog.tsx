@@ -122,6 +122,7 @@ export function CreateApiKeyDialog({
         const existing = current || [];
         return [data.api_key, ...existing.filter((key) => key.id !== data.api_key.id)];
       });
+      queryClient.invalidateQueries({ queryKey: ['user-onboarding'] });
       void copy(data.plain_key, {
         celebrate: true,
         origin: createButtonRef.current,

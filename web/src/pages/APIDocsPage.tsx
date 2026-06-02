@@ -28,7 +28,7 @@ import { useRequestHistory } from '../hooks/useRequestHistory';
 import { generateCode, codeGenLabel, type CodeGenLang } from '../lib/codegen';
 import { ParamBuilder } from '../components/api-explorer/ParamBuilder';
 import { ResponsePanel, type ExplorerResult } from '../components/api-explorer/ResponsePanel';
-import { ApiKeySelector } from '../components/api-explorer/ApiKeySelector';
+import { ApiKeySelector, type ApiKeySelectorStatus } from '../components/api-explorer/ApiKeySelector';
 import { InfoTip, ConfirmModal } from '../components/shared';
 import { ApiDocsHero } from './ApiDocsHero';
 import { ApiDocsHistory } from './ApiDocsHistory';
@@ -67,7 +67,7 @@ function buildRequestURL(apiBase: string, requestPath: string, queryString: stri
 function requestPreview(endpoint: DocEndpoint, url: URL, apiKey: string, body: string) {
   const lines = [`${endpoint.method} ${url.pathname}${url.search} HTTP/1.1`, `Host: ${url.host}`];
   if (endpoint.auth === 'apiKey') {
-    lines.push(`X-API-Key: ${apiKey.trim() ? 'YOUR_KEY' : '<required>'}`);
+    lines.push(`X-API-Key: ${apiKey.trim() ? '<configured>' : '<required>'}`);
   }
   if (body.trim() && endpoint.method !== 'GET') {
     lines.push('Content-Type: application/json', '', body.trim());
@@ -80,6 +80,13 @@ function isSameOriginURL(url: URL) {
 }
 
 const CODE_GEN_LANGUAGES: CodeGenLang[] = ['curl', 'fetch', 'python'];
+const DEFAULT_API_KEY_STATUS: ApiKeySelectorStatus = {
+  mode: 'manual',
+  selectedKeyId: '',
+  revealLoading: false,
+  revealFailed: false,
+  hasSavedSelection: false
+};
 
 export function APIDocsPage() {
   const text = useText();
@@ -118,6 +125,7 @@ export function APIDocsPage() {
   const [selectedKey, setSelectedKey] = useState(endpointKey(defaultEndpoint));
   const [apiBase, setApiBase] = useState(browserBaseURL);
   const [apiKey, setApiKey] = useState('');
+  const [apiKeyStatus, setApiKeyStatus] = useState<ApiKeySelectorStatus>(DEFAULT_API_KEY_STATUS);
   const [requestPath, setRequestPath] = useState(defaultRequest.path);
   const [queryString, setQueryString] = useState(defaultRequest.query);
   const [requestBody, setRequestBody] = useState(defaultRequest.body);
@@ -201,13 +209,24 @@ export function APIDocsPage() {
     setResponseHeaders({});
   }, []);
 
+  const handleApiKeyStatusChange = useCallback((status: ApiKeySelectorStatus) => {
+    setApiKeyStatus((current) => (
+      current.mode === status.mode &&
+      current.selectedKeyId === status.selectedKeyId &&
+      current.revealLoading === status.revealLoading &&
+      current.revealFailed === status.revealFailed &&
+      current.hasSavedSelection === status.hasSavedSelection
+        ? current
+        : status
+    ));
+  }, []);
+
   function applyEndpoint(endpoint: DocEndpoint) {
     const next = explorerDefaults(endpoint);
     setSelectedKey(endpointKey(endpoint));
     setRequestPath(next.path);
     setQueryString(next.query);
     setRequestBody(next.body);
-    setApiKey('');
     setDangerConfirmed(false);
     clearResult();
   }
@@ -228,15 +247,24 @@ export function APIDocsPage() {
     setRequestPath(entry.requestPath);
     setQueryString(entry.queryString);
     setRequestBody(entry.requestBody);
-    setApiKey('');
     setDangerConfirmed(false);
     clearResult();
     setShowHistory(false);
   }
 
+  function getAPIKeyError() {
+    if (selectedEndpoint.auth !== 'apiKey') return '';
+    if (apiKeyStatus.revealLoading) return text.apiDocs.apiKeyRevealing;
+    if (apiKeyStatus.revealFailed) return text.apiDocs.apiKeyRevealFailed;
+    if (apiKeyStatus.mode === 'saved' && apiKeyStatus.hasSavedSelection && !apiKey.trim()) return text.apiDocs.apiKeyRevealing;
+    if (!apiKey.trim()) return text.apiDocs.keyRequired;
+    return '';
+  }
+
   function handleSendClick() {
-    if (selectedEndpoint.auth === 'apiKey' && !apiKey.trim()) {
-      setCallError(text.apiDocs.keyRequired);
+    const apiKeyError = getAPIKeyError();
+    if (apiKeyError) {
+      setCallError(apiKeyError);
       return;
     }
     if (selectedEndpoint.dangerous && !dangerConfirmed) {
@@ -255,6 +283,11 @@ export function APIDocsPage() {
       return;
     }
     const sendsAPIKey = selectedEndpoint.auth === 'apiKey';
+    const apiKeyError = getAPIKeyError();
+    if (apiKeyError) {
+      setCallError(apiKeyError);
+      return;
+    }
     if (sendsAPIKey && !isSameOriginURL(url)) {
       const confirmed = window.confirm(
         language === 'zh-CN'
@@ -335,12 +368,14 @@ export function APIDocsPage() {
   }
 
   const prompt = apiSkillPrompt(skillURL, markdownURL);
+  const sendDisabled = isCalling || (selectedEndpoint.auth === 'apiKey' && apiKeyStatus.revealLoading);
+  const sendLabel = apiKeyStatus.revealLoading ? text.apiDocs.apiKeyRevealing : isCalling ? text.apiDocs.sending : text.apiDocs.send;
 
   return (
     <div className="api-docs-page">
       <ApiDocsHero markdownURL={markdownURL} skillURL={skillURL} prompt={prompt} markdown={markdown} />
 
-      <section className="api-docs-workspace">
+      <section className="api-docs-workspace" data-onboarding-target="api-docs-explorer">
         <div className="panel-header api-docs-workspace-header">
           <div>
             <h2>{text.apiDocs.workspaceTitle}<InfoTip text={text.apiDocs.workspaceDesc} /></h2>
@@ -365,7 +400,12 @@ export function APIDocsPage() {
             </label>
             <div className="api-docs-field">
               <span>{text.apiDocs.apiKey}</span>
-              <ApiKeySelector value={apiKey} onChange={setApiKey} placeholder={text.apiDocs.apiKeyPlaceholder} />
+              <ApiKeySelector
+                value={apiKey}
+                onChange={setApiKey}
+                onStatusChange={handleApiKeyStatusChange}
+                placeholder={text.apiDocs.apiKeyPlaceholder}
+              />
             </div>
             <div className="api-docs-field api-docs-field-wide">
               <div className="api-docs-field-head">
@@ -493,9 +533,9 @@ export function APIDocsPage() {
               <div className="api-docs-call-panel api-docs-response-panel">
                 <div className="api-docs-call-head">
                   <span><Send size={15} /> {text.apiDocs.response}</span>
-                  <button className="btn-primary" disabled={isCalling} onClick={handleSendClick}>
+                  <button className="btn-primary" disabled={sendDisabled} onClick={handleSendClick}>
                     <Play size={15} />
-                    {isCalling ? text.apiDocs.sending : text.apiDocs.send}
+                    {sendLabel}
                   </button>
                 </div>
                 <ResponsePanel

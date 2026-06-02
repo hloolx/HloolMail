@@ -38,6 +38,7 @@ export function useMailboxGeneration({ apiKey, onGenerated }: MailboxGenerationO
       onGenerated();
       queryClient.invalidateQueries({ queryKey: ['mailboxes'] });
       queryClient.invalidateQueries({ queryKey: ['mailbox-stats'] });
+      queryClient.invalidateQueries({ queryKey: ['user-onboarding'] });
       notifySuccess(data.reuse ? text.inbox.emailReuse : text.toast.emailGenerated, { origin: generateButtonRef.current });
     },
     onError: (error) => toast.error(error.message)

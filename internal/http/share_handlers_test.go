@@ -48,6 +48,9 @@ func TestShareLinkPublicReadSkipsAPIKeyAndDoesNotRevealSecrets(t *testing.T) {
 	if created.ResourceType != models.ShareResourceTypeMailbox || created.MailboxID == nil || *created.MailboxID != mailbox.ID {
 		t.Fatalf("created share is not a mailbox share: %+v", created)
 	}
+	if created.MailboxEmail != mailbox.Email {
+		t.Fatalf("created share missing mailbox email: %+v", created)
+	}
 	if created.Token == "" {
 		t.Fatal("create response did not include one-time token")
 	}
@@ -76,12 +79,20 @@ func TestShareLinkPublicReadSkipsAPIKeyAndDoesNotRevealSecrets(t *testing.T) {
 	if strings.Contains(list.Body.String(), created.Token) || strings.Contains(list.Body.String(), created.AccessKey) {
 		t.Fatalf("list response leaked one-time token/key: %s", list.Body.String())
 	}
+	listPage := decodeShareEnvelope[paginatedResponse[ShareLinkDTO]](t, list.Body.Bytes()).Data
+	if len(listPage.Items) != 1 || listPage.Items[0].MailboxEmail != mailbox.Email {
+		t.Fatalf("list response missing mailbox email: %+v", listPage)
+	}
 	get := perform(router, http.MethodGet, "/api/share-links/"+uintPath(created.ID), nil, cookieHeaders(login.Result().Cookies()))
 	if get.Code != http.StatusOK {
 		t.Fatalf("get share link = %d: %s", get.Code, get.Body.String())
 	}
 	if strings.Contains(get.Body.String(), created.Token) || strings.Contains(get.Body.String(), created.AccessKey) {
 		t.Fatalf("get response leaked one-time token/key: %s", get.Body.String())
+	}
+	got := decodeShareEnvelope[ShareLinkDTO](t, get.Body.Bytes()).Data
+	if got.MailboxEmail != mailbox.Email {
+		t.Fatalf("get response missing mailbox email: %+v", got)
 	}
 
 	apiKey, plainAPIKey, err := (auth.APIKeyService{DB: db}).CreateFor(&owner.ID, "shared-read", 1, 0, nil)
@@ -1017,7 +1028,10 @@ func cookieHeaders(cookies []*http.Cookie) map[string]string {
 	for _, cookie := range cookies {
 		values = append(values, cookie.Name+"="+cookie.Value)
 	}
-	return map[string]string{"Cookie": strings.Join(values, "; ")}
+	return map[string]string{
+		"Cookie":         strings.Join(values, "; "),
+		"Sec-Fetch-Site": "same-origin",
+	}
 }
 
 func adminSharePageContains(page paginatedResponse[AdminShareLinkDTO], id uint, ownerEmail, mailboxEmail string) bool {

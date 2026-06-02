@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import type { APIKey } from '../../api';
@@ -9,12 +9,21 @@ import { LoadingIndicator } from '../shared';
 export type ApiKeySelectorProps = {
   value: string;
   onChange: (value: string) => void;
+  onStatusChange?: (status: ApiKeySelectorStatus) => void;
   placeholder?: string;
 };
 
 type ApiKeyMode = 'manual' | 'saved';
 
-export function ApiKeySelector({ value, onChange, placeholder }: ApiKeySelectorProps) {
+export type ApiKeySelectorStatus = {
+  mode: ApiKeyMode;
+  selectedKeyId: string;
+  revealLoading: boolean;
+  revealFailed: boolean;
+  hasSavedSelection: boolean;
+};
+
+export function ApiKeySelector({ value, onChange, onStatusChange, placeholder }: ApiKeySelectorProps) {
   const text = useText();
   const { data: keys, isLoading, error } = useQuery({
     queryKey: ['api-keys'],
@@ -22,10 +31,13 @@ export function ApiKeySelector({ value, onChange, placeholder }: ApiKeySelectorP
   });
 
   const [mode, setMode] = useState<ApiKeyMode>('manual');
+  const [manualValue, setManualValue] = useState(value);
   const [selectValue, setSelectValue] = useState('');
   const [revealedSecrets, setRevealedSecrets] = useState<Map<string, string>>(new Map());
   const [revealLoadingId, setRevealLoadingId] = useState<string | null>(null);
   const [revealFailedId, setRevealFailedId] = useState<string | null>(null);
+  const modeRef = useRef<ApiKeyMode>('manual');
+  const selectedIdRef = useRef('');
 
   const keyMap = useMemo(() => {
     const map = new Map<string, APIKey>();
@@ -35,31 +47,60 @@ export function ApiKeySelector({ value, onChange, placeholder }: ApiKeySelectorP
 
   const selectedKey = selectValue ? keyMap.get(selectValue) : undefined;
   const selectedFullKey = selectedKey ? revealedSecrets.get(String(selectedKey.id)) || '' : '';
-  const hasKeys = keys && keys.length > 0;
+  const hasKeys = Boolean(keys && keys.length > 0);
+  const revealLoading = mode === 'saved' && Boolean(revealLoadingId);
+  const revealFailed = mode === 'saved' && Boolean(selectedKey) && revealFailedId === String(selectedKey?.id);
   const showUnavailable = mode === 'saved' && Boolean(selectedKey) && !revealLoadingId && revealFailedId === String(selectedKey?.id);
 
   useEffect(() => {
-    if (!value || !keys) {
-      setSelectValue('');
-      return;
+    modeRef.current = mode;
+  }, [mode]);
+
+  useEffect(() => {
+    selectedIdRef.current = selectValue;
+  }, [selectValue]);
+
+  useEffect(() => {
+    if (mode === 'manual' && value !== manualValue) {
+      setManualValue(value);
     }
+  }, [manualValue, mode, value]);
+
+  useEffect(() => {
+    if (mode !== 'saved' || !value || !keys) return;
     const match = keys.find((key) => {
       const secret = revealedSecrets.get(String(key.id));
       return secret ? secret === value : key.key_prefix && value.startsWith(key.key_prefix);
     });
     setSelectValue(match ? String(match.id) : '');
-  }, [value, keys, revealedSecrets]);
+  }, [mode, value, keys, revealedSecrets]);
+
+  useEffect(() => {
+    onStatusChange?.({
+      mode,
+      selectedKeyId: selectValue,
+      revealLoading,
+      revealFailed,
+      hasSavedSelection: Boolean(selectedKey)
+    });
+  }, [mode, onStatusChange, revealFailed, revealLoading, selectValue, selectedKey]);
 
   const switchMode = (nextMode: ApiKeyMode) => {
+    modeRef.current = nextMode;
     setMode(nextMode);
-    if (nextMode === 'saved' && selectedFullKey) {
-      onChange(selectedFullKey);
+    setRevealFailedId(null);
+    if (nextMode === 'manual') {
+      onChange(manualValue);
+      return;
     }
+    onChange(selectedFullKey);
   };
 
   const handleSelect = async (event: React.ChangeEvent<HTMLSelectElement>) => {
     const id = event.target.value;
+    selectedIdRef.current = id;
     setSelectValue(id);
+    setRevealFailedId(null);
     if (!id) {
       onChange('');
       return;
@@ -69,8 +110,8 @@ export function ApiKeySelector({ value, onChange, placeholder }: ApiKeySelectorP
       onChange(cached);
       return;
     }
+    onChange('');
     setRevealLoadingId(id);
-    setRevealFailedId(null);
     try {
       const data = await api<{ plain_key: string }>(`/api/api-keys/${id}/reveal`, { method: 'POST', body: JSON.stringify({}) });
       setRevealedSecrets((prev) => {
@@ -78,7 +119,9 @@ export function ApiKeySelector({ value, onChange, placeholder }: ApiKeySelectorP
         next.set(id, data.plain_key);
         return next;
       });
-      onChange(data.plain_key);
+      if (modeRef.current === 'saved' && selectedIdRef.current === id) {
+        onChange(data.plain_key);
+      }
     } catch {
       setRevealFailedId(id);
       toast.error(text.apiDocs.apiKeyRevealFailed);
@@ -88,6 +131,7 @@ export function ApiKeySelector({ value, onChange, placeholder }: ApiKeySelectorP
   };
 
   const handleInputChange = (event: React.ChangeEvent<HTMLInputElement>) => {
+    setManualValue(event.target.value);
     setSelectValue('');
     onChange(event.target.value);
   };
@@ -118,7 +162,7 @@ export function ApiKeySelector({ value, onChange, placeholder }: ApiKeySelectorP
           <input
             type="password"
             className="input"
-            value={value}
+            value={manualValue}
             onChange={handleInputChange}
             placeholder={placeholder || text.apiDocs.apiKeyPlaceholder}
             autoComplete="off"
@@ -134,7 +178,7 @@ export function ApiKeySelector({ value, onChange, placeholder }: ApiKeySelectorP
           className="input"
           value={selectValue}
           onChange={handleSelect}
-          disabled={isLoading || Boolean(error) || !hasKeys || Boolean(revealLoadingId)}
+          disabled={isLoading || Boolean(error) || !hasKeys || revealLoading}
         >
           <option value="">
             {isLoading
@@ -153,7 +197,7 @@ export function ApiKeySelector({ value, onChange, placeholder }: ApiKeySelectorP
         </select>
       )}
 
-      {revealLoadingId && (
+      {mode === 'saved' && revealLoadingId && (
         <p className="api-key-selector-note api-key-selector-loading">
           <LoadingIndicator size={14} label={text.apiDocs.apiKeyRevealing} />
         </p>

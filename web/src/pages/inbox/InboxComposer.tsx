@@ -49,7 +49,7 @@ export function InboxComposer({
         availabilityGroups={availabilityGroups}
         onChange={onDomainChange}
       />
-      <button ref={generateButtonRef} className="btn-primary" onClick={onGenerate} disabled={isGenerating}>
+      <button ref={generateButtonRef} className="btn-primary" data-onboarding-target="create-mailbox" onClick={onGenerate} disabled={isGenerating}>
         {isGenerating ? <Loader2 size={16} className="animate-spin" /> : <MailPlus size={16} />}
         {text.inbox.generate}
       </button>

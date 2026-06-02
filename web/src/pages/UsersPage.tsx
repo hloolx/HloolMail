@@ -127,7 +127,8 @@ export function UsersPage({ currentUser }: { currentUser: User }) {
   const [quotaForm, setQuotaForm] = useState({
     public_domain_mailbox_limit: '0',
     user_daily_public_mailbox_limit: '0',
-    require_public_domain_for_quota: false
+    require_public_domain_for_quota: false,
+    enable_user_onboarding: false
   });
   useEffect(() => {
     const qs = quotaSettings.data;
@@ -135,7 +136,8 @@ export function UsersPage({ currentUser }: { currentUser: User }) {
     setQuotaForm({
       public_domain_mailbox_limit: String(qs.public_domain_mailbox_limit),
       user_daily_public_mailbox_limit: String(qs.user_daily_public_mailbox_limit),
-      require_public_domain_for_quota: qs.require_public_domain_for_quota
+      require_public_domain_for_quota: qs.require_public_domain_for_quota,
+      enable_user_onboarding: qs.enable_user_onboarding
     });
   }, [quotaDirty, quotaSettings.data]);
 
@@ -143,7 +145,8 @@ export function UsersPage({ currentUser }: { currentUser: User }) {
     mutationFn: () => patchJSON<SystemQuotaSettings>('/api/admin/quota-settings', {
       public_domain_mailbox_limit: toPositiveInt64(quotaForm.public_domain_mailbox_limit, 0),
       user_daily_public_mailbox_limit: toPositiveInt64(quotaForm.user_daily_public_mailbox_limit, 0),
-      require_public_domain_for_quota: quotaForm.require_public_domain_for_quota
+      require_public_domain_for_quota: quotaForm.require_public_domain_for_quota,
+      enable_user_onboarding: quotaForm.enable_user_onboarding
     }),
     onSuccess: () => {
       setQuotaDirty(false);
@@ -233,6 +236,20 @@ export function UsersPage({ currentUser }: { currentUser: User }) {
                   onClick={() => { setQuotaDirty(true); setQuotaForm((current) => ({ ...current, require_public_domain_for_quota: !current.require_public_domain_for_quota })); }}
                   role="switch"
                   aria-checked={quotaForm.require_public_domain_for_quota}
+                >
+                  <span className="toggle-switch-knob" />
+                </button>
+              </div>
+            </label>
+            <label className="grid gap-1 text-sm">
+              <div className="toggle-row">
+                <span className="toggle-row-label">{text.admin.quotaSettings.enableUserOnboarding}<InfoTip text={text.admin.quotaSettings.enableUserOnboardingHint} /></span>
+                <button
+                  type="button"
+                  className={`toggle-switch ${quotaForm.enable_user_onboarding ? 'on' : ''}`}
+                  onClick={() => { setQuotaDirty(true); setQuotaForm((current) => ({ ...current, enable_user_onboarding: !current.enable_user_onboarding })); }}
+                  role="switch"
+                  aria-checked={quotaForm.enable_user_onboarding}
                 >
                   <span className="toggle-switch-knob" />
                 </button>

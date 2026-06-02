@@ -2,7 +2,7 @@ import { useMemo, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { AlertTriangle, Clock3, Plus, RefreshCw, Trash2, X } from 'lucide-react';
 import { toast } from 'sonner';
-import type { Domain, User } from '../api';
+import type { Domain, User, UserOnboardingStatus } from '../api';
 import { api, patchJSON, postJSON } from '../api';
 import type { DomainCheckResult } from '../types';
 import { useText } from '../locales';
@@ -29,6 +29,16 @@ export function DomainManagementPage({ user }: { user: User }) {
   const [inactiveSortState, setInactiveSortState] = useState<DataTableSortState | null>(null);
   const feedbackOriginRef = useRef<HTMLElement | null>(null);
   const domains = useQuery({ queryKey: ['domains-all'], queryFn: () => api<Domain[]>('/api/domains'), retry: false, staleTime: 30_000 });
+  const onboarding = useQuery({
+    queryKey: ['user-onboarding', user.id],
+    queryFn: () => api<UserOnboardingStatus>('/api/user/onboarding'),
+    enabled: user.role === 'user',
+    retry: false,
+    staleTime: 30_000
+  });
+  const addDomainInitialMode: Domain['mode'] = onboarding.data?.required && onboarding.data.next_step === 'domain'
+    ? 'public'
+    : 'private';
   const managedDomains = (domains.data || []).filter(isReadyDomain);
   const waitingDomains = (domains.data || []).filter((domain) => isWaitingDomain(domain) && canDeleteWaitingDomain(domain, user));
   const inactiveDomains = (domains.data || []).filter((domain) => !domain.active && domain.owner_id === user.id);
@@ -173,7 +183,7 @@ export function DomainManagementPage({ user }: { user: User }) {
             <p>{pageDescription}</p>
           </div>
           <div className="admin-table-page-actions domain-management-actions">
-            <button className="btn-primary" onClick={() => setAddOpen(true)}>
+            <button className="btn-primary" data-onboarding-target="add-domain" onClick={() => setAddOpen(true)}>
               <Plus size={16} />
               {text.domains.addButton}
             </button>
@@ -390,7 +400,7 @@ export function DomainManagementPage({ user }: { user: User }) {
         </section>
       )}
       </div>
-      <AddDomainDialog open={addOpen} onClose={() => setAddOpen(false)} />
+      <AddDomainDialog open={addOpen} initialMode={addDomainInitialMode} onClose={() => setAddOpen(false)} />
     </>
   );
 }

@@ -472,6 +472,13 @@ func TestAutoMigrateBackfillsMessageOwnershipFromPrivateDomain(t *testing.T) {
 	}
 }
 
+func TestBackfillMessagePrivateDomainOwnershipRejectsUnexpectedColumn(t *testing.T) {
+	database := openSQLiteTestDB(t)
+	if err := backfillMessagePrivateDomainOwnership(database, "recipient_domain; DROP TABLE messages"); err == nil {
+		t.Fatal("expected unexpected message domain column to be rejected")
+	}
+}
+
 func TestAutoMigrateKeepsPublicDomainOrphanMessageUnowned(t *testing.T) {
 	database := openSQLiteTestDB(t)
 	if err := database.AutoMigrate(&models.User{}, &models.Domain{}, &models.Message{}); err != nil {

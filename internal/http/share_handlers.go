@@ -124,6 +124,7 @@ func (h *Handler) createMailboxShareLink(c *gin.Context, user *models.User, inpu
 		fail(c, http.StatusInternalServerError, err.Error())
 		return
 	}
+	link.Mailbox = &mailbox
 	created(c, h.shareLinkDTO(c, *link, token, accessKey))
 }
 
@@ -205,7 +206,7 @@ func (h *Handler) patchShareLink(c *gin.Context) {
 			fail(c, http.StatusInternalServerError, err.Error())
 			return
 		}
-		if err := h.DB.First(link, "id = ?", link.ID).Error; err != nil {
+		if err := h.DB.Preload("Mailbox").First(link, "id = ?", link.ID).Error; err != nil {
 			fail(c, http.StatusInternalServerError, err.Error())
 			return
 		}
@@ -567,7 +568,7 @@ func (h *Handler) getSharedMailboxMessage(c *gin.Context) {
 }
 
 func (h *Handler) ownShareLinksForUser(user *models.User) *gorm.DB {
-	query := h.DB.Model(&models.ShareLink{})
+	query := h.DB.Model(&models.ShareLink{}).Preload("Mailbox")
 	if user == nil {
 		return query.Where("1 = 0")
 	}
@@ -594,9 +595,9 @@ func (h *Handler) adminShareLinksQuery(c *gin.Context) *gorm.DB {
 		Joins("LEFT JOIN mailboxes ON mailboxes.id = share_links.mailbox_id")
 
 	if search := strings.TrimSpace(strings.ToLower(c.Query("q"))); search != "" {
-		like := "%" + search + "%"
+		like := likeContainsLiteral(search)
 		query = query.Where(
-			"LOWER(users.email) LIKE ? OR LOWER(mailboxes.email) LIKE ? OR LOWER(share_links.token_prefix) LIKE ?",
+			"LOWER(users.email) LIKE ?"+likeEscapeClause+" OR LOWER(mailboxes.email) LIKE ?"+likeEscapeClause+" OR LOWER(share_links.token_prefix) LIKE ?"+likeEscapeClause,
 			like, like, like,
 		)
 	}
@@ -816,6 +817,9 @@ func (h *Handler) shareLinkDTO(c *gin.Context, link models.ShareLink, token, acc
 		LastAccessedAt: link.LastAccessedAt,
 		CreatedAt:      link.CreatedAt,
 		UpdatedAt:      link.UpdatedAt,
+	}
+	if link.Mailbox != nil && link.Mailbox.ID != 0 {
+		dto.MailboxEmail = link.Mailbox.Email
 	}
 	if token != "" {
 		dto.Token = token

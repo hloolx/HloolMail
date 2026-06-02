@@ -10,6 +10,7 @@ import (
 )
 
 const InsecureDefaultSecret = "change-this-in-production"
+const minProductionSecretLength = 16
 
 type Config struct {
 	HTTPAddr                           string
@@ -104,14 +105,21 @@ func (c Config) ValidateSessionSecret(installed bool) error {
 	if IsInsecureSecret(c.SessionSecret) {
 		return fmt.Errorf("SESSION_SECRET must be set to a unique random value before starting production; run install or set SESSION_SECRET")
 	}
-	if c.SessionSecret != "" && !IsInsecureSecret(c.SessionSecret) && c.SessionSecret == c.InboxTokenSecret {
+	if IsInsecureSecret(c.InboxTokenSecret) {
+		return fmt.Errorf("INBOX_TOKEN_SECRET must be set to a unique random value before starting production; run install or set INBOX_TOKEN_SECRET")
+	}
+	if c.SessionSecret == c.InboxTokenSecret {
 		return fmt.Errorf("SESSION_SECRET must differ from INBOX_TOKEN_SECRET; each service needs its own secret")
 	}
 	return nil
 }
 
 func IsInsecureSecret(secret string) bool {
-	switch strings.TrimSpace(secret) {
+	trimmed := strings.TrimSpace(secret)
+	if len(trimmed) < minProductionSecretLength {
+		return true
+	}
+	switch trimmed {
 	case "", InsecureDefaultSecret, "change-this-too", "replace-with-a-long-random-secret", "replace-with-another-long-random-secret":
 		return true
 	default:

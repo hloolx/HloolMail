@@ -22,6 +22,7 @@ const AnnouncementsPage = lazy(() => import('../../pages/AnnouncementsPage').the
 import { AppFrame } from './AppFrame';
 import { AppInset } from './AppInset';
 import { Main } from './Main';
+import { OnboardingGuide } from './OnboardingGuide';
 import { Sidebar } from './Sidebar';
 import { Topbar } from './Topbar';
 
@@ -102,6 +103,7 @@ export function Console({ user }: { user: User }) {
           </AnimatePresence>
         </AppInset>
       </Main>
+      <OnboardingGuide user={user} />
     </AppFrame>
   );
 }

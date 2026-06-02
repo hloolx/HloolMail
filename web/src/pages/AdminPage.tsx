@@ -1,17 +1,37 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Database, Globe2, Inbox, KeyRound, Play, RefreshCw, Save, Search, ShieldAlert, Trash2, Users } from 'lucide-react';
+import {
+  Activity,
+  AlertTriangle,
+  BarChart3,
+  Database,
+  Globe2,
+  Inbox,
+  KeyRound,
+  MailPlus,
+  Play,
+  RefreshCw,
+  Save,
+  Search,
+  ShieldAlert,
+  ShieldCheck,
+  Trash2,
+  Users,
+  type LucideIcon
+} from 'lucide-react';
 import { toast } from 'sonner';
 import { api, patchJSON, postJSON } from '../api';
 import type { PaginatedResponse } from '../api';
-import type { AdminDomainHealth, AdminQuotaAlert, AdminStats, DomainCheckRun, DomainCheckRunsPage, DomainCheckSettings } from '../types';
+import type { AdminDomainHealth, AdminGrowthCounts, AdminQuotaAlert, AdminStats, DomainCheckRun, DomainCheckRunsPage, DomainCheckSettings, TimeseriesStats } from '../types';
 import { formatDomainExpiry, relativeTime } from '../lib/display';
 import { notifySuccess } from '../lib/feedback';
-import { useAppStore } from '../store';
+import { useAppStore, type Page } from '../store';
 import { currentText, useText } from '../locales';
 import { useHashSearchState, useTableUrlState } from '../hooks/useTableUrlState';
-import { DataTable, DataTableToolbar, DataTableViewOptions, InfoTip, Metric, PaginationControls, SegmentedTabs, StatusPill } from '../components/shared';
+import { useCountUp } from '../hooks/useCountUp';
+import { DataTable, DataTableToolbar, DataTableViewOptions, InfoTip, PaginationControls, SegmentedTabs } from '../components/shared';
 import type { DataTableColumn } from '../components/shared';
+import { LineChart } from '../components/charts/LineChart';
 import { AdminAuditLog } from './AdminAuditLog';
 import { AdminShareLinksPanel } from './AdminShareLinksPanel';
 import { AdminWebhooksPanel } from './AdminWebhooksPanel';
@@ -22,14 +42,18 @@ const DOMAIN_HEALTH_MODE_OPTIONS = ['all', 'public', 'private'] as const;
 const DOMAIN_HEALTH_STATUS_OPTIONS = ['all', 'active', 'inactive'] as const;
 const DOMAIN_HEALTH_MX_OPTIONS = ['all', 'verified', 'failed', 'wildcard_failed', 'unchecked', 'stale'] as const;
 const DOMAIN_HEALTH_SEVERITY_OPTIONS = ['all', 'critical', 'warning', 'ok'] as const;
+const ADMIN_TIMESERIES_RANGE_OPTIONS = [7, 30, 90] as const;
 
 type AdminTab = (typeof ADMIN_TAB_OPTIONS)[number];
+type AdminTimeseriesRange = (typeof ADMIN_TIMESERIES_RANGE_OPTIONS)[number];
+type AdminTimeseriesRangeValue = `${AdminTimeseriesRange}`;
 type DomainHealthFilters = {
   mode: string;
   status: string;
   mx: string;
   severity: string;
 };
+type ConfigRisk = { level: 'warning' | 'critical' | 'ok'; title: string; desc: string };
 
 const DEFAULT_DOMAIN_HEALTH_FILTERS: DomainHealthFilters = {
   mode: 'all',
@@ -45,6 +69,7 @@ export function AdminPage() {
   const setPage = useAppStore((state) => state.setPage);
   const { params: adminSearchParams, setParams: setAdminSearchParams } = useHashSearchState();
   const activeAdminTab = getAdminTab(adminSearchParams.get('tab'));
+  const [dashboardRange, setDashboardRange] = useState<AdminTimeseriesRangeValue>('30');
   const dnsRunsUrlState = useTableUrlState({
     pageParam: 'dnsPage',
     pageSizeParam: 'dnsPageSize',
@@ -100,6 +125,12 @@ export function AdminPage() {
   const domainHealthFeedbackOriginRef = useRef<HTMLElement | null>(null);
 
   const stats = useQuery({ queryKey: ['admin-stats'], queryFn: () => api<AdminStats>('/api/admin/stats'), retry: false, staleTime: 30_000 });
+  const adminTimeseries = useQuery({
+    queryKey: ['admin-stats-timeseries', dashboardRange],
+    queryFn: () => api<TimeseriesStats>(`/api/admin/stats/timeseries?days=${dashboardRange}`),
+    retry: false,
+    staleTime: 30_000
+  });
   const domainHealth = useQuery({
     queryKey: ['admin-domain-health', domainHealthPage, domainHealthPerPage, domainHealthSearch, domainHealthFilters],
     queryFn: () => api<PaginatedResponse<AdminDomainHealth>>(`/api/admin/domain-health?${buildDomainHealthQuery(domainHealthFilters, domainHealthSearch, domainHealthPage, domainHealthPerPage)}`),
@@ -154,6 +185,7 @@ export function AdminPage() {
 
   const refreshAdminData = () => {
     queryClient.invalidateQueries({ queryKey: ['admin-stats'] });
+    queryClient.invalidateQueries({ queryKey: ['admin-stats-timeseries'] });
     queryClient.invalidateQueries({ queryKey: ['admin-domain-health'] });
     queryClient.invalidateQueries({ queryKey: ['admin-quota-alerts'] });
     queryClient.invalidateQueries({ queryKey: ['admin-audit-logs'] });
@@ -278,7 +310,7 @@ export function AdminPage() {
   const runsPage = domainCheckRuns.data;
   const lastRun = domainCheckSettings.data?.last_run;
   const hasRunningCheck = runRows.some((run) => run.status === 'running') || lastRun?.status === 'running';
-  const isLoading = stats.isLoading || domainHealth.isLoading || quotaAlerts.isLoading || domainCheckSettings.isLoading || domainCheckRuns.isLoading;
+  const isLoading = stats.isLoading || adminTimeseries.isLoading || domainHealth.isLoading || quotaAlerts.isLoading || domainCheckSettings.isLoading || domainCheckRuns.isLoading;
   const [domainHealthHiddenColumnKeys, setDomainHealthHiddenColumnKeys] = useState<string[]>([]);
   const domainHealthColumns = useMemo<DataTableColumn[]>(() => [
     { key: 'domain', header: text.admin.domainHealth.colDomain, minWidth: '14rem', hideable: false, mobileTitle: true },
@@ -306,47 +338,23 @@ export function AdminPage() {
         </button>
       </div>
 
-      <div className="grid gap-3 md:grid-cols-4">
-        <Metric icon={Inbox} label={text.dashboard.messagesTotal} value={stats.data?.messages ?? 0} loading={stats.isLoading} />
-        <Metric icon={Globe2} label={text.admin.enabledDomains} value={stats.data?.active_domains ?? 0} loading={stats.isLoading} />
-        <Metric icon={Users} label={text.admin.userMetric} value={stats.data?.users ?? 0} loading={stats.isLoading} />
-        <Metric icon={KeyRound} label={text.dashboard.apiCalls} value={stats.data?.api_usage_today ?? 0} loading={stats.isLoading} />
-      </div>
-
-      <section className="panel" id="admin-system-status">
-        <div className="panel-header">
-          <div>
-            <h2>{text.admin.systemStatus.title}<InfoTip text={text.admin.systemStatus.desc} /></h2>
-          </div>
-        </div>
-        <div className="admin-status-grid">
-          <StatusPill ok={!stats.isError} loading={stats.isLoading}>{text.admin.systemStatus.adminApi}</StatusPill>
-          <StatusPill ok={!stats.data?.failed_domains} loading={stats.isLoading}>{text.admin.systemStatus.domainHealth}</StatusPill>
-          <StatusPill ok={stats.data ? true : undefined} loading={stats.isLoading}>
-            {stats.isLoading || !stats.data ? text.admin.systemStatus.cleanup : text.admin.systemStatus.cleanupUnchecked}
-          </StatusPill>
-          <StatusPill ok={!stats.data?.admin_token_is_default} loading={stats.isLoading}>{text.admin.systemStatus.adminToken}</StatusPill>
-        </div>
-        <div className="admin-risk-list">
-          {risks.length ? risks.map((item) => (
-            <div className={`admin-risk admin-risk-${item.level}`} key={item.title} role={item.level === 'critical' ? 'alert' : 'status'}>
-              <ShieldAlert size={16} aria-hidden="true" />
-              <span>
-                <b>{item.title}</b>
-                <small>{item.desc}</small>
-              </span>
-            </div>
-          )) : (
-            <div className="admin-risk admin-risk-ok" role="status">
-              <Database size={16} />
-              <span>
-                <b>{text.admin.risk.none}</b>
-                <small>{text.admin.risk.mxTarget}：{stats.data?.expected_mx || '-'}</small>
-              </span>
-            </div>
-          )}
-        </div>
-      </section>
+      <AdminDashboardOverview
+        stats={stats.data}
+        risks={risks}
+        statsLoading={stats.isLoading}
+        statsError={stats.isError}
+        onRetryStats={() => stats.refetch()}
+        timeseries={adminTimeseries.data}
+        timeseriesLoading={adminTimeseries.isLoading}
+        timeseriesError={adminTimeseries.isError}
+        onRetryTimeseries={() => adminTimeseries.refetch()}
+        range={dashboardRange}
+        onRangeChange={setDashboardRange}
+        quotaAlertsTotal={quotaPage?.total ?? 0}
+        hasRunningCheck={hasRunningCheck}
+        onOpenAdminTab={setActiveAdminTab}
+        onOpenPage={setPage}
+      />
 
       <SegmentedTabs
         value={activeAdminTab}
@@ -721,6 +729,418 @@ export function AdminPage() {
   );
 }
 
+function AdminDashboardOverview({
+  stats,
+  risks,
+  statsLoading,
+  statsError,
+  onRetryStats,
+  timeseries,
+  timeseriesLoading,
+  timeseriesError,
+  onRetryTimeseries,
+  range,
+  onRangeChange,
+  quotaAlertsTotal,
+  hasRunningCheck,
+  onOpenAdminTab,
+  onOpenPage
+}: {
+  stats?: AdminStats;
+  risks: ConfigRisk[];
+  statsLoading: boolean;
+  statsError: boolean;
+  onRetryStats: () => void;
+  timeseries?: TimeseriesStats;
+  timeseriesLoading: boolean;
+  timeseriesError: boolean;
+  onRetryTimeseries: () => void;
+  range: AdminTimeseriesRangeValue;
+  onRangeChange: (range: AdminTimeseriesRangeValue) => void;
+  quotaAlertsTotal: number;
+  hasRunningCheck: boolean;
+  onOpenAdminTab: (tab: string) => void;
+  onOpenPage: (page: Page) => void;
+}) {
+  const text = useText();
+  const growth = growthForRange(stats, range);
+  const rangeLabel = text.admin.dashboard.rangeLabel.replace('{days}', range);
+  const domainsTotal = stats?.total_domains ?? 0;
+  const usersTotal = stats?.users ?? 0;
+  const systemRiskItems = buildSystemRiskItems(text, stats, risks, quotaAlertsTotal, hasRunningCheck, onOpenAdminTab);
+  const domainBreakdown = [
+    { label: text.admin.dashboard.breakdownActiveDomains, value: stats?.active_domains ?? 0, tone: 'good' as const },
+    { label: text.admin.dashboard.breakdownFailedDomains, value: stats?.failed_domains ?? 0, tone: 'bad' as const },
+    { label: text.admin.dashboard.breakdownPublicDomains, value: stats?.public_domains ?? 0, tone: 'focus' as const },
+    { label: text.admin.dashboard.breakdownPrivateDomains, value: stats?.private_domains ?? 0, tone: 'neutral' as const }
+  ];
+  const userBreakdown = [
+    { label: text.admin.dashboard.breakdownEnabledUsers, value: stats?.enabled_users ?? 0, tone: 'good' as const },
+    { label: text.admin.dashboard.breakdownDisabledUsers, value: stats?.disabled_users ?? 0, tone: 'bad' as const },
+    { label: text.admin.dashboard.breakdownAdminUsers, value: stats?.admin_users ?? 0, tone: 'focus' as const },
+    { label: text.admin.dashboard.breakdownRegularUsers, value: stats?.regular_users ?? 0, tone: 'neutral' as const }
+  ];
+  const mailboxBreakdown = [
+    { label: text.admin.dashboard.breakdownPublicMailboxes, value: stats?.public_mailboxes ?? 0, tone: 'focus' as const },
+    { label: text.admin.dashboard.breakdownPrivateMailboxes, value: stats?.private_mailboxes ?? 0, tone: 'neutral' as const }
+  ];
+
+  return (
+    <section className="admin-dashboard-overview" aria-labelledby="admin-dashboard-title">
+      <div className="admin-dashboard-heading">
+        <div>
+          <h2 id="admin-dashboard-title">{text.admin.dashboard.title}</h2>
+          <p>{text.admin.dashboard.desc}</p>
+        </div>
+        <SegmentedTabs
+          value={range}
+          onValueChange={onRangeChange}
+          ariaLabel={text.admin.dashboard.rangeAria}
+          size="sm"
+          className="admin-dashboard-range-tabs"
+          items={ADMIN_TIMESERIES_RANGE_OPTIONS.map((days) => ({
+            value: String(days) as AdminTimeseriesRangeValue,
+            label: text.admin.dashboard.rangeTab.replace('{days}', String(days))
+          }))}
+        />
+      </div>
+
+      {statsError && (
+        <AdminDashboardAlert label={text.admin.dashboard.statsError} onRetry={onRetryStats} />
+      )}
+
+      <div className="admin-dashboard-metrics">
+        <AdminSummaryMetric
+          icon={Inbox}
+          label={text.admin.dashboard.metricMailboxes}
+          value={stats?.mailboxes ?? 0}
+          growth={growth.mailboxes}
+          growthLabel={rangeLabel}
+          loading={statsLoading}
+        />
+        <AdminSummaryMetric
+          icon={MailPlus}
+          label={text.admin.dashboard.metricMessages}
+          value={stats?.messages ?? 0}
+          growth={growth.messages}
+          growthLabel={rangeLabel}
+          loading={statsLoading}
+        />
+        <AdminSummaryMetric
+          icon={Globe2}
+          label={text.admin.dashboard.metricDomains}
+          value={domainsTotal}
+          growth={growth.domains}
+          growthLabel={rangeLabel}
+          loading={statsLoading}
+          onClick={() => onOpenAdminTab('domainHealth')}
+        />
+        <AdminSummaryMetric
+          icon={Users}
+          label={text.admin.dashboard.metricUsers}
+          value={usersTotal}
+          growth={growth.users}
+          growthLabel={rangeLabel}
+          loading={statsLoading}
+          onClick={() => onOpenPage('users')}
+        />
+      </div>
+
+      <div className="admin-dashboard-grid">
+        <section className="panel admin-dashboard-chart-panel">
+          <div className="panel-header admin-dashboard-panel-header">
+            <div>
+              <h2>{text.admin.dashboard.timelineTitle}<InfoTip text={text.admin.dashboard.timelineHint.replace('{days}', range)} /></h2>
+              <p>{text.admin.dashboard.timelineDesc}</p>
+            </div>
+            <span className="admin-dashboard-api-chip">
+              <Activity size={14} aria-hidden="true" />
+              {text.admin.dashboard.apiCallsToday.replace('{count}', formatNumber(stats?.api_usage_today ?? 0))}
+            </span>
+          </div>
+          {timeseriesError && (
+            <AdminDashboardAlert label={text.admin.dashboard.timeseriesError} onRetry={onRetryTimeseries} compact />
+          )}
+          <div className="admin-dashboard-chart-grid">
+            <TrendPanel
+              title={text.admin.dashboard.chartNewMailboxes}
+              data={timeseries?.new_mailboxes || []}
+              labels={timeseries?.days || []}
+              color="var(--focus)"
+              unit={text.admin.dashboard.unitMailboxes}
+              loading={timeseriesLoading}
+              emptyLabel={text.admin.dashboard.emptyTrend}
+            />
+            <TrendPanel
+              title={text.admin.dashboard.chartNewMessages}
+              data={timeseries?.new_messages || timeseries?.messages || []}
+              labels={timeseries?.days || []}
+              color="var(--primary)"
+              unit={text.dashboard.chartUnitMessages}
+              loading={timeseriesLoading}
+              emptyLabel={text.admin.dashboard.emptyTrend}
+            />
+            <TrendPanel
+              title={text.admin.dashboard.chartNewDomains}
+              data={timeseries?.new_domains || []}
+              labels={timeseries?.days || []}
+              color="var(--good)"
+              unit={text.dashboard.chartUnitDomains}
+              loading={timeseriesLoading}
+              emptyLabel={text.admin.dashboard.emptyTrend}
+            />
+            <TrendPanel
+              title={text.admin.dashboard.chartNewUsers}
+              data={timeseries?.new_users || []}
+              labels={timeseries?.days || []}
+              color="var(--warn)"
+              unit={text.admin.dashboard.unitUsers}
+              loading={timeseriesLoading}
+              emptyLabel={text.admin.dashboard.emptyTrend}
+            />
+          </div>
+        </section>
+
+        <section className="panel admin-dashboard-side-panel">
+          <div className="panel-header admin-dashboard-panel-header">
+            <div>
+              <h2>{text.admin.dashboard.riskTitle}</h2>
+              <p>{text.admin.dashboard.riskDesc}</p>
+            </div>
+          </div>
+          <div className="admin-dashboard-action-list">
+            {systemRiskItems.map((item) => (
+              <button
+                key={item.key}
+                type="button"
+                className={`admin-dashboard-action admin-dashboard-action-${item.level}`}
+                onClick={item.onClick}
+              >
+                <item.icon size={16} aria-hidden="true" />
+                <span>
+                  <b>{item.title}</b>
+                  <small>{item.desc}</small>
+                </span>
+                <strong>{item.count}</strong>
+              </button>
+            ))}
+          </div>
+        </section>
+      </div>
+
+      <div className="admin-dashboard-breakdowns">
+        <BreakdownPanel title={text.admin.dashboard.domainBreakdownTitle} total={domainsTotal} items={domainBreakdown} />
+        <BreakdownPanel title={text.admin.dashboard.userBreakdownTitle} total={usersTotal} items={userBreakdown} />
+        <BreakdownPanel title={text.admin.dashboard.mailboxBreakdownTitle} total={stats?.mailboxes ?? 0} items={mailboxBreakdown} />
+      </div>
+    </section>
+  );
+}
+
+function AdminSummaryMetric({
+  icon: Icon,
+  label,
+  value,
+  growth,
+  growthLabel,
+  loading,
+  onClick
+}: {
+  icon: LucideIcon;
+  label: string;
+  value: number;
+  growth: number;
+  growthLabel: string;
+  loading: boolean;
+  onClick?: () => void;
+}) {
+  const animated = useCountUp(value);
+  const content = (
+    <>
+      <span className="admin-summary-icon"><Icon size={17} aria-hidden="true" /></span>
+      <span className="admin-summary-copy">
+        <span className="admin-summary-label">{label}</span>
+        <strong>{loading ? <span className="metric-loading" aria-busy="true" /> : animated.toLocaleString()}</strong>
+        <small>{growthLabel.replace('{count}', formatSignedNumber(growth))}</small>
+      </span>
+    </>
+  );
+  if (onClick) {
+    return (
+      <button className="admin-summary-metric admin-summary-metric-clickable" type="button" onClick={onClick}>
+        {content}
+      </button>
+    );
+  }
+  return (
+    <div className="admin-summary-metric">
+      {content}
+    </div>
+  );
+}
+
+function TrendPanel({
+  title,
+  data,
+  labels,
+  color,
+  unit,
+  loading,
+  emptyLabel
+}: {
+  title: string;
+  data: number[];
+  labels: string[];
+  color: string;
+  unit: string;
+  loading: boolean;
+  emptyLabel: string;
+}) {
+  return (
+    <div className="admin-trend-panel">
+      <h3>{title}</h3>
+      <LineChart data={data} labels={labels} color={color} unit={unit} loading={loading} emptyLabel={emptyLabel} ariaLabel={title} />
+    </div>
+  );
+}
+
+function BreakdownPanel({
+  title,
+  total,
+  items
+}: {
+  title: string;
+  total: number;
+  items: Array<{ label: string; value: number; tone: 'good' | 'bad' | 'focus' | 'neutral' }>;
+}) {
+  return (
+    <section className="panel admin-breakdown-panel">
+      <div className="admin-breakdown-header">
+        <h2>{title}</h2>
+        <span>{formatNumber(total)}</span>
+      </div>
+      <div className="admin-breakdown-list">
+        {items.map((item) => (
+          <div className={`admin-breakdown-row admin-breakdown-${item.tone}`} key={item.label}>
+            <div>
+              <span>{item.label}</span>
+              <b>{formatNumber(item.value)}</b>
+            </div>
+            <div className="admin-breakdown-track" aria-hidden="true">
+              <span style={{ width: `${percentage(item.value, total)}%` }} />
+            </div>
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function AdminDashboardAlert({ label, onRetry, compact = false }: { label: string; onRetry: () => void; compact?: boolean }) {
+  const text = useText();
+  return (
+    <div className={`dashboard-alert dashboard-alert-critical ${compact ? 'admin-dashboard-alert-compact' : ''}`} role="alert">
+      <AlertTriangle size={16} />
+      <span>{label}</span>
+      <button className="btn-ghost" style={{ marginLeft: 'auto' }} onClick={onRetry}>
+        {text.common.retry}
+      </button>
+    </div>
+  );
+}
+
+function growthForRange(stats: AdminStats | undefined, range: AdminTimeseriesRangeValue): AdminGrowthCounts {
+  if (!stats?.growth) return emptyGrowth();
+  if (range === '7') return stats.growth.last_7_days || emptyGrowth();
+  if (range === '90') return stats.growth.last_90_days || stats.growth.last_30_days || emptyGrowth();
+  return stats.growth.last_30_days || emptyGrowth();
+}
+
+function emptyGrowth(): AdminGrowthCounts {
+  return { messages: 0, mailboxes: 0, domains: 0, users: 0, api_calls: 0 };
+}
+
+function buildSystemRiskItems(
+  text: ReturnType<typeof currentText>,
+  stats: AdminStats | undefined,
+  risks: ConfigRisk[],
+  quotaAlertsTotal: number,
+  hasRunningCheck: boolean,
+  onOpenAdminTab: (tab: string) => void
+) {
+  const failedDomains = stats?.failed_domains ?? 0;
+  const staleDomains = stats?.stale_domains ?? 0;
+  const expiringDomains = stats?.expiring_domains ?? 0;
+  const expiredDomains = stats?.expired_domains ?? 0;
+  const domainRiskCount = failedDomains + staleDomains + expiringDomains + expiredDomains;
+  const configRiskCount = risks.length;
+  return [
+    {
+      key: 'domain-health',
+      icon: domainRiskCount > 0 ? ShieldAlert : ShieldCheck,
+      level: domainRiskCount > 0 ? 'warning' : 'ok',
+      title: text.admin.dashboard.riskDomainTitle,
+      desc: text.admin.dashboard.riskDomainDesc
+        .replace('{failed}', formatNumber(failedDomains))
+        .replace('{stale}', formatNumber(staleDomains))
+        .replace('{expiring}', formatNumber(expiringDomains + expiredDomains)),
+      count: formatNumber(domainRiskCount),
+      onClick: () => onOpenAdminTab('domainHealth')
+    },
+    {
+      key: 'quota-alerts',
+      icon: BarChart3,
+      level: quotaAlertsTotal > 0 ? 'warning' : 'ok',
+      title: text.admin.dashboard.riskQuotaTitle,
+      desc: quotaAlertsTotal > 0 ? text.admin.dashboard.riskQuotaDesc : text.admin.dashboard.riskQuotaEmpty,
+      count: formatNumber(quotaAlertsTotal),
+      onClick: () => onOpenAdminTab('quotaAlerts')
+    },
+    {
+      key: 'config-risks',
+      icon: configRiskCount > 0 ? KeyRound : ShieldCheck,
+      level: configRiskCount > 0 ? 'warning' : 'ok',
+      title: text.admin.dashboard.riskConfigTitle,
+      desc: configRiskCount > 0 ? risks.map((risk) => risk.title).join(' / ') : text.admin.dashboard.riskConfigEmpty,
+      count: formatNumber(configRiskCount),
+      onClick: () => onOpenAdminTab('audit')
+    },
+    {
+      key: 'dns-check',
+      icon: hasRunningCheck ? RefreshCw : Database,
+      level: hasRunningCheck || staleDomains > 0 ? 'warning' : 'ok',
+      title: text.admin.dashboard.riskDnsTitle,
+      desc: hasRunningCheck
+        ? text.admin.dashboard.riskDnsRunning
+        : text.admin.dashboard.riskDnsDesc.replace('{stale}', formatNumber(staleDomains)),
+      count: hasRunningCheck ? text.admin.dashboard.runningTag : formatNumber(staleDomains),
+      onClick: () => onOpenAdminTab('dns')
+    }
+  ] as Array<{
+    key: string;
+    icon: LucideIcon;
+    level: 'ok' | 'warning' | 'critical';
+    title: string;
+    desc: string;
+    count: string;
+    onClick: () => void;
+  }>;
+}
+
+function formatNumber(value: number) {
+  return Math.max(0, Math.round(Number.isFinite(value) ? value : 0)).toLocaleString();
+}
+
+function formatSignedNumber(value: number) {
+  const safe = Math.round(Number.isFinite(value) ? value : 0);
+  return `${safe >= 0 ? '+' : ''}${safe.toLocaleString()}`;
+}
+
+function percentage(value: number, total: number) {
+  if (!Number.isFinite(value) || !Number.isFinite(total) || total <= 0 || value <= 0) return 0;
+  return Math.max(2, Math.min(100, Math.round((value / total) * 100)));
+}
+
 function SeverityPill({ severity, children }: { severity: 'ok' | 'warning' | 'critical'; children: string }) {
   return <span className={`severity-pill severity-${severity}`}>{children}</span>;
 }
@@ -833,13 +1253,11 @@ function quotaSummary(alert: AdminQuotaAlert) {
 function configRisks(stats?: AdminStats) {
   const text = currentText();
   if (!stats) return [];
-  const risks: { level: 'warning' | 'critical' | 'ok'; title: string; desc: string }[] = [];
+  const risks: ConfigRisk[] = [];
   if (stats.dev_mode) {
     risks.push({ level: 'warning', title: text.admin.risk.devMode, desc: text.admin.risk.devModeDesc });
   }
-  if (stats.admin_token_is_default) {
-    risks.push({ level: 'critical', title: text.admin.risk.defaultToken, desc: text.admin.risk.defaultTokenDesc });
-  } else if (stats.admin_token_enabled) {
+  if (stats.admin_token_enabled) {
     risks.push({ level: 'warning', title: text.admin.risk.tokenEnabled, desc: text.admin.risk.tokenEnabledDesc });
   }
   if ((stats.failed_domains || 0) > 0) {

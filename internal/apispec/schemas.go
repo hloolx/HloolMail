@@ -220,6 +220,7 @@ func Schemas() map[string]Schema {
 			"id":               integerSchema("uint64"),
 			"resource_type":    stringSchema(""),
 			"mailbox_id":       integerSchema("uint64"),
+			"mailbox_email":    stringSchema("email"),
 			"token":            stringSchema(""),
 			"access_key":       stringSchema(""),
 			"token_prefix":     stringSchema(""),

@@ -845,6 +845,9 @@ func (h *Handler) loginOAuthUser(provider string, info OAuthUserInfo, token oaut
 				DailyLimit:    1000,
 				TotalLimit:    0,
 			}
+			if err := markNewUserOnboardingRequired(tx, &user); err != nil {
+				return err
+			}
 			if err := tx.Create(&user).Error; err != nil {
 				return err
 			}

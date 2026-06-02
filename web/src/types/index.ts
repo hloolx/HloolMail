@@ -15,27 +15,58 @@ export type Stats = {
 export type TimeseriesStats = {
   days: string[];
   messages: number[];
+  message_totals?: number[];
+  new_messages?: number[];
   domains: number[];
+  new_domains?: number[];
+  mailboxes?: number[];
+  new_mailboxes?: number[];
+  users?: number[];
+  new_users?: number[];
   api_calls: number[];
+};
+
+export type AdminGrowthCounts = {
+  messages: number;
+  mailboxes: number;
+  domains: number;
+  users: number;
+  api_calls: number;
 };
 
 export type AdminStats = {
   messages: number;
+  mailboxes?: number;
+  public_mailboxes?: number;
+  private_mailboxes?: number;
   total_domains?: number;
+  public_domains?: number;
+  private_domains?: number;
   active_domains: number;
+  inactive_domains?: number;
+  verified_domains?: number;
   failed_domains: number;
   pending_domains?: number;
   stale_domains?: number;
+  expiring_domains?: number;
+  expired_domains?: number;
   users?: number;
+  admin_users?: number;
+  regular_users?: number;
   enabled_users?: number;
   disabled_users?: number;
   api_keys?: number;
   active_api_keys?: number;
   disabled_api_keys?: number;
   api_usage_today: number;
+  growth?: {
+    today: AdminGrowthCounts;
+    last_7_days: AdminGrowthCounts;
+    last_30_days: AdminGrowthCounts;
+    last_90_days?: AdminGrowthCounts;
+  };
   dev_mode?: boolean;
   admin_token_enabled?: boolean;
-  admin_token_is_default?: boolean;
   expected_mx?: string;
   message_retention_hours?: number;
 };

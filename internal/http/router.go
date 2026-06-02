@@ -101,6 +101,8 @@ func NewRouter(h *Handler) *gin.Engine {
 	authAPI.POST("/auth/logout", h.logout)
 	authAPI.GET("/auth/me", h.me)
 	authAPI.PATCH("/user/profile", h.patchUserProfile)
+	authAPI.GET("/user/onboarding", h.getUserOnboarding)
+	authAPI.PATCH("/user/onboarding", h.patchUserOnboarding)
 	authAPI.GET("/user/oauth-identities", h.listUserOAuthIdentities)
 	authAPI.DELETE("/user/oauth-identities/:provider", h.unbindUserOAuthIdentity)
 	authAPI.GET("/user/passkeys", h.listUserPasskeys)

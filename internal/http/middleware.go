@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"crypto/sha256"
+	"crypto/subtle"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -279,7 +280,7 @@ func (h *Handler) requestHasSameOrigin(c *gin.Context) bool {
 	if referer := strings.TrimSpace(c.GetHeader("Referer")); referer != "" {
 		return h.sameOriginAllowed(c, referer)
 	}
-	return true
+	return strings.EqualFold(strings.TrimSpace(c.GetHeader("Sec-Fetch-Site")), "same-origin")
 }
 
 func (h *Handler) sameOriginAllowed(c *gin.Context, raw string) bool {
@@ -381,7 +382,24 @@ func (h *Handler) requireAdmin(c *gin.Context) bool {
 }
 
 func (h *Handler) isAdminTokenRequest(c *gin.Context) bool {
-	return h.Config.AdminToken != "" && c.GetHeader("X-Admin-Token") == h.Config.AdminToken
+	if h.Config.AdminToken == "" {
+		return false
+	}
+	return constantTimeStringEqual(c.GetHeader("X-Admin-Token"), h.Config.AdminToken)
+}
+
+func constantTimeStringEqual(a, b string) bool {
+	aHash := sha256.Sum256([]byte(a))
+	bHash := sha256.Sum256([]byte(b))
+	return subtle.ConstantTimeCompare(aHash[:], bHash[:]) == 1 && len(a) == len(b)
+}
+
+func (h *Handler) requireSameOriginSessionRead(c *gin.Context) bool {
+	if h.requestHasSameOrigin(c) {
+		return true
+	}
+	fail(c, http.StatusForbidden, "same-origin request required")
+	return false
 }
 
 func (h *Handler) requireAdminSession(c *gin.Context) (*models.User, bool) {
@@ -454,15 +472,26 @@ func (h *Handler) consumeUserQuota(c *gin.Context) bool {
 		fail(c, http.StatusInternalServerError, err.Error())
 		return false
 	}
+	userID := user.ID
+	path := c.Request.URL.Path
+	method := c.Request.Method
+	ip := c.ClientIP()
+	userAgent := c.Request.UserAgent()
 	go func() {
-		defer func() { recover() }()
-		h.DB.Create(&models.APIUsageLog{
-			UserID:    &user.ID,
-			Path:      c.Request.URL.Path,
-			Method:    c.Request.Method,
-			IP:        c.ClientIP(),
-			UserAgent: c.Request.UserAgent(),
-		})
+		defer func() {
+			if recovered := recover(); recovered != nil {
+				log.Printf("api usage log panic: user_id=%d path=%s method=%s panic=%v", userID, path, method, recovered)
+			}
+		}()
+		if err := h.DB.Create(&models.APIUsageLog{
+			UserID:    &userID,
+			Path:      path,
+			Method:    method,
+			IP:        ip,
+			UserAgent: userAgent,
+		}).Error; err != nil {
+			log.Printf("api usage log failed: user_id=%d path=%s method=%s error=%v", userID, path, method, err)
+		}
 	}()
 	return true
 }

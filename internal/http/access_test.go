@@ -330,6 +330,7 @@ func TestAPIKeyResponsesRedactStoredSecret(t *testing.T) {
 
 	create := httptest.NewRequest(http.MethodPost, "/api/api-keys", bytes.NewReader([]byte(`{"name":"redacted","daily_limit":10,"total_limit":0}`)))
 	create.Header.Set("Content-Type", "application/json")
+	markSameOrigin(create)
 	for _, cookie := range login.Result().Cookies() {
 		create.AddCookie(cookie)
 	}
@@ -370,6 +371,7 @@ func TestAPIKeyResponsesRedactStoredSecret(t *testing.T) {
 
 	patch := httptest.NewRequest(http.MethodPatch, "/api/api-keys/"+strconv.Itoa(id), bytes.NewReader([]byte(`{"enabled":false}`)))
 	patch.Header.Set("Content-Type", "application/json")
+	markSameOrigin(patch)
 	for _, cookie := range login.Result().Cookies() {
 		patch.AddCookie(cookie)
 	}
@@ -794,12 +796,24 @@ func TestAdminRegularStatsAreOwnerScopedAndAdminStatsStayGlobal(t *testing.T) {
 		t.Fatalf("admin global stats = %d: %s", globalStats.Code, globalStats.Body.String())
 	}
 	assertStatsCounts(t, globalStats.Body.Bytes(), map[string]int64{
-		"messages":        2,
-		"total_domains":   2,
-		"active_domains":  2,
-		"users":           2,
-		"api_keys":        2,
-		"api_usage_today": 2,
+		"messages":          2,
+		"mailboxes":         2,
+		"public_mailboxes":  2,
+		"private_mailboxes": 0,
+		"total_domains":     2,
+		"public_domains":    2,
+		"private_domains":   0,
+		"active_domains":    2,
+		"inactive_domains":  0,
+		"verified_domains":  2,
+		"failed_domains":    0,
+		"users":             2,
+		"admin_users":       1,
+		"regular_users":     1,
+		"enabled_users":     2,
+		"disabled_users":    0,
+		"api_keys":          2,
+		"api_usage_today":   2,
 	})
 
 	globalSeries := perform(router, http.MethodGet, "/api/admin/stats/timeseries?days=2", nil, headers)
@@ -807,6 +821,12 @@ func TestAdminRegularStatsAreOwnerScopedAndAdminStatsStayGlobal(t *testing.T) {
 		t.Fatalf("admin global stats timeseries = %d: %s", globalSeries.Code, globalSeries.Body.String())
 	}
 	assertTimeseriesLastValues(t, globalSeries.Body.Bytes(), 2, 2, 2)
+	assertTimeseriesLastFields(t, globalSeries.Body.Bytes(), map[string]int64{
+		"message_totals": 2,
+		"mailboxes":      2,
+		"users":          2,
+		"new_users":      2,
+	})
 }
 
 func TestAdminAPIKeyRegularStatsAreOwnerScoped(t *testing.T) {
@@ -1400,7 +1420,7 @@ func TestUserDailyLimitAppliesOnlyToPublicMailboxCreation(t *testing.T) {
 	for _, cookie := range login.Result().Cookies() {
 		cookies = append(cookies, cookie.Name+"="+cookie.Value)
 	}
-	headers := map[string]string{"Cookie": strings.Join(cookies, "; ")}
+	headers := map[string]string{"Cookie": strings.Join(cookies, "; "), "Sec-Fetch-Site": "same-origin"}
 
 	firstPublic := perform(router, http.MethodPost, "/api/generate-email", map[string]any{
 		"prefix": "one",
@@ -2589,8 +2609,15 @@ func TestInboxStreamRequiresSessionCookie(t *testing.T) {
 	if login.Code != http.StatusOK {
 		t.Fatalf("login = %d: %s", login.Code, login.Body.String())
 	}
+	crossSiteHeaders := sessionHeaders(login)
+	crossSiteHeaders["Origin"] = "https://evil.example.test"
+	crossSite := perform(router, http.MethodGet, "/api/inbox-stream?email=demo@stream.test", nil, crossSiteHeaders)
+	if crossSite.Code != http.StatusForbidden {
+		t.Fatalf("cross-site cookie stream response = %d, want 403: %s", crossSite.Code, crossSite.Body.String())
+	}
 	ctx, cancel := context.WithCancel(context.Background())
 	request := httptest.NewRequest(http.MethodGet, "/api/inbox-stream?email=demo@stream.test", nil).WithContext(ctx)
+	request.Header.Set("Origin", "http://example.com")
 	for _, cookie := range login.Result().Cookies() {
 		request.AddCookie(cookie)
 	}
@@ -3273,6 +3300,7 @@ func TestDeleteUserHardDeletesOwnedResources(t *testing.T) {
 		t.Fatalf("login = %d: %s", login.Code, login.Body.String())
 	}
 	request := httptest.NewRequest(http.MethodDelete, "/api/admin/users/"+strconv.Itoa(int(victim.ID)), nil)
+	markSameOrigin(request)
 	for _, cookie := range login.Result().Cookies() {
 		request.AddCookie(cookie)
 	}
@@ -3346,6 +3374,7 @@ func TestInstallLoginAndAdminGate(t *testing.T) {
 	}
 	selfDisable := httptest.NewRequest(http.MethodPatch, "/api/admin/users/1", bytes.NewReader([]byte(`{"enabled":false}`)))
 	selfDisable.Header.Set("Content-Type", "application/json")
+	markSameOrigin(selfDisable)
 	for _, cookie := range login.Result().Cookies() {
 		selfDisable.AddCookie(cookie)
 	}
@@ -3356,6 +3385,7 @@ func TestInstallLoginAndAdminGate(t *testing.T) {
 	}
 	createUser := httptest.NewRequest(http.MethodPost, "/api/admin/users", bytes.NewReader([]byte(`{"email":"user@example.com","nickname":"Console User","password":"password123","role":"user","daily_limit":5}`)))
 	createUser.Header.Set("Content-Type", "application/json")
+	markSameOrigin(createUser)
 	for _, cookie := range login.Result().Cookies() {
 		createUser.AddCookie(cookie)
 	}
@@ -3766,6 +3796,7 @@ func TestLogoutRevokesSession(t *testing.T) {
 	}
 
 	logout := httptest.NewRequest(http.MethodPost, "/api/auth/logout", nil)
+	markSameOrigin(logout)
 	logout.AddCookie(sessionCookie)
 	logoutResponse := httptest.NewRecorder()
 	router.ServeHTTP(logoutResponse, logout)
@@ -3911,7 +3942,14 @@ func sessionHeaders(response *httptest.ResponseRecorder) map[string]string {
 	for _, cookie := range response.Result().Cookies() {
 		cookies = append(cookies, cookie.Name+"="+cookie.Value)
 	}
-	return map[string]string{"Cookie": strings.Join(cookies, "; ")}
+	return map[string]string{
+		"Cookie":         strings.Join(cookies, "; "),
+		"Sec-Fetch-Site": "same-origin",
+	}
+}
+
+func markSameOrigin(request *http.Request) {
+	request.Header.Set("Sec-Fetch-Site", "same-origin")
 }
 
 func assertStatsCounts(t *testing.T, body []byte, want map[string]int64) {
@@ -3958,8 +3996,35 @@ func assertTimeseriesLastValues(t *testing.T, body []byte, messages, domains, ap
 	}
 }
 
+func assertTimeseriesLastFields(t *testing.T, body []byte, want map[string]int64) {
+	t.Helper()
+	var payload struct {
+		Data map[string]json.RawMessage `json:"data"`
+	}
+	if err := json.Unmarshal(body, &payload); err != nil {
+		t.Fatal(err)
+	}
+	for key, expected := range want {
+		var values []int64
+		raw, ok := payload.Data[key]
+		if !ok {
+			t.Fatalf("timeseries[%s] missing in %s", key, string(body))
+		}
+		if err := json.Unmarshal(raw, &values); err != nil {
+			t.Fatalf("timeseries[%s] is not an integer array in %s: %v", key, string(body), err)
+		}
+		if len(values) == 0 {
+			t.Fatalf("timeseries[%s] should not be empty in %s", key, string(body))
+		}
+		if got := values[len(values)-1]; got != expected {
+			t.Fatalf("timeseries[%s] last value = %d, want %d in %s", key, got, expected, string(body))
+		}
+	}
+}
+
 func deleteDomainRequest(handler http.Handler, login *httptest.ResponseRecorder, id uint) *httptest.ResponseRecorder {
 	request := httptest.NewRequest(http.MethodDelete, "/api/domains/"+strconv.Itoa(int(id)), nil)
+	markSameOrigin(request)
 	for _, cookie := range login.Result().Cookies() {
 		request.AddCookie(cookie)
 	}

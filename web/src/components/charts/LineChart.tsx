@@ -10,6 +10,13 @@ function formatChartLabel(label: string): string {
   return label;
 }
 
+function shouldShowXAxisLabel(index: number, total: number): boolean {
+  if (total <= 8) return true;
+  const lastIndex = total - 1;
+  const stride = Math.max(1, Math.ceil(lastIndex / 6));
+  return index === 0 || index === lastIndex || index % stride === 0;
+}
+
 export function LineChart({
   data,
   labels,
@@ -117,7 +124,7 @@ export function LineChart({
       </svg>
       <div className="chart-x-labels">
         {labels.map((label, i) => (
-          <span key={i}>{formatChartLabel(label)}</span>
+          <span key={i}>{shouldShowXAxisLabel(i, labels.length) ? formatChartLabel(label) : ''}</span>
         ))}
       </div>
     </div>

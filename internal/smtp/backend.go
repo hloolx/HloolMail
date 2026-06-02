@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"gptmail/internal/domain"
 	"gptmail/internal/events"
@@ -47,10 +48,6 @@ const (
 
 func (b *Backend) NewSession(_ *gosmtp.Conn) (gosmtp.Session, error) {
 	return &Session{service: b.Service}, nil
-}
-
-func (s *Session) AuthPlain(_, _ string) error {
-	return nil
 }
 
 func (s *Session) Mail(from string, _ *gosmtp.MailOptions) error {
@@ -239,12 +236,9 @@ func truncateString(value string, maxRunes int) string {
 	if maxRunes <= 0 || value == "" {
 		return value
 	}
-	if len(value) <= maxRunes {
+	if utf8.RuneCountInString(value) <= maxRunes {
 		return value
 	}
 	runes := []rune(value)
-	if len(runes) <= maxRunes {
-		return value
-	}
 	return string(runes[:maxRunes])
 }

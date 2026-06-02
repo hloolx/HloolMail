@@ -216,6 +216,9 @@ func (h *Handler) announcementStream(c *gin.Context) {
 	if !loggedIn {
 		return
 	}
+	if !h.requireSameOriginSessionRead(c) {
+		return
+	}
 	if h.Hub == nil {
 		fail(c, http.StatusInternalServerError, "announcement stream unavailable")
 		return

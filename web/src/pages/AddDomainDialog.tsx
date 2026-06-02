@@ -1,5 +1,5 @@
 /* eslint-disable no-irregular-whitespace, no-misleading-character-class */
-import { useCallback, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Check, Copy, Globe2, Plus, ShieldCheck, X } from 'lucide-react';
 import { toast } from 'sonner';
@@ -47,7 +47,15 @@ function isValidDomain(domainName: string) {
   return labels.length > 1 && labels.every((label) => /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(label));
 }
 
-export function AddDomainDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
+export function AddDomainDialog({
+  open,
+  onClose,
+  initialMode = 'private'
+}: {
+  open: boolean;
+  onClose: () => void;
+  initialMode?: Domain['mode'];
+}) {
   const queryClient = useQueryClient();
   const text = useText();
   const [domainsText, setDomainsText] = useState('');
@@ -79,6 +87,11 @@ export function AddDomainDialog({ open, onClose }: { open: boolean; onClose: () 
   const mxTarget = (cfg?.expected_mx || 'mail.example.com').replace(/\.$/, '');
   const wildcardInfo = text.domains.batchWildcardInfo.replace('[[mx]]', mxTarget);
   const submitted = results !== null;
+
+  useEffect(() => {
+    if (!open || submitted) return;
+    setMode(initialMode);
+  }, [initialMode, open, submitted]);
 
   const resetForm = () => {
     setDomainsText('');
@@ -291,6 +304,7 @@ export function AddDomainDialog({ open, onClose }: { open: boolean; onClose: () 
 export function invalidateDomainQueries(queryClient: ReturnType<typeof useQueryClient>) {
   queryClient.invalidateQueries({ queryKey: ['domains-all'] });
   queryClient.invalidateQueries({ queryKey: ['domains-available'] });
+  queryClient.invalidateQueries({ queryKey: ['user-onboarding'] });
 }
 
 export function pendingDeleteAt(domain: Domain) {

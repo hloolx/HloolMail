@@ -14,6 +14,7 @@ import (
 	"mime/quotedprintable"
 	"net/mail"
 	"strings"
+	"unicode/utf8"
 
 	"golang.org/x/text/encoding"
 	"golang.org/x/text/encoding/htmlindex"
@@ -317,12 +318,9 @@ func truncateString(value string, maxRunes int) string {
 	if maxRunes <= 0 || value == "" {
 		return value
 	}
-	if len(value) <= maxRunes {
+	if utf8.RuneCountInString(value) <= maxRunes {
 		return value
 	}
 	runes := []rune(value)
-	if len(runes) <= maxRunes {
-		return value
-	}
 	return string(runes[:maxRunes])
 }

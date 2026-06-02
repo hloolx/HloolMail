@@ -203,7 +203,7 @@ func (h *Handler) statsTimeseries(c *gin.Context) {
 		return
 	}
 	actor := &requestActor{User: user}
-	days := parseLimit(c.Query("days"), 7, 30)
+	days := parseLimit(c.Query("days"), 30, 90)
 	if days < 2 {
 		days = 7
 	}
@@ -304,38 +304,74 @@ func (h *Handler) adminStats(c *gin.Context) {
 	if !h.requireAdmin(c) {
 		return
 	}
-	var totalMessages, activeDomains, failedDomains, pendingDomains, totalDomains, usageToday int64
-	var users, enabledUsers, disabledUsers, apiKeys, activeAPIKeys, disabledAPIKeys, staleDomains int64
+	now := time.Now()
+	today := startOfDay(now)
+	var totalMessages, mailboxes, publicMailboxes, privateMailboxes, activeDomains, failedDomains, pendingDomains, totalDomains, usageToday int64
+	var publicDomains, privateDomains, inactiveDomains, verifiedDomains, expiringDomains, expiredDomains int64
+	var users, adminUsers, regularUsers, enabledUsers, disabledUsers, apiKeys, activeAPIKeys, disabledAPIKeys, staleDomains int64
 	h.DB.Model(&models.Message{}).Count(&totalMessages)
+	h.DB.Model(&models.Mailbox{}).Count(&mailboxes)
+	h.DB.Model(&models.Mailbox{}).
+		Joins("JOIN domains ON domains.id = mailboxes.domain_id").
+		Where("domains.mode = ?", models.DomainModePublic).
+		Count(&publicMailboxes)
+	h.DB.Model(&models.Mailbox{}).
+		Joins("JOIN domains ON domains.id = mailboxes.domain_id").
+		Where("domains.mode = ?", models.DomainModePrivate).
+		Count(&privateMailboxes)
 	h.DB.Model(&models.Domain{}).Count(&totalDomains)
+	h.DB.Model(&models.Domain{}).Where("mode = ?", models.DomainModePublic).Count(&publicDomains)
+	h.DB.Model(&models.Domain{}).Where("mode = ?", models.DomainModePrivate).Count(&privateDomains)
 	h.DB.Model(&models.Domain{}).Where("active = ?", true).Count(&activeDomains)
+	h.DB.Model(&models.Domain{}).Where("active = ?", false).Count(&inactiveDomains)
+	h.DB.Model(&models.Domain{}).Where("mx_verified = ?", true).Count(&verifiedDomains)
 	h.DB.Model(&models.Domain{}).Where("active = ? AND mx_verified = ?", true, false).Count(&failedDomains)
 	h.DB.Model(&models.Domain{}).Where("active = ? AND first_verified_at IS NULL AND pending_delete_at IS NOT NULL", true).Count(&pendingDomains)
-	h.DB.Model(&models.Domain{}).Where("last_mx_check_at IS NULL OR last_mx_check_at < ?", time.Now().Add(-24*time.Hour)).Count(&staleDomains)
+	h.DB.Model(&models.Domain{}).Where("last_mx_check_at IS NULL OR last_mx_check_at < ?", now.Add(-24*time.Hour)).Count(&staleDomains)
+	h.DB.Model(&models.Domain{}).Where("domain_expires_at IS NOT NULL AND domain_expires_at >= ? AND domain_expires_at < ?", now, now.AddDate(0, 0, 30)).Count(&expiringDomains)
+	h.DB.Model(&models.Domain{}).Where("domain_expires_at IS NOT NULL AND domain_expires_at < ?", now).Count(&expiredDomains)
 	h.DB.Model(&models.User{}).Count(&users)
+	h.DB.Model(&models.User{}).Where("role = ?", models.UserRoleAdmin).Count(&adminUsers)
+	h.DB.Model(&models.User{}).Where("role = ?", models.UserRoleUser).Count(&regularUsers)
 	h.DB.Model(&models.User{}).Where("enabled = ?", true).Count(&enabledUsers)
 	h.DB.Model(&models.User{}).Where("enabled = ?", false).Count(&disabledUsers)
 	h.DB.Model(&models.APIKey{}).Count(&apiKeys)
 	h.DB.Model(&models.APIKey{}).Where("enabled = ?", true).Count(&activeAPIKeys)
 	h.DB.Model(&models.APIKey{}).Where("enabled = ?", false).Count(&disabledAPIKeys)
-	h.DB.Model(&models.APIUsageLog{}).Where("created_at >= ?", startOfDay(time.Now())).Count(&usageToday)
+	h.DB.Model(&models.APIUsageLog{}).Where("created_at >= ?", today).Count(&usageToday)
 	ok(c, gin.H{
-		"messages":                totalMessages,
-		"total_domains":           totalDomains,
-		"active_domains":          activeDomains,
-		"failed_domains":          failedDomains,
-		"pending_domains":         pendingDomains,
-		"stale_domains":           staleDomains,
-		"users":                   users,
-		"enabled_users":           enabledUsers,
-		"disabled_users":          disabledUsers,
-		"api_keys":                apiKeys,
-		"active_api_keys":         activeAPIKeys,
-		"disabled_api_keys":       disabledAPIKeys,
-		"api_usage_today":         usageToday,
+		"messages":          totalMessages,
+		"mailboxes":         mailboxes,
+		"public_mailboxes":  publicMailboxes,
+		"private_mailboxes": privateMailboxes,
+		"total_domains":     totalDomains,
+		"public_domains":    publicDomains,
+		"private_domains":   privateDomains,
+		"active_domains":    activeDomains,
+		"inactive_domains":  inactiveDomains,
+		"verified_domains":  verifiedDomains,
+		"failed_domains":    failedDomains,
+		"pending_domains":   pendingDomains,
+		"stale_domains":     staleDomains,
+		"expiring_domains":  expiringDomains,
+		"expired_domains":   expiredDomains,
+		"users":             users,
+		"admin_users":       adminUsers,
+		"regular_users":     regularUsers,
+		"enabled_users":     enabledUsers,
+		"disabled_users":    disabledUsers,
+		"api_keys":          apiKeys,
+		"active_api_keys":   activeAPIKeys,
+		"disabled_api_keys": disabledAPIKeys,
+		"api_usage_today":   usageToday,
+		"growth": gin.H{
+			"today":        h.adminCreatedCountsSince(today),
+			"last_7_days":  h.adminCreatedCountsSince(today.AddDate(0, 0, -6)),
+			"last_30_days": h.adminCreatedCountsSince(today.AddDate(0, 0, -29)),
+			"last_90_days": h.adminCreatedCountsSince(today.AddDate(0, 0, -89)),
+		},
 		"dev_mode":                h.Config.DevMode,
 		"admin_token_enabled":     h.Config.AdminToken != "",
-		"admin_token_is_default":  h.Config.AdminToken == "dev-admin-token",
 		"expected_mx":             h.Config.ExpectedMX,
 		"message_retention_hours": int64(h.Config.MessageRetention / time.Hour),
 	})
@@ -345,16 +381,90 @@ func (h *Handler) adminStatsTimeseries(c *gin.Context) {
 	if !h.requireAdmin(c) {
 		return
 	}
-	days := parseLimit(c.Query("days"), 7, 30)
+	days := parseLimit(c.Query("days"), 7, 90)
 	if days < 2 {
 		days = 7
 	}
-	ok(c, h.statsTimeseriesData(
-		days,
-		h.DB.Model(&models.Message{}),
-		h.DB.Model(&models.APIUsageLog{}),
-		h.DB.Model(&models.Domain{}),
-	))
+	ok(c, h.adminStatsTimeseriesData(days))
+}
+
+func (h *Handler) adminCreatedCountsSince(since time.Time) gin.H {
+	var messages, mailboxes, domains, users, apiCalls int64
+	h.DB.Model(&models.Message{}).Where("created_at >= ?", since).Count(&messages)
+	h.DB.Model(&models.Mailbox{}).Where("created_at >= ?", since).Count(&mailboxes)
+	h.DB.Model(&models.Domain{}).Where("created_at >= ?", since).Count(&domains)
+	h.DB.Model(&models.User{}).Where("created_at >= ?", since).Count(&users)
+	h.DB.Model(&models.APIUsageLog{}).Where("created_at >= ?", since).Count(&apiCalls)
+	return gin.H{
+		"messages":  messages,
+		"mailboxes": mailboxes,
+		"domains":   domains,
+		"users":     users,
+		"api_calls": apiCalls,
+	}
+}
+
+func (h *Handler) adminStatsTimeseriesData(days int) gin.H {
+	now := time.Now()
+	today := startOfDay(now)
+	earliest := today.AddDate(0, 0, -(days - 1))
+	labels := make([]string, days)
+	messages := make([]int64, days)
+	messageTotals := make([]int64, days)
+	apiCalls := make([]int64, days)
+	domains := make([]int64, days)
+	newDomains := make([]int64, days)
+	mailboxes := make([]int64, days)
+	newMailboxes := make([]int64, days)
+	users := make([]int64, days)
+	newUsers := make([]int64, days)
+
+	var runningMessages, runningDomains, runningMailboxes, runningUsers int64
+	h.DB.Model(&models.Message{}).Where("created_at < ?", earliest).Count(&runningMessages)
+	h.DB.Model(&models.Domain{}).Where("created_at < ?", earliest).Count(&runningDomains)
+	h.DB.Model(&models.Mailbox{}).Where("created_at < ?", earliest).Count(&runningMailboxes)
+	h.DB.Model(&models.User{}).Where("created_at < ?", earliest).Count(&runningUsers)
+
+	for i := 0; i < days; i++ {
+		dayStart := earliest.AddDate(0, 0, i)
+		dayEnd := dayStart.AddDate(0, 0, 1)
+		labels[i] = dayStart.Format("2006-01-02")
+
+		var messageAdded, apiCount, domainAdded, mailboxAdded, userAdded int64
+		h.DB.Model(&models.Message{}).Where("created_at >= ? AND created_at < ?", dayStart, dayEnd).Count(&messageAdded)
+		h.DB.Model(&models.APIUsageLog{}).Where("created_at >= ? AND created_at < ?", dayStart, dayEnd).Count(&apiCount)
+		h.DB.Model(&models.Domain{}).Where("created_at >= ? AND created_at < ?", dayStart, dayEnd).Count(&domainAdded)
+		h.DB.Model(&models.Mailbox{}).Where("created_at >= ? AND created_at < ?", dayStart, dayEnd).Count(&mailboxAdded)
+		h.DB.Model(&models.User{}).Where("created_at >= ? AND created_at < ?", dayStart, dayEnd).Count(&userAdded)
+
+		runningMessages += messageAdded
+		runningDomains += domainAdded
+		runningMailboxes += mailboxAdded
+		runningUsers += userAdded
+		messages[i] = messageAdded
+		messageTotals[i] = runningMessages
+		apiCalls[i] = apiCount
+		newDomains[i] = domainAdded
+		domains[i] = runningDomains
+		newMailboxes[i] = mailboxAdded
+		mailboxes[i] = runningMailboxes
+		newUsers[i] = userAdded
+		users[i] = runningUsers
+	}
+
+	return gin.H{
+		"days":           labels,
+		"messages":       messages,
+		"message_totals": messageTotals,
+		"new_messages":   messages,
+		"domains":        domains,
+		"new_domains":    newDomains,
+		"mailboxes":      mailboxes,
+		"new_mailboxes":  newMailboxes,
+		"users":          users,
+		"new_users":      newUsers,
+		"api_calls":      apiCalls,
+	}
 }
 
 type generateEmailRequest struct {
@@ -830,6 +940,9 @@ func (h *Handler) clearEmails(c *gin.Context) {
 func (h *Handler) inboxStream(c *gin.Context) {
 	user, loggedIn := h.requireLogin(c)
 	if !loggedIn {
+		return
+	}
+	if !h.requireSameOriginSessionRead(c) {
 		return
 	}
 	parts, _, allowed := h.authorizeInboxForUser(c, c.Query("email"), user)
@@ -1959,8 +2072,8 @@ func (h *Handler) listMailboxes(c *gin.Context) {
 	query = query.Where("owner_id = ?", ownerID)
 	search := strings.ToLower(strings.TrimSpace(c.Query("q")))
 	if search != "" {
-		like := "%" + search + "%"
-		query = query.Where("LOWER(email) LIKE ? OR LOWER(local_part) LIKE ? OR LOWER(host) LIKE ?", like, like, like)
+		like := likeContainsLiteral(search)
+		query = query.Where("LOWER(email) LIKE ?"+likeEscapeClause+" OR LOWER(local_part) LIKE ?"+likeEscapeClause+" OR LOWER(host) LIKE ?"+likeEscapeClause, like, like, like)
 	}
 	paged := c.Query("page") != "" || c.Query("per_page") != "" || search != ""
 	page := parsePage(c.Query("page"))

@@ -451,9 +451,9 @@ func (h *Handler) adminWebhooksQuery(c *gin.Context) *gorm.DB {
 		Joins("LEFT JOIN mailboxes ON mailboxes.id = webhook_endpoints.mailbox_id")
 
 	if search := strings.TrimSpace(strings.ToLower(c.Query("q"))); search != "" {
-		like := "%" + search + "%"
+		like := likeContainsLiteral(search)
 		query = query.Where(
-			"LOWER(webhook_endpoints.name) LIKE ? OR LOWER(webhook_endpoints.url) LIKE ? OR LOWER(users.email) LIKE ? OR LOWER(domains.domain) LIKE ? OR LOWER(mailboxes.email) LIKE ?",
+			"LOWER(webhook_endpoints.name) LIKE ?"+likeEscapeClause+" OR LOWER(webhook_endpoints.url) LIKE ?"+likeEscapeClause+" OR LOWER(users.email) LIKE ?"+likeEscapeClause+" OR LOWER(domains.domain) LIKE ?"+likeEscapeClause+" OR LOWER(mailboxes.email) LIKE ?"+likeEscapeClause,
 			like, like, like, like, like,
 		)
 	}

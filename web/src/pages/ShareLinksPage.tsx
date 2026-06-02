@@ -382,12 +382,18 @@ function shareStatus(link: ShareLinkDTO, text: ReturnType<typeof useText>) {
 }
 
 function shareTarget(link: ShareLinkDTO, text: ReturnType<typeof useText>) {
-  return <span className="automation-primary-cell">{shareTargetText(link, text)}</span>;
+  const detail = link.resource_type === 'mailbox' && link.mailbox_id ? `#${link.mailbox_id}` : '';
+  return (
+    <div className="admin-domain-cell">
+      <b>{shareTargetText(link, text)}</b>
+      {detail && <small>{detail}</small>}
+    </div>
+  );
 }
 
 function shareTargetText(link: ShareLinkDTO, text: ReturnType<typeof useText>) {
   if (link.resource_type === 'mailbox') {
-    return link.mailbox_id ? `${text.shareLinks.mailbox} #${link.mailbox_id}` : text.shareLinks.mailbox;
+    return link.mailbox_email || (link.mailbox_id ? `${text.shareLinks.mailbox} #${link.mailbox_id}` : text.shareLinks.mailbox);
   }
   return text.shareLinks.unsupportedResource;
 }

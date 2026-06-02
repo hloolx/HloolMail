@@ -77,6 +77,7 @@ func TestWebSessionOnlyRoutesRejectAPIKeyAndDoNotConsumeQuota(t *testing.T) {
 	login := loginShareTestUser(t, router, owner.Email)
 	headers := cookieHeaders(login.Result().Cookies())
 	headers["X-API-Key"] = "definitely-wrong"
+	headers["Origin"] = "http://example.com"
 	for _, request := range []struct {
 		method string
 		path   string
@@ -149,10 +150,11 @@ func TestSessionCookieWritesRequireSameOriginWhenBrowserSendsOrigin(t *testing.T
 	}
 
 	noBrowserOriginHeaders := cookieHeaders(login.Result().Cookies())
+	delete(noBrowserOriginHeaders, "Sec-Fetch-Site")
 	noOriginAnnouncement := createCSRFTestAnnouncement(t, db, owner.ID, "no-origin")
-	noOriginAllowed := perform(router, http.MethodPatch, "/api/announcements/"+uintPath(noOriginAnnouncement.ID)+"/read", nil, noBrowserOriginHeaders)
-	if noOriginAllowed.Code != http.StatusOK {
-		t.Fatalf("session write without browser origin = %d: %s", noOriginAllowed.Code, noOriginAllowed.Body.String())
+	noOriginBlocked := perform(router, http.MethodPatch, "/api/announcements/"+uintPath(noOriginAnnouncement.ID)+"/read", nil, noBrowserOriginHeaders)
+	if noOriginBlocked.Code != http.StatusForbidden {
+		t.Fatalf("session write without browser origin = %d, want 403: %s", noOriginBlocked.Code, noOriginBlocked.Body.String())
 	}
 }
 

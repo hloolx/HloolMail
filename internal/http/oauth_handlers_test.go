@@ -138,6 +138,7 @@ func TestUserOAuthIdentityEndpointsListAndUnbind(t *testing.T) {
 
 func performWithCookies(handler http.Handler, method, path string, cookies []*http.Cookie) *httptest.ResponseRecorder {
 	request := httptest.NewRequest(method, path, nil)
+	markSameOrigin(request)
 	for _, cookie := range cookies {
 		request.AddCookie(cookie)
 	}

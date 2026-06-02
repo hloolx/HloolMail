@@ -275,6 +275,11 @@ func backfillMessageMailboxOwnership(db *gorm.DB) error {
 }
 
 func backfillMessagePrivateDomainOwnership(db *gorm.DB, messageDomainColumn string) error {
+	switch messageDomainColumn {
+	case "root_domain", "recipient_domain":
+	default:
+		return fmt.Errorf("unsupported message domain column %q", messageDomainColumn)
+	}
 	domainMatch := "domains.domain = messages." + messageDomainColumn
 	privateDomainMatch := domainMatch + " AND domains.mode = ? AND domains.owner_id IS NOT NULL"
 	return db.Unscoped().Model(&models.Message{}).

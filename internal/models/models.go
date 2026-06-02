@@ -69,6 +69,9 @@ type User struct {
 	PublicMailboxToday    int64      `gorm:"not null;default:0" json:"public_mailbox_today"`
 	PublicMailboxDate     string     `gorm:"size:10;not null;default:''" json:"public_mailbox_date"`
 	PrivateMailboxCreated int64      `gorm:"not null;default:0" json:"private_mailbox_created"`
+	OnboardingRequired    bool       `gorm:"not null;default:false" json:"onboarding_required"`
+	OnboardingCompletedAt *time.Time `json:"onboarding_completed_at,omitempty"`
+	OnboardingSkippedAt   *time.Time `json:"onboarding_skipped_at,omitempty"`
 	CreatedAt             time.Time  `json:"created_at"`
 	UpdatedAt             time.Time  `json:"updated_at"`
 }
@@ -538,6 +541,7 @@ type SystemQuotaSettings struct {
 	PublicDomainMailboxLimit    int64     `gorm:"not null;default:0" json:"public_domain_mailbox_limit"`
 	UserDailyPublicMailboxLimit int64     `gorm:"not null;default:0" json:"user_daily_public_mailbox_limit"`
 	RequirePublicDomainForQuota bool      `gorm:"not null;default:false" json:"require_public_domain_for_quota"`
+	EnableUserOnboarding        bool      `gorm:"not null;default:false" json:"enable_user_onboarding"`
 	CreatedAt                   time.Time `json:"created_at"`
 	UpdatedAt                   time.Time `json:"updated_at"`
 }

@@ -55,9 +55,9 @@ func (h *Handler) listUsers(c *gin.Context) {
 
 	db := h.DB.Model(&models.User{})
 	if search != "" {
-		like := "%" + strings.ToLower(search) + "%"
+		like := likeContainsLiteral(strings.ToLower(search))
 		db = db.Where(
-			"LOWER(email) LIKE ? OR LOWER(nickname) LIKE ? OR EXISTS (SELECT 1 FROM api_keys WHERE api_keys.owner_id = users.id AND (LOWER(api_keys.name) LIKE ? OR LOWER(api_keys.key_prefix) LIKE ?))",
+			"LOWER(email) LIKE ?"+likeEscapeClause+" OR LOWER(nickname) LIKE ?"+likeEscapeClause+" OR EXISTS (SELECT 1 FROM api_keys WHERE api_keys.owner_id = users.id AND (LOWER(api_keys.name) LIKE ?"+likeEscapeClause+" OR LOWER(api_keys.key_prefix) LIKE ?"+likeEscapeClause+"))",
 			like, like, like, like,
 		)
 	}
@@ -115,8 +115,8 @@ func (h *Handler) listUserAPIKeys(c *gin.Context) {
 
 	query := h.DB.Model(&models.APIKey{}).Where("owner_id = ?", user.ID)
 	if search != "" {
-		like := "%" + strings.ToLower(search) + "%"
-		query = query.Where("LOWER(name) LIKE ? OR LOWER(key_prefix) LIKE ?", like, like)
+		like := likeContainsLiteral(strings.ToLower(search))
+		query = query.Where("LOWER(name) LIKE ?"+likeEscapeClause+" OR LOWER(key_prefix) LIKE ?"+likeEscapeClause, like, like)
 	}
 	var total int64
 	if err := query.Session(&gorm.Session{}).Count(&total).Error; err != nil {
@@ -220,6 +220,10 @@ func (h *Handler) createUser(c *gin.Context) {
 		Enabled:       true,
 		DailyLimit:    input.DailyLimit,
 		TotalLimit:    input.TotalLimit,
+	}
+	if err := markNewUserOnboardingRequired(h.DB, &user); err != nil {
+		fail(c, http.StatusInternalServerError, err.Error())
+		return
 	}
 	if err := h.DB.Create(&user).Error; err != nil {
 		fail(c, http.StatusBadRequest, err.Error())

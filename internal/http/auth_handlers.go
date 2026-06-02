@@ -511,6 +511,9 @@ func (h *Handler) verifyRegistration(c *gin.Context) {
 			if existing.Role == "" {
 				existing.Role = models.UserRoleUser
 			}
+			if err := markNewUserOnboardingRequired(tx, &existing); err != nil {
+				return err
+			}
 			if err := tx.Save(&existing).Error; err != nil {
 				return err
 			}
@@ -525,6 +528,9 @@ func (h *Handler) verifyRegistration(c *gin.Context) {
 				Enabled:       true,
 				DailyLimit:    1000,
 				TotalLimit:    0,
+			}
+			if err := markNewUserOnboardingRequired(tx, &user); err != nil {
+				return err
 			}
 			if err := tx.Create(&user).Error; err != nil {
 				return err

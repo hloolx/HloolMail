@@ -205,9 +205,9 @@ func (h *Handler) adminDomainByID(c *gin.Context) (models.Domain, bool) {
 
 func applyAdminDomainHealthFilters(query *gorm.DB, c *gin.Context, now time.Time) *gorm.DB {
 	if search := strings.TrimSpace(strings.ToLower(c.Query("q"))); search != "" {
-		like := "%" + search + "%"
+		like := likeContainsLiteral(search)
 		query = query.Joins("LEFT JOIN users ON users.id = domains.owner_id").
-			Where("(LOWER(domains.domain) LIKE ? OR LOWER(users.email) LIKE ?)", like, like)
+			Where("(LOWER(domains.domain) LIKE ?"+likeEscapeClause+" OR LOWER(users.email) LIKE ?"+likeEscapeClause+")", like, like)
 	}
 
 	switch mode := strings.TrimSpace(c.Query("mode")); mode {
@@ -704,9 +704,9 @@ func filterAuditLogs(query *gorm.DB, c *gin.Context) *gorm.DB {
 		query = query.Where("created_at <= ?", to)
 	}
 	if q := strings.TrimSpace(c.Query("q")); q != "" {
-		like := "%" + strings.ToLower(q) + "%"
+		like := likeContainsLiteral(strings.ToLower(q))
 		query = query.Where(
-			"LOWER(action) LIKE ? OR LOWER(actor) LIKE ? OR LOWER(target) LIKE ? OR LOWER(metadata) LIKE ?",
+			"LOWER(action) LIKE ?"+likeEscapeClause+" OR LOWER(actor) LIKE ?"+likeEscapeClause+" OR LOWER(target) LIKE ?"+likeEscapeClause+" OR LOWER(metadata) LIKE ?"+likeEscapeClause,
 			like,
 			like,
 			like,
@@ -850,6 +850,7 @@ func (h *Handler) patchAdminQuotaSettings(c *gin.Context) {
 		PublicDomainMailboxLimit    *int64 `json:"public_domain_mailbox_limit"`
 		UserDailyPublicMailboxLimit *int64 `json:"user_daily_public_mailbox_limit"`
 		RequirePublicDomainForQuota *bool  `json:"require_public_domain_for_quota"`
+		EnableUserOnboarding        *bool  `json:"enable_user_onboarding"`
 	}
 	if err := c.ShouldBindJSON(&input); err != nil {
 		fail(c, http.StatusBadRequest, "invalid json")
@@ -871,6 +872,9 @@ func (h *Handler) patchAdminQuotaSettings(c *gin.Context) {
 	}
 	if input.RequirePublicDomainForQuota != nil {
 		settings.RequirePublicDomainForQuota = *input.RequirePublicDomainForQuota
+	}
+	if input.EnableUserOnboarding != nil {
+		settings.EnableUserOnboarding = *input.EnableUserOnboarding
 	}
 	if err := h.DB.Save(settings).Error; err != nil {
 		fail(c, http.StatusInternalServerError, err.Error())

@@ -179,15 +179,38 @@ func TestLoadReadsOAuthProviderEnv(t *testing.T) {
 
 func TestValidateSessionSecretRejectsWeakProductionSecretAfterInstall(t *testing.T) {
 	for _, secret := range []string{"", InsecureDefaultSecret, "change-this-too", "replace-with-another-long-random-secret"} {
-		cfg := Config{DevMode: false, SessionSecret: secret}
+		cfg := Config{DevMode: false, SessionSecret: secret, InboxTokenSecret: "random-inbox-secret"}
 		if err := cfg.ValidateSessionSecret(true); err == nil {
 			t.Fatalf("expected production validation to reject %q", secret)
 		}
 	}
 
-	cfg := Config{DevMode: false, SessionSecret: "random-production-secret"}
+	cfg := Config{DevMode: false, SessionSecret: "random-production-secret", InboxTokenSecret: "random-inbox-secret"}
 	if err := cfg.ValidateSessionSecret(true); err != nil {
 		t.Fatalf("expected production validation to accept configured secret: %v", err)
+	}
+}
+
+func TestValidateSessionSecretRejectsWeakInboxTokenSecretAfterInstall(t *testing.T) {
+	for _, secret := range []string{"", InsecureDefaultSecret, "short"} {
+		cfg := Config{DevMode: false, SessionSecret: "random-production-secret", InboxTokenSecret: secret}
+		if err := cfg.ValidateSessionSecret(true); err == nil {
+			t.Fatalf("expected production validation to reject inbox token secret %q", secret)
+		}
+	}
+
+	cfg := Config{DevMode: false, SessionSecret: "same-production-secret", InboxTokenSecret: "same-production-secret"}
+	if err := cfg.ValidateSessionSecret(true); err == nil {
+		t.Fatal("expected production validation to reject shared session and inbox token secrets")
+	}
+}
+
+func TestIsInsecureSecretRejectsShortSecrets(t *testing.T) {
+	if !IsInsecureSecret("a") {
+		t.Fatal("expected a one-character secret to be insecure")
+	}
+	if IsInsecureSecret("long-enough-secret") {
+		t.Fatal("expected a long custom secret to be accepted")
 	}
 }
 
