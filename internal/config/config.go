@@ -12,10 +12,17 @@ import (
 const InsecureDefaultSecret = "change-this-in-production"
 const minProductionSecretLength = 16
 
+const (
+	PublicIndexingNone    = "none"
+	PublicIndexingLanding = "landing"
+	PublicIndexingDocs    = "docs"
+)
+
 type Config struct {
 	HTTPAddr                           string
 	SMTPAddr                           string
 	PublicBaseURL                      string
+	PublicIndexing                     string
 	MailHostname                       string
 	ExpectedMX                         string
 	MXStrict                           bool
@@ -61,6 +68,7 @@ func Load() Config {
 		HTTPAddr:                           getEnv("HTTP_ADDR", ":3000"),
 		SMTPAddr:                           getEnv("SMTP_ADDR", ":2525"),
 		PublicBaseURL:                      getEnv("PUBLIC_BASE_URL", "http://localhost:3000"),
+		PublicIndexing:                     NormalizePublicIndexing(getEnv("PUBLIC_INDEXING", PublicIndexingLanding)),
 		MailHostname:                       getEnv("MAIL_HOSTNAME", "mail.example.com"),
 		ExpectedMX:                         strings.TrimSuffix(strings.ToLower(getEnv("EXPECTED_MX", "mail.example.com")), "."),
 		MXStrict:                           getBool("MX_STRICT", false),
@@ -84,6 +92,17 @@ func Load() Config {
 		DisablePendingDomainDataProtection: getBool("DISABLE_PENDING_DOMAIN_DATA_PROTECTION", false),
 		GitHubOAuth:                        gitHubOAuth,
 		LinuxDoOAuth:                       linuxDoOAuth,
+	}
+}
+
+func NormalizePublicIndexing(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case PublicIndexingNone:
+		return PublicIndexingNone
+	case PublicIndexingDocs:
+		return PublicIndexingDocs
+	default:
+		return PublicIndexingLanding
 	}
 }
 

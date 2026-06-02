@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"gptmail/internal/auth"
+	"gptmail/internal/config"
 	"gptmail/internal/models"
 
 	"github.com/gin-gonic/gin"
@@ -22,6 +23,7 @@ import (
 
 const userContext = "user"
 const apiKeyUserContext = "api_key_user"
+const noIndexRobotsTag = "noindex, nofollow, noarchive"
 
 func (h *Handler) loadSession() gin.HandlerFunc {
 	return func(c *gin.Context) {
@@ -236,7 +238,86 @@ func (h *Handler) securityHeaders() gin.HandlerFunc {
 		c.Header("Referrer-Policy", "strict-origin-when-cross-origin")
 		c.Header("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
 		c.Header("Content-Security-Policy", "default-src 'self'; script-src 'self' https://challenges.cloudflare.com; frame-src 'self' https://challenges.cloudflare.com; style-src 'self'; img-src 'self' https: data: blob:; connect-src 'self'")
+		if h.shouldNoIndexRequest(c.Request.URL) {
+			c.Header("X-Robots-Tag", noIndexRobotsTag)
+		}
 		c.Next()
+	}
+}
+
+func (h *Handler) shouldNoIndexRequest(requestURL *url.URL) bool {
+	if requestURL != nil && hasSensitiveIndexingQuery(requestURL.Query()) {
+		return true
+	}
+	pathValue := ""
+	if requestURL != nil {
+		pathValue = requestURL.Path
+	}
+	return shouldNoIndexPath(pathValue, h.publicIndexingMode())
+}
+
+func (h *Handler) publicIndexingMode() string {
+	if h == nil {
+		return config.PublicIndexingLanding
+	}
+	return config.NormalizePublicIndexing(h.Config.PublicIndexing)
+}
+
+func hasSensitiveIndexingQuery(values url.Values) bool {
+	if values == nil {
+		return false
+	}
+	for key := range values {
+		switch strings.ToLower(strings.TrimSpace(key)) {
+		case "key", "api_key":
+			return true
+		}
+	}
+	return false
+}
+
+func shouldNoIndexPath(pathValue, publicIndexing string) bool {
+	pathValue = canonicalIndexingPath(pathValue)
+	if isCrawlerResourcePath(pathValue) {
+		return false
+	}
+	switch config.NormalizePublicIndexing(publicIndexing) {
+	case config.PublicIndexingNone:
+		return true
+	case config.PublicIndexingDocs:
+		return !isDocsIndexingPath(pathValue)
+	default:
+		return pathValue != "/"
+	}
+}
+
+func canonicalIndexingPath(pathValue string) string {
+	pathValue = strings.ToLower(strings.TrimSpace(pathValue))
+	pathValue = strings.TrimRight(pathValue, "/")
+	if pathValue == "" {
+		return "/"
+	}
+	return pathValue
+}
+
+func isCrawlerResourcePath(pathValue string) bool {
+	switch pathValue {
+	case "/robots.txt", "/sitemap.xml", "/brand-logo.svg", "/favicon.ico", "/assets":
+		return true
+	default:
+		return strings.HasPrefix(pathValue, "/assets/")
+	}
+}
+
+func isDocsIndexingPath(pathValue string) bool {
+	if pathValue == "/" {
+		return true
+	}
+	switch pathValue {
+	case "/api/health", "/api/version", "/api/docs.md", "/api/openapi.json", "/api/openapi.yaml", "/api/skill.md":
+		return true
+	default:
+		return false
 	}
 }
 

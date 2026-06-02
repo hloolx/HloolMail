@@ -3585,6 +3585,7 @@ func TestInstallPreservesRuntimeConfigWhenLocked(t *testing.T) {
 		cfg.DatabaseDriver = "postgres"
 		cfg.DatabaseURL = "postgres://user:pass@postgres:5432/hloolmail?sslmode=disable"
 		cfg.DevMode = false
+		cfg.PublicIndexing = config.PublicIndexingNone
 		cfg.EnvPath = envPath
 	})
 
@@ -3599,6 +3600,7 @@ func TestInstallPreservesRuntimeConfigWhenLocked(t *testing.T) {
 		"http_addr":       ":8080",
 		"smtp_addr":       ":25",
 		"dev_mode":        true,
+		"public_indexing": "docs",
 	}, nil)
 	if install.Code != http.StatusOK {
 		t.Fatalf("install = %d: %s", install.Code, install.Body.String())
@@ -3625,6 +3627,7 @@ func TestInstallPreservesRuntimeConfigWhenLocked(t *testing.T) {
 		`DATABASE_DRIVER="postgres"`,
 		`DATABASE_URL="postgres://user:pass@postgres:5432/hloolmail?sslmode=disable"`,
 		`DEV_MODE="false"`,
+		`PUBLIC_INDEXING="none"`,
 	} {
 		if !strings.Contains(env, want) {
 			t.Fatalf("written env missing %s:\n%s", want, env)
@@ -3632,6 +3635,9 @@ func TestInstallPreservesRuntimeConfigWhenLocked(t *testing.T) {
 	}
 	if strings.Contains(env, "changed.example.com") {
 		t.Fatalf("locked install wrote submitted runtime config:\n%s", env)
+	}
+	if strings.Contains(env, `PUBLIC_INDEXING="docs"`) {
+		t.Fatalf("locked install wrote submitted public indexing mode:\n%s", env)
 	}
 }
 
@@ -3657,6 +3663,26 @@ func TestInstallBuildsPostgresURLFromParts(t *testing.T) {
 	want := "postgres://mailuser:p%40ss%20word@db.example.com:5432/hloolmail?sslmode=require"
 	if input.DatabaseURL != want {
 		t.Fatalf("database url = %q, want %q", input.DatabaseURL, want)
+	}
+}
+
+func TestInstallNormalizesInvalidPublicIndexing(t *testing.T) {
+	input := installInput{
+		DatabaseDriver: "sqlite",
+		DatabaseURL:    ":memory:",
+		AdminEmail:     "admin@example.com",
+		AdminPassword:  "password123",
+		PublicBaseURL:  "https://mail.example.com",
+		PublicIndexing: "true",
+		MailHostname:   "mail.example.com",
+		ExpectedMX:     "mail.example.com",
+	}
+
+	if err := input.applyDefaults(config.Config{}); err != nil {
+		t.Fatal(err)
+	}
+	if input.PublicIndexing != config.PublicIndexingLanding {
+		t.Fatalf("public indexing = %q, want %q", input.PublicIndexing, config.PublicIndexingLanding)
 	}
 }
 
@@ -3755,7 +3781,7 @@ func TestInstallDoesNotReturnEnvContentWhenEnvWriteSucceeds(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{`DATABASE_URL=":memory:"`, "inbox-secret-value", "session-secret-value"} {
+	for _, want := range []string{`DATABASE_URL=":memory:"`, `PUBLIC_INDEXING="landing"`, "inbox-secret-value", "session-secret-value"} {
 		if !strings.Contains(string(content), want) {
 			t.Fatalf("env file missing %q:\n%s", want, string(content))
 		}

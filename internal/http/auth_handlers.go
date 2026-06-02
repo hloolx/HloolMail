@@ -799,6 +799,7 @@ type installInput struct {
 	HTTPAddr         string `json:"http_addr"`
 	SMTPAddr         string `json:"smtp_addr"`
 	PublicBaseURL    string `json:"public_base_url"`
+	PublicIndexing   string `json:"public_indexing"`
 	MailHostname     string `json:"mail_hostname"`
 	ExpectedMX       string `json:"expected_mx"`
 	DatabaseDriver   string `json:"database_driver"`
@@ -844,6 +845,7 @@ func (i *installInput) applyDefaults(cfg config.Config) error {
 	if i.PublicBaseURL == "" {
 		i.PublicBaseURL = cfg.PublicBaseURL
 	}
+	i.PublicIndexing = config.NormalizePublicIndexing(firstInstallValue(i.PublicIndexing, cfg.PublicIndexing))
 	if i.MailHostname == "" {
 		i.MailHostname = cfg.MailHostname
 	}
@@ -939,6 +941,7 @@ func (i installInput) applyToConfig(cfg *config.Config) {
 	cfg.HTTPAddr = i.HTTPAddr
 	cfg.SMTPAddr = i.SMTPAddr
 	cfg.PublicBaseURL = i.PublicBaseURL
+	cfg.PublicIndexing = config.NormalizePublicIndexing(i.PublicIndexing)
 	cfg.MailHostname = i.MailHostname
 	cfg.ExpectedMX = strings.TrimSuffix(strings.ToLower(i.ExpectedMX), ".")
 	cfg.DatabaseDriver = strings.ToLower(i.DatabaseDriver)
@@ -953,6 +956,7 @@ func (i *installInput) preserveRuntimeConfig(cfg config.Config) {
 	i.HTTPAddr = cfg.HTTPAddr
 	i.SMTPAddr = cfg.SMTPAddr
 	i.PublicBaseURL = cfg.PublicBaseURL
+	i.PublicIndexing = config.NormalizePublicIndexing(cfg.PublicIndexing)
 	i.MailHostname = cfg.MailHostname
 	i.ExpectedMX = cfg.ExpectedMX
 	i.DatabaseDriver = cfg.DatabaseDriver
@@ -1047,6 +1051,7 @@ func buildEnvFileContent(input installInput) string {
 		"HTTP_ADDR=" + quoteEnv(input.HTTPAddr),
 		"SMTP_ADDR=" + quoteEnv(input.SMTPAddr),
 		"PUBLIC_BASE_URL=" + quoteEnv(input.PublicBaseURL),
+		"PUBLIC_INDEXING=" + quoteEnv(config.NormalizePublicIndexing(input.PublicIndexing)),
 		"MAIL_HOSTNAME=" + quoteEnv(input.MailHostname),
 		"EXPECTED_MX=" + quoteEnv(input.ExpectedMX),
 		"DATABASE_DRIVER=" + quoteEnv(strings.ToLower(input.DatabaseDriver)),

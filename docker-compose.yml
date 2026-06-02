@@ -17,6 +17,7 @@ services:
       HLOOLMAIL_DEPLOYMENT: "docker"
       HLOOLMAIL_CONFIG_LOCKED: "true"
       PUBLIC_BASE_URL: "${PUBLIC_BASE_URL:-http://localhost:3000}"
+      PUBLIC_INDEXING: "${PUBLIC_INDEXING:-landing}"
       MAIL_HOSTNAME: "${MAIL_HOSTNAME:-mail.example.com}"
       EXPECTED_MX: "${EXPECTED_MX:-mail.example.com}"
       MX_STRICT: "${MX_STRICT:-false}"

@@ -6,6 +6,8 @@ import (
 	"net/url"
 	"strings"
 
+	"gptmail/internal/config"
+
 	"github.com/gin-gonic/gin"
 )
 
@@ -23,29 +25,55 @@ type sitemapURL struct {
 
 func (h *Handler) robotsTXT(c *gin.Context) {
 	baseURL := h.publicSiteBaseURL(c)
+	lines := robotsTXTLines(h.publicIndexingMode(), baseURL)
+	c.Header("Cache-Control", "public, max-age=3600")
+	c.Data(http.StatusOK, "text/plain; charset=utf-8", []byte(strings.Join(lines, "\n")))
+}
+
+func robotsTXTLines(publicIndexing, baseURL string) []string {
+	mode := config.NormalizePublicIndexing(publicIndexing)
 	lines := []string{
 		"User-agent: *",
-		"Disallow: /api/auth",
-		"Disallow: /api/install",
-		"Disallow: /api/oauth",
-		"Disallow: /api/shared/",
-		"Disallow: /api/email",
-		"Disallow: /api/emails",
-		"Disallow: /api/mailboxes",
-		"Disallow: /api/domains",
-		"Disallow: /api/stats",
-		"Disallow: /api/inbox-stream",
-		"Disallow: /api/notification",
-		"Disallow: /api/announcement",
-		"Disallow: /api/share-links",
-		"Disallow: /api/webhooks",
-		"Disallow: /api/api-keys",
-		"Disallow: /api/user",
-		"Disallow: /api/users",
-		"Disallow: /api/admin",
-		"Disallow: /api/generate-email",
-		"Disallow: /api/version/check",
+	}
+	if mode == config.PublicIndexingNone {
+		lines = append(lines,
+			"Disallow: /",
+			"Allow: /robots.txt",
+			"Allow: /sitemap.xml",
+			"Allow: /assets/",
+			"Allow: /favicon.ico",
+			"Allow: /brand-logo.svg",
+		)
+	} else {
+		lines = append(lines, apiRobotsLines(mode)...)
+		lines = append(lines, spaRobotsDisallowLines()...)
+	}
+	lines = append(lines, "Sitemap: "+absoluteSiteURL(baseURL, "/sitemap.xml"), "")
+	return lines
+}
+
+func apiRobotsLines(publicIndexing string) []string {
+	lines := []string{"Disallow: /api/"}
+	if config.NormalizePublicIndexing(publicIndexing) == config.PublicIndexingDocs {
+		lines = append(lines,
+			"Allow: /api/health",
+			"Allow: /api/version",
+			"Allow: /api/docs.md",
+			"Allow: /api/skill.md",
+			"Allow: /api/openapi.json",
+			"Allow: /api/openapi.yaml",
+		)
+	}
+	lines = append(lines, "Disallow: /api/version/check")
+	return lines
+}
+
+func spaRobotsDisallowLines() []string {
+	return []string{
+		"Disallow: /yyds/",
 		"Disallow: /share/",
+		"Disallow: /*?key=",
+		"Disallow: /*?api_key=",
 		"Disallow: /login",
 		"Disallow: /register",
 		"Disallow: /install",
@@ -56,19 +84,12 @@ func (h *Handler) robotsTXT(c *gin.Context) {
 		"Disallow: /webhooks",
 		"Disallow: /users",
 		"Disallow: /admin",
-		"Sitemap: " + absoluteSiteURL(baseURL, "/sitemap.xml"),
-		"",
 	}
-	c.Header("Cache-Control", "public, max-age=3600")
-	c.Data(http.StatusOK, "text/plain; charset=utf-8", []byte(strings.Join(lines, "\n")))
 }
 
 func (h *Handler) sitemapXML(c *gin.Context) {
 	baseURL := h.publicSiteBaseURL(c)
-	urls := []sitemapURL{
-		{Loc: absoluteSiteURL(baseURL, "/"), ChangeFreq: "weekly", Priority: "1.0"},
-		{Loc: absoluteSiteURL(baseURL, "/api/docs.md"), ChangeFreq: "weekly", Priority: "0.8"},
-	}
+	urls := sitemapURLsForIndexing(baseURL, h.publicIndexingMode())
 	payload, err := xml.MarshalIndent(sitemapURLSet{
 		Xmlns: "http://www.sitemaps.org/schemas/sitemap/0.9",
 		URLs:  urls,
@@ -81,6 +102,27 @@ func (h *Handler) sitemapXML(c *gin.Context) {
 	data = append(data, '\n')
 	c.Header("Cache-Control", "public, max-age=3600")
 	c.Data(http.StatusOK, "application/xml; charset=utf-8", data)
+}
+
+func sitemapURLsForIndexing(baseURL, publicIndexing string) []sitemapURL {
+	switch config.NormalizePublicIndexing(publicIndexing) {
+	case config.PublicIndexingNone:
+		return nil
+	case config.PublicIndexingDocs:
+		return []sitemapURL{
+			{Loc: absoluteSiteURL(baseURL, "/"), ChangeFreq: "weekly", Priority: "1.0"},
+			{Loc: absoluteSiteURL(baseURL, "/api/docs.md"), ChangeFreq: "weekly", Priority: "0.8"},
+			{Loc: absoluteSiteURL(baseURL, "/api/skill.md"), ChangeFreq: "weekly", Priority: "0.8"},
+			{Loc: absoluteSiteURL(baseURL, "/api/openapi.json"), ChangeFreq: "weekly", Priority: "0.7"},
+			{Loc: absoluteSiteURL(baseURL, "/api/openapi.yaml"), ChangeFreq: "weekly", Priority: "0.7"},
+			{Loc: absoluteSiteURL(baseURL, "/api/version"), ChangeFreq: "weekly", Priority: "0.5"},
+			{Loc: absoluteSiteURL(baseURL, "/api/health"), ChangeFreq: "weekly", Priority: "0.5"},
+		}
+	default:
+		return []sitemapURL{
+			{Loc: absoluteSiteURL(baseURL, "/"), ChangeFreq: "weekly", Priority: "1.0"},
+		}
+	}
 }
 
 func (h *Handler) publicSiteBaseURL(c *gin.Context) string {

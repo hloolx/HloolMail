@@ -122,6 +122,63 @@ func TestLoadCanDisableWebhooks(t *testing.T) {
 	}
 }
 
+func TestLoadDefaultsPublicIndexingToLanding(t *testing.T) {
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	temp := t.TempDir()
+	if err := os.Chdir(temp); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := os.Chdir(wd); err != nil {
+			t.Fatalf("restore working directory: %v", err)
+		}
+	})
+	t.Setenv("PUBLIC_INDEXING", "")
+
+	cfg := Load()
+	if cfg.PublicIndexing != PublicIndexingLanding {
+		t.Fatalf("public indexing = %q, want %q", cfg.PublicIndexing, PublicIndexingLanding)
+	}
+}
+
+func TestLoadNormalizesPublicIndexingEnv(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		value string
+		want  string
+	}{
+		{name: "none", value: "none", want: PublicIndexingNone},
+		{name: "docs", value: " docs ", want: PublicIndexingDocs},
+		{name: "landing", value: "landing", want: PublicIndexingLanding},
+		{name: "invalid", value: "true", want: PublicIndexingLanding},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			wd, err := os.Getwd()
+			if err != nil {
+				t.Fatal(err)
+			}
+			temp := t.TempDir()
+			if err := os.Chdir(temp); err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() {
+				if err := os.Chdir(wd); err != nil {
+					t.Fatalf("restore working directory: %v", err)
+				}
+			})
+			t.Setenv("PUBLIC_INDEXING", tc.value)
+
+			cfg := Load()
+			if cfg.PublicIndexing != tc.want {
+				t.Fatalf("public indexing = %q, want %q", cfg.PublicIndexing, tc.want)
+			}
+		})
+	}
+}
+
 func TestLoadEnablesWebhooksByDefault(t *testing.T) {
 	wd, err := os.Getwd()
 	if err != nil {

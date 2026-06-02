@@ -5,13 +5,14 @@
 <h1 align="center">HLOOL Mail</h1>
 
 <p align="center">
-  自托管临时邮箱与私有域名收信平台，内置 SMTP catch-all、Web Console、API Key、Webhook、Share Link 和 CLI。
+  自托管邮件收信与私有域名测试平台，内置 SMTP catch-all、Web Console、API Key、Webhook、Share Link 和 CLI。
 </p>
 
 <p align="center">
   <a href="#hlool-mail-是什么--不是什么">是什么</a> ·
   <a href="#5-分钟-docker-compose">Docker Compose</a> ·
   <a href="#release-二进制">Release</a> ·
+  <a href="#搜索引擎与-safe-browsing-风险控制">风险控制</a> ·
   <a href="#api-自动化">API</a> ·
   <a href="#cli">CLI</a>
 </p>
@@ -22,9 +23,9 @@
 
 ## HLOOL Mail 是什么 / 不是什么
 
-HLOOL Mail 用来搭建自部署、支持多用户的匿名邮箱和私有域名收信服务。只需要把域名的 MX 指向你的 HLOOL Mail 收信主机，就可以让所有用户在你的域名下创建和使用自己的匿名邮箱；你也可以接入自有域名，为团队、脚本、测试平台、CI 或 AI 助手提供可控的收信能力。
+HLOOL Mail 用来搭建自部署、支持多用户的私有域名收信和邮件测试服务。只需要把域名的 MX 指向你的 HLOOL Mail 收信主机，就可以让团队成员、脚本、测试平台、CI 或 AI 助手在你的域名下获得可控的收信能力。
 
-它最初是为批量注册和自动化验证设计的：网上常见匿名邮箱经常被屏蔽；用 Cloudflare 或第三方服务临时接入流程又太繁琐；直接把 MX 指向第三方站点，还会担心滥用、权限和数据不可控。
+它适合需要自主管理邮件入口的场景：第三方收信服务接入流程繁琐，直接把 MX 指向外部站点又会带来滥用、权限和数据不可控的问题。
 
 现在，你可以用这个项目改变这些问题：域名由你提供，MX 由你控制，用户、额度、API Key 和访问边界也由你管理。
 
@@ -206,6 +207,12 @@ example.com.         MX 10  mail.example.com.
 ```
 
 MX 不写端口。端口转发只发生在服务器、面板、云防火墙或负载均衡层。
+
+## 搜索引擎与 Safe Browsing 风险控制
+
+不要一上线就开放 API 文档索引。推荐默认保持 `PUBLIC_INDEXING=landing`，只让公开首页可抓取；被 Chrome 或 Safe Browsing 标记后的恢复期改为 `PUBLIC_INDEXING=none`；等 Search Console 和 Safe Browsing 状态稳定后，再切到 `PUBLIC_INDEXING=docs` 开放公开文档。
+
+完整部署步骤、`robots.txt` / `X-Robots-Tag` 行为说明、Chrome 标记后的处理流程见 [docs/search-engine-safe-browsing.md](docs/search-engine-safe-browsing.md)。
 
 ## Web Console
 
@@ -509,5 +516,5 @@ export SMTP_ADDR=:2525
 - API 自动化必须带 `X-API-Key`，不要用 Web Console Cookie 代替。
 - Webhook 和 Share Link 管理必须是 Web Console session；API Key 只能在 `generate-email` 时创建邮箱分享，不能管理分享链接。
 - 私有域名要先在 Web Console 添加并完成 MX 验证，再用 API 生成该域名邮箱。
-- 如果目标网站拦截临时邮箱域名，换公共域名或使用自己的私有域名。
+- 如果外部服务限制某个公共域名，优先使用自己管理和验证过的私有域名。
 - 公网收不到邮件时，先检查 DNS MX、云厂商入站 TCP 25、服务器防火墙、Compose `SMTP_PORT` 或 25 -> 2525 转发。
