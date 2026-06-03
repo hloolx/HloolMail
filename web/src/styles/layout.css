@@ -318,7 +318,8 @@
   gap: 0.65rem;
 }
 
-.app-header-github {
+.app-header-github,
+.app-header-tutorial {
   display: grid;
   width: 2.15rem;
   height: 2.15rem;
@@ -330,7 +331,8 @@
   transition: background-color 180ms ease, border-color 180ms ease, transform 180ms ease;
 }
 
-.app-header-github:hover {
+.app-header-github:hover,
+.app-header-tutorial:hover {
   border-color: color-mix(in srgb, var(--focus) 34%, var(--border));
   background: color-mix(in srgb, var(--focus) 12%, var(--background));
   transform: translateY(-1px);
@@ -615,6 +617,7 @@
 @media (pointer: coarse), (max-width: 640px) {
   .app-header-trigger,
   .app-header-github,
+  .app-header-tutorial,
   .header-settings-btn,
   .notification-trigger,
   .notification-mark-all {
@@ -624,6 +627,7 @@
   .icon-btn,
   .app-header-trigger,
   .app-header-github,
+  .app-header-tutorial,
   .header-settings-btn,
   .notification-trigger,
   .notification-mark-all {

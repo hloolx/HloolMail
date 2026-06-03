@@ -1,9 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
-import { useQueryClient } from '@tanstack/react-query';
-import { Github, PanelLeftClose, PanelLeftOpen } from 'lucide-react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { CircleHelp, Github, PanelLeftClose, PanelLeftOpen } from 'lucide-react';
 import { toast } from 'sonner';
-import type { InboxSSEEvent, User } from '../../api';
-import { parseFromAddress } from '../../api';
+import type { InboxSSEEvent, User, UserOnboardingStatus } from '../../api';
+import { api, parseFromAddress } from '../../api';
 import { useText } from '../../locales';
 import { useAppStore } from '../../store';
 import { useBrowserNotification } from '../../hooks/useBrowserNotification';
@@ -13,7 +13,12 @@ import { AppLogo } from '../shared/AppLogo';
 import { HeaderSettings } from './HeaderSettings';
 import { NotificationBell } from './NotificationBell';
 
-export function Topbar({ user }: { user: User }) {
+type TopbarProps = {
+  user: User;
+  onReplayTutorial?: () => void;
+};
+
+export function Topbar({ user, onReplayTutorial }: TopbarProps) {
   const { page, sidebarCollapsed, mobileSidebarOpen, toggleSidebar, toggleMobileSidebar, email, addMailNotification, awayMailCount, awayAnnouncementCount, resetAwayCounts } = useAppStore();
   const queryClient = useQueryClient();
   const text = useText();
@@ -34,6 +39,15 @@ export function Topbar({ user }: { user: User }) {
   const awayAnnRef = useRef(awayAnnouncementCount);
   awayMailRef.current = awayMailCount;
   awayAnnRef.current = awayAnnouncementCount;
+
+  const onboarding = useQuery({
+    queryKey: ['user-onboarding', user.id],
+    queryFn: () => api<UserOnboardingStatus>('/api/user/onboarding'),
+    enabled: user.role === 'user',
+    retry: false,
+    staleTime: 30_000
+  });
+  const showTutorialReplay = Boolean(onReplayTutorial && user.role === 'user' && onboarding.data?.enabled);
 
   useEffect(() => {
     const media = window.matchMedia('(max-width: 1023px)');
@@ -120,6 +134,11 @@ export function Topbar({ user }: { user: User }) {
             <Github size={17} />
           </a>
           <NotificationBell />
+          {showTutorialReplay && (
+            <button className="app-header-tutorial" type="button" title={text.onboarding.replay} aria-label={text.onboarding.replay} onClick={onReplayTutorial}>
+              <CircleHelp size={16} />
+            </button>
+          )}
           <HeaderSettings user={user} />
         </div>
       </div>

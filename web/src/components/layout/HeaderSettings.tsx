@@ -86,7 +86,7 @@ export function HeaderSettings({ user }: { user?: User }) {
       </button>
       {open && (
         <div className="header-settings-popover" role="menu" aria-label={text.settings.aria}>
-          <div className="settings-menu">
+          <div className={`settings-menu ${isAdmin ? 'settings-menu-admin' : ''}`}>
             <div className="settings-row">
               <span className="settings-label">{text.settings.theme}</span>
               <div className="theme-toggle-group" role="group" aria-label={text.settings.theme}>

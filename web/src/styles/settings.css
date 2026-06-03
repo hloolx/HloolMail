@@ -1,20 +1,38 @@
 .settings-menu {
-  --settings-control-width: 8.35rem;
+  --settings-control-width: 6.9rem;
   display: grid;
-  width: max-content;
+  width: var(--settings-control-width);
   max-width: calc(100vw - 2.75rem);
-  grid-template-columns: max-content var(--settings-control-width);
   align-items: center;
+  gap: 0.42rem;
+}
+
+.settings-menu-admin {
+  --settings-control-width: 8.35rem;
+  width: max-content;
+  grid-template-columns: max-content var(--settings-control-width);
   column-gap: 0.85rem;
   row-gap: 0.45rem;
 }
 
 .settings-row {
+  display: grid;
+  gap: 0.22rem;
+}
+
+.settings-menu-admin .settings-row {
   display: contents;
 }
 
 .settings-label {
   align-self: center;
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 660;
+  line-height: 1;
+}
+
+.settings-menu-admin .settings-label {
   color: var(--foreground);
   font-size: 0.86rem;
   font-weight: 620;
@@ -22,7 +40,7 @@
 
 .theme-toggle-group {
   display: grid;
-  grid-template-columns: repeat(3, 2.25rem);
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   width: var(--settings-control-width);
   justify-content: start;
   border: 1px solid var(--border);
@@ -33,7 +51,7 @@
 
 .theme-choice {
   display: grid;
-  width: 2rem;
+  width: 2.02rem;
   height: 2rem;
   justify-self: center;
   align-self: center;

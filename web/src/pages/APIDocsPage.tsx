@@ -376,8 +376,8 @@ export function APIDocsPage() {
     <div className="api-docs-page">
       <ApiDocsHero markdownURL={markdownURL} skillURL={skillURL} prompt={prompt} markdown={markdown} />
 
-      <section className="api-docs-workspace" data-onboarding-target="api-docs-explorer">
-        <div className="panel-header api-docs-workspace-header">
+      <section className="api-docs-workspace">
+        <div className="panel-header api-docs-workspace-header" data-onboarding-target="api-docs-explorer">
           <div>
             <h2>{text.apiDocs.workspaceTitle}<InfoTip text={text.apiDocs.workspaceDesc} /></h2>
           </div>

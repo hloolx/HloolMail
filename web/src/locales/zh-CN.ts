@@ -437,6 +437,8 @@ const zhCN = {
     start: '开始引导',
     finish: '完成教程',
     checkProgress: '我已完成，检查进度',
+    replay: '重新体验教程',
+    close: '关闭教程',
     welcomeTitle: '欢迎使用 HLOOL Mail',
     welcomeBody: '我们先创建一个邮箱，再申请 API 密钥，最后到 API 文档里看看怎样自动化调用。',
     welcomeDomainTitle: '先完成公开域名准备',

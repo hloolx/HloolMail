@@ -21,11 +21,13 @@ type OnboardingStep = {
 
 const ACTIVE_TARGET_ATTR = 'data-onboarding-active';
 
-export function OnboardingGuide({ user }: { user: User }) {
+type GuideMode = 'required' | 'replay' | null;
+
+export function OnboardingGuide({ user, replayKey = 0 }: { user: User; replayKey?: number }) {
   const text = useText();
   const queryClient = useQueryClient();
   const setPage = useAppStore((state) => state.setPage);
-  const [visible, setVisible] = useState(false);
+  const [mode, setMode] = useState<GuideMode>(null);
   const [stepIndex, setStepIndex] = useState(0);
 
   const onboarding = useQuery({
@@ -49,20 +51,28 @@ export function OnboardingGuide({ user }: { user: User }) {
   const isWelcomeStep = activeStep?.id === 'welcome';
   const isLastStep = activeStep?.id === 'api-docs';
   const canFinish = isLastStep && Boolean(onboarding.data?.can_complete);
+  const visible = mode !== null;
+  const isReplayMode = mode === 'replay';
 
   useEffect(() => {
     if (onboarding.data?.required) {
-      setVisible(true);
+      setMode('required');
       setStepIndex(0);
     } else {
-      setVisible(false);
+      setMode((current) => (current === 'replay' ? current : null));
     }
   }, [onboarding.data?.required, user.id]);
 
   useEffect(() => {
-    if (!visible || !onboarding.data?.required || isWelcomeStep) return;
+    if (!visible || mode !== 'required' || isWelcomeStep) return;
     setStepIndex(nextStepIndex);
-  }, [isWelcomeStep, nextStepIndex, onboarding.data?.required, visible]);
+  }, [isWelcomeStep, mode, nextStepIndex, visible]);
+
+  useEffect(() => {
+    if (!replayKey || user.role !== 'user' || !onboarding.data?.enabled) return;
+    setMode('replay');
+    setStepIndex(0);
+  }, [onboarding.data?.enabled, replayKey, user.role]);
 
   useEffect(() => {
     if (!visible || !activeStep?.page) return;
@@ -90,7 +100,7 @@ export function OnboardingGuide({ user }: { user: User }) {
   const updateOnboarding = useMutation({
     mutationFn: (payload: { completed?: boolean; skipped?: boolean }) => patchJSON<UserOnboardingStatus>('/api/user/onboarding', payload),
     onSuccess: () => {
-      setVisible(false);
+      setMode(null);
       document.documentElement.removeAttribute(ACTIVE_TARGET_ATTR);
       queryClient.invalidateQueries({ queryKey: ['user-onboarding', user.id] });
       queryClient.invalidateQueries({ queryKey: ['me'] });
@@ -98,12 +108,32 @@ export function OnboardingGuide({ user }: { user: User }) {
     onError: (error) => toast.error(error.message)
   });
 
-  if (!visible || !onboarding.data?.required || !activeStep) return null;
+  if (!visible || !activeStep) return null;
+  if (mode === 'required' && !onboarding.data?.required) return null;
+  if (mode === 'replay' && !onboarding.data?.enabled) return null;
 
   const Icon = activeStep.icon;
   const complete = () => updateOnboarding.mutate({ completed: true });
-  const skip = () => updateOnboarding.mutate({ skipped: true });
+  const closeGuide = () => {
+    setMode(null);
+    document.documentElement.removeAttribute(ACTIVE_TARGET_ATTR);
+  };
+  const skip = () => {
+    if (isReplayMode) {
+      closeGuide();
+      return;
+    }
+    updateOnboarding.mutate({ skipped: true });
+  };
   const next = () => {
+    if (isReplayMode) {
+      if (isLastStep) {
+        closeGuide();
+        return;
+      }
+      setStepIndex((index) => Math.min(index + 1, steps.length - 1));
+      return;
+    }
     if (isWelcomeStep) {
       setStepIndex(nextStepIndex);
       return;
@@ -116,11 +146,16 @@ export function OnboardingGuide({ user }: { user: User }) {
   };
   const primaryLabel = updateOnboarding.isPending || onboarding.isRefetching
     ? text.common.loading
-    : isWelcomeStep
-      ? activeStep.action
-      : canFinish
+    : isReplayMode
+      ? isLastStep
         ? text.onboarding.finish
-        : text.onboarding.checkProgress;
+        : activeStep.action
+      : isWelcomeStep
+        ? activeStep.action
+        : canFinish
+          ? text.onboarding.finish
+          : text.onboarding.checkProgress;
+  const showCompletionIcon = isReplayMode ? isLastStep : canFinish;
 
   return (
     <div className="onboarding-guide" aria-live="polite">
@@ -148,11 +183,11 @@ export function OnboardingGuide({ user }: { user: User }) {
         </div>
         <div className="onboarding-guide-actions">
           <button className="btn-ghost" type="button" onClick={skip} disabled={updateOnboarding.isPending}>
-            {text.onboarding.skip}
+            {isReplayMode ? text.onboarding.close : text.onboarding.skip}
           </button>
           <button className="btn-primary" type="button" onClick={next} disabled={updateOnboarding.isPending || onboarding.isRefetching}>
             {primaryLabel}
-            {canFinish ? <CheckCircle2 size={15} /> : <ArrowRight size={15} />}
+            {showCompletionIcon ? <CheckCircle2 size={15} /> : <ArrowRight size={15} />}
           </button>
         </div>
       </section>

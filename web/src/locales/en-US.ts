@@ -439,6 +439,8 @@ const enUS: typeof zhCN = {
     start: 'Start guide',
     finish: 'Finish tutorial',
     checkProgress: 'I finished this, check progress',
+    replay: 'Replay tutorial',
+    close: 'Close tutorial',
     welcomeTitle: 'Welcome to HLOOL Mail',
     welcomeBody: 'We will create a mailbox, request an API key, then open the API docs so you can automate calls.',
     welcomeDomainTitle: 'Start with a public domain',

@@ -2,6 +2,9 @@
   --app-inset-gap: 0.45rem;
   --app-inset-radius: 1rem;
   --sidebar-drawer-width: min(18rem, calc(100vw - 1.25rem));
+  --z-onboarding-scrim: 9000;
+  --z-onboarding-target: 9010;
+  --z-onboarding-panel: 9020;
 }
 
 .app-frame {
@@ -36,24 +39,19 @@
   min-height: calc(100vh - var(--app-header-height) - var(--app-inset-gap));
 }
 
-.onboarding-guide {
+.onboarding-guide-scrim {
   position: fixed;
   inset: 0;
-  z-index: 90;
-  pointer-events: none;
-}
-
-.onboarding-guide-scrim {
-  position: absolute;
-  inset: 0;
+  z-index: var(--z-onboarding-scrim);
   background:
     linear-gradient(180deg, rgba(16, 16, 16, 0.02), rgba(16, 16, 16, 0.1)),
     color-mix(in srgb, var(--shell) 34%, transparent);
+  pointer-events: none;
 }
 
 .onboarding-guide-panel {
-  position: absolute;
-  z-index: 92;
+  position: fixed;
+  z-index: var(--z-onboarding-panel);
   right: clamp(1rem, 3vw, 2rem);
   bottom: clamp(1rem, 3vw, 2rem);
   width: min(27rem, calc(100vw - 2rem));
@@ -135,7 +133,7 @@ html[data-onboarding-active='create-mailbox'] [data-onboarding-target='create-ma
 html[data-onboarding-active='create-api-key'] [data-onboarding-target='create-api-key'],
 html[data-onboarding-active='api-docs-explorer'] [data-onboarding-target='api-docs-explorer'] {
   position: relative;
-  z-index: 91;
+  z-index: var(--z-onboarding-target);
   outline: 3px solid var(--focus);
   outline-offset: 5px;
   box-shadow: 0 0 0 9px var(--focus-soft), 0 14px 32px rgba(0, 0, 0, 0.16);

@@ -1,5 +1,5 @@
 import { AnimatePresence, motion, useReducedMotion } from 'framer-motion';
-import { lazy, Suspense, useEffect } from 'react';
+import { lazy, Suspense, useEffect, useState } from 'react';
 import { toast } from 'sonner';
 import type { User } from '../../api';
 import { useText } from '../../locales';
@@ -28,6 +28,7 @@ import { Topbar } from './Topbar';
 
 export function Console({ user }: { user: User }) {
   const { page, setPage, sidebarCollapsed, toggleSidebar } = useAppStore();
+  const [tutorialReplayKey, setTutorialReplayKey] = useState(0);
   const adminPages = new Set<Page>(['admin', 'users', 'admin-oauth', 'announcements']);
   const visiblePage: Page = user.role !== 'admin' && adminPages.has(page) ? 'inbox' : page;
   const shouldReduceMotion = useReducedMotion();
@@ -71,7 +72,7 @@ export function Console({ user }: { user: User }) {
 
   return (
     <AppFrame collapsed={sidebarCollapsed}>
-      <Topbar user={user} />
+      <Topbar user={user} onReplayTutorial={() => setTutorialReplayKey((key) => key + 1)} />
       <Sidebar user={user} />
       <Main>
         <AppInset>
@@ -103,7 +104,7 @@ export function Console({ user }: { user: User }) {
           </AnimatePresence>
         </AppInset>
       </Main>
-      <OnboardingGuide user={user} />
+      <OnboardingGuide user={user} replayKey={tutorialReplayKey} />
     </AppFrame>
   );
 }
