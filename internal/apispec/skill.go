@@ -47,7 +47,7 @@ func SkillMarkdown(cfg Config) string {
 		"2. 同时读取 `data.private_domains`，把当前 API Key 已可访问的私有域名作为同一组候选项展示。",
 		"3. `data.domains` 只包含公共域名字符串，只有兼容旧客户端时才使用。",
 		"4. 不传 domain 调用 `POST /api/generate-email` 可生成随机公共域名邮箱；更推荐显式传入用户从候选列表中选择的域名。",
-		"5. 如果用户需要可分享收件箱，传入 `share: true` 并提供 `data.share.access_url`；移除 `?key=...` 后会进入手动输入 key 的页面。完整 token/key 只返回一次，不能再次查看旧链接。",
+		"5. 如果用户需要可分享收件箱，传入 `share: true` 并提供 `data.share.access_url`；移除 `#key=...` 后会进入手动输入 key 的页面。完整 token/key 只返回一次，不能再次查看旧链接。",
 		"6. 如果目标网站拒绝该地址或没有邮件到达，建议换公共域名、换邮箱前缀、稍等片刻，或改用用户自己的私有域名。",
 		"",
 		"## 读取验证码邮件",

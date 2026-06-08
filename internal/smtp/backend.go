@@ -10,6 +10,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	appdb "gptmail/internal/db"
 	"gptmail/internal/domain"
 	"gptmail/internal/events"
 	mailparser "gptmail/internal/mail"
@@ -146,6 +147,9 @@ func (s *Session) Data(r io.Reader) error {
 		}
 		if err := s.service.DB.Transaction(func(tx *gorm.DB) error {
 			if err := tx.Create(&msg).Error; err != nil {
+				return err
+			}
+			if err := appdb.IncrementMessageDailyStat(tx, now, 1); err != nil {
 				return err
 			}
 			if err := createMessageAttachments(tx, msg.ID, parsed.Attachments); err != nil {

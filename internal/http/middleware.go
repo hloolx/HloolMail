@@ -327,7 +327,7 @@ func (h *Handler) cors() gin.HandlerFunc {
 			c.Header("Access-Control-Allow-Origin", h.Config.AllowedOrigin)
 			c.Header("Access-Control-Allow-Credentials", "true")
 			c.Header("Vary", "Origin")
-			c.Header("Access-Control-Allow-Headers", "Content-Type, X-API-Key, X-Admin-Token")
+			c.Header("Access-Control-Allow-Headers", h.corsAllowedHeaders())
 			c.Header("Access-Control-Allow-Methods", "GET, POST, PATCH, DELETE, OPTIONS")
 			if c.Request.Method == http.MethodOptions {
 				c.AbortWithStatus(http.StatusNoContent)
@@ -336,6 +336,14 @@ func (h *Handler) cors() gin.HandlerFunc {
 		}
 		c.Next()
 	}
+}
+
+func (h *Handler) corsAllowedHeaders() string {
+	headers := "Content-Type, X-API-Key"
+	if h.legacyAdminTokenEnabled() {
+		headers += ", X-Admin-Token"
+	}
+	return headers
 }
 
 func (h *Handler) requireSameOriginSessionWrite() gin.HandlerFunc {
@@ -475,10 +483,14 @@ func (h *Handler) requireAdmin(c *gin.Context) bool {
 }
 
 func (h *Handler) isAdminTokenRequest(c *gin.Context) bool {
-	if h.Config.AdminToken == "" {
+	if !h.legacyAdminTokenEnabled() {
 		return false
 	}
 	return constantTimeStringEqual(c.GetHeader("X-Admin-Token"), h.Config.AdminToken)
+}
+
+func (h *Handler) legacyAdminTokenEnabled() bool {
+	return h.Config.AllowLegacyAdminToken && h.Config.AdminToken != ""
 }
 
 func constantTimeStringEqual(a, b string) bool {

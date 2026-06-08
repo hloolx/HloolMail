@@ -601,42 +601,22 @@ func fetchLinuxDoUserInfo(ctx context.Context, token oauthToken) (OAuthUserInfo,
 	if err != nil {
 		var httpErr oauthHTTPError
 		if !errors.As(err, &httpErr) || httpErr.Status != http.StatusNotFound {
-			if token.IDToken == "" {
-				return OAuthUserInfo{}, err
-			}
-			return linuxDoInfoFromJWT(token.IDToken)
+			return OAuthUserInfo{}, err
 		}
 		raw, _, err = getOAuthRaw(ctx, "https://connect.linux.do/oauth2/userinfo", token.AccessToken)
 		if err != nil {
-			if token.IDToken == "" {
-				return OAuthUserInfo{}, err
-			}
-			return linuxDoInfoFromJWT(token.IDToken)
+			return OAuthUserInfo{}, err
 		}
 	}
 	info, err := decodeLinuxDoUserInfo(raw)
-	if err == nil && info.Email != "" && info.ProviderUID != "" {
-		return info, nil
-	}
-	if token.IDToken != "" {
-		fallback, fallbackErr := linuxDoInfoFromJWT(token.IDToken)
-		if fallbackErr == nil {
-			if info.ProviderUID == "" {
-				info.ProviderUID = fallback.ProviderUID
-			}
-			if info.Email == "" {
-				info.Email = fallback.Email
-			}
-			if info.Name == "" {
-				info.Name = fallback.Name
-			}
-			if info.AvatarURL == "" {
-				info.AvatarURL = fallback.AvatarURL
-			}
-		}
-	}
 	if err != nil {
 		return OAuthUserInfo{}, err
+	}
+	if strings.TrimSpace(info.ProviderUID) == "" {
+		return OAuthUserInfo{}, fmt.Errorf("linux.do userinfo did not return a user id")
+	}
+	if strings.TrimSpace(info.Email) == "" {
+		return OAuthUserInfo{}, fmt.Errorf("linux.do userinfo did not return an email")
 	}
 	return info, nil
 }
@@ -646,15 +626,8 @@ func decodeLinuxDoUserInfo(raw []byte) (OAuthUserInfo, error) {
 	if body == "" {
 		return OAuthUserInfo{}, fmt.Errorf("linux.do userinfo response is empty")
 	}
-	if strings.Count(body, ".") == 2 && !strings.HasPrefix(body, "{") {
-		return linuxDoInfoFromJWT(body)
-	}
 	var payload map[string]any
 	if err := json.Unmarshal(raw, &payload); err != nil {
-		var token string
-		if json.Unmarshal(raw, &token) == nil && strings.Count(token, ".") == 2 {
-			return linuxDoInfoFromJWT(token)
-		}
 		return OAuthUserInfo{}, err
 	}
 	if nested, ok := payload["user"].(map[string]any); ok {
@@ -666,22 +639,6 @@ func decodeLinuxDoUserInfo(raw []byte) (OAuthUserInfo, error) {
 		payload = nested
 	}
 	return linuxDoInfoFromMap(payload), nil
-}
-
-func linuxDoInfoFromJWT(token string) (OAuthUserInfo, error) {
-	parts := strings.Split(token, ".")
-	if len(parts) != 3 {
-		return OAuthUserInfo{}, fmt.Errorf("invalid linux.do id token")
-	}
-	payload, err := base64.RawURLEncoding.DecodeString(parts[1])
-	if err != nil {
-		return OAuthUserInfo{}, err
-	}
-	var claims map[string]any
-	if err := json.Unmarshal(payload, &claims); err != nil {
-		return OAuthUserInfo{}, err
-	}
-	return linuxDoInfoFromMap(claims), nil
 }
 
 func linuxDoInfoFromMap(payload map[string]any) OAuthUserInfo {

@@ -299,7 +299,7 @@ function formFromProvider(provider: OAuthProvider): OAuthForm {
 }
 
 function fallbackCallbackURL(provider: OAuthProvider) {
-  return `${window.location.origin}/oauth/callback/${provider.provider}`;
+  return `${window.location.origin}/api/oauth/${provider.provider}/callback`;
 }
 
 function maskClientID(value: string) {

@@ -991,14 +991,8 @@ func (h *Handler) shareWebURL(c *gin.Context, token string) string {
 func shareAccessURL(shareURL, accessKey string) string {
 	parsed, err := url.Parse(shareURL)
 	if err != nil {
-		separator := "?"
-		if strings.Contains(shareURL, "?") {
-			separator = "&"
-		}
-		return shareURL + separator + "key=" + url.QueryEscape(accessKey)
+		return strings.Split(shareURL, "#")[0] + "#key=" + url.QueryEscape(accessKey)
 	}
-	query := parsed.Query()
-	query.Set("key", accessKey)
-	parsed.RawQuery = query.Encode()
+	parsed.Fragment = "key=" + url.QueryEscape(accessKey)
 	return parsed.String()
 }

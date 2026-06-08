@@ -195,10 +195,8 @@ export function validateWebhookForm(form: WebhookFormState, messages: WebhookVal
   } else {
     try {
       const parsed = new URL(url);
-      if (!['https:', 'http:'].includes(parsed.protocol)) {
-        errors.url = messages.urlInvalid;
-      } else if (parsed.protocol !== 'https:' && parsed.hostname !== 'localhost' && parsed.hostname !== '127.0.0.1') {
-        errors.url = messages.urlHttps;
+      if (parsed.protocol !== 'https:' || parsed.username || parsed.password || !parsed.hostname || isBlockedWebhookHost(parsed.hostname)) {
+        errors.url = webhookURLPolicyMessage(messages);
       }
     } catch {
       errors.url = messages.urlInvalid;
@@ -210,6 +208,116 @@ export function validateWebhookForm(form: WebhookFormState, messages: WebhookVal
   if (form.scope === 'mailbox' && !isPositiveInteger(form.mailboxId)) errors.mailboxId = messages.mailboxIdRequired;
 
   return errors;
+}
+
+function webhookURLPolicyMessage(messages: WebhookValidationMessages) {
+  return /[\u3400-\u9fff]/.test(messages.urlHttps)
+    ? 'Webhook URL 请使用 HTTPS 公网地址，不能指向 localhost、127.0.0.1 或内网地址'
+    : 'Use a public HTTPS webhook URL; localhost, 127.0.0.1, and private/internal addresses are not allowed';
+}
+
+function isBlockedWebhookHost(hostname: string) {
+  const host = hostname.trim().toLowerCase().replace(/^\[(.*)\]$/, '$1');
+  if (!host) return true;
+  if (host === 'localhost' || host === 'metadata.google.internal' || host.endsWith('.localhost')) return true;
+
+  const ipv4 = parseIPv4Address(host);
+  if (ipv4) return isBlockedIPv4Address(ipv4);
+
+  if (host.includes(':')) return isBlockedIPv6Address(host);
+
+  return false;
+}
+
+function parseIPv4Address(host: string) {
+  const parts = host.split('.');
+  if (parts.length !== 4) return null;
+
+  const octets = parts.map((part) => {
+    if (!/^\d+$/.test(part)) return Number.NaN;
+    const value = Number(part);
+    return Number.isInteger(value) && value >= 0 && value <= 255 ? value : Number.NaN;
+  });
+
+  return octets.every(Number.isFinite) ? octets : null;
+}
+
+function isBlockedIPv4Address(octets: number[]) {
+  const [a, b, c] = octets;
+  return (
+    a === 0 ||
+    a === 10 ||
+    a === 127 ||
+    (a === 100 && b >= 64 && b <= 127) ||
+    (a === 169 && b === 254) ||
+    (a === 172 && b >= 16 && b <= 31) ||
+    (a === 192 && ((b === 0 && (c === 0 || c === 2)) || b === 168)) ||
+    (a === 198 && ((b === 18 || b === 19) || (b === 51 && c === 100))) ||
+    (a === 203 && b === 0 && c === 113) ||
+    a >= 224
+  );
+}
+
+function isBlockedIPv6Address(host: string) {
+  const groups = parseIPv6Groups(host);
+  if (!groups) return false;
+
+  return BLOCKED_IPV6_PREFIXES.some(([prefix, bits]) => matchesIPv6Prefix(groups, prefix, bits));
+}
+
+const BLOCKED_IPV6_PREFIXES: Array<[number[], number]> = [
+  [ipv6Prefix('::'), 128],
+  [ipv6Prefix('::1'), 128],
+  [ipv6Prefix('::ffff:0:0'), 96],
+  [ipv6Prefix('64:ff9b::'), 96],
+  [ipv6Prefix('100::'), 64],
+  [ipv6Prefix('2001::'), 23],
+  [ipv6Prefix('2001:db8::'), 32],
+  [ipv6Prefix('fc00::'), 7],
+  [ipv6Prefix('fe80::'), 10],
+  [ipv6Prefix('ff00::'), 8]
+];
+
+function ipv6Prefix(value: string) {
+  const groups = parseIPv6Groups(value);
+  if (!groups) throw new Error(`Invalid IPv6 prefix: ${value}`);
+  return groups;
+}
+
+function parseIPv6Groups(host: string) {
+  if (host.includes('.')) return null;
+  const sections = host.split('::');
+  if (sections.length > 2) return null;
+
+  const left = parseIPv6Section(sections[0]);
+  const right = sections.length === 2 ? parseIPv6Section(sections[1]) : [];
+  if (!left || !right) return null;
+
+  if (sections.length === 1) return left.length === 8 ? left : null;
+
+  const zeroCount = 8 - left.length - right.length;
+  if (zeroCount < 1) return null;
+
+  return [...left, ...Array(zeroCount).fill(0), ...right];
+}
+
+function parseIPv6Section(section: string) {
+  if (!section) return [];
+  const groups = section.split(':');
+  const parsed = groups.map((group) => (/^[\da-f]{1,4}$/i.test(group) ? Number.parseInt(group, 16) : Number.NaN));
+  return parsed.every(Number.isFinite) ? parsed : null;
+}
+
+function matchesIPv6Prefix(groups: number[], prefix: number[], bits: number) {
+  const fullGroups = Math.floor(bits / 16);
+  const remainingBits = bits % 16;
+  for (let index = 0; index < fullGroups; index += 1) {
+    if (groups[index] !== prefix[index]) return false;
+  }
+  if (remainingBits === 0) return true;
+
+  const mask = (0xffff << (16 - remainingBits)) & 0xffff;
+  return (groups[fullGroups] & mask) === (prefix[fullGroups] & mask);
 }
 
 function normalizeWebhookScope(scope?: string): WebhookScope {

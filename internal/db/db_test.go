@@ -1,6 +1,7 @@
 package db
 
 import (
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -55,6 +56,49 @@ func TestOpenSQLiteConfiguresPragmas(t *testing.T) {
 	}
 }
 
+func TestOpenSQLiteDefaultUsesLegacyDatabaseWhenNewDefaultMissing(t *testing.T) {
+	withTempWorkdir(t)
+	legacy := openSQLiteMarkerDB(t, config.LegacySQLiteDatabaseURL, "legacy")
+	closeGormDB(t, legacy)
+
+	database, err := Open(config.Config{
+		DatabaseDriver: "sqlite",
+		DatabaseURL:    config.DefaultSQLiteDatabaseURL,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer closeGormDB(t, database)
+
+	if got := readSQLiteMarker(t, database); got != "legacy" {
+		t.Fatalf("opened marker = %q, want legacy database", got)
+	}
+	if sqliteFileExists(config.DefaultSQLiteDatabaseURL) {
+		t.Fatalf("new default database %q should not be created when legacy database exists", config.DefaultSQLiteDatabaseURL)
+	}
+}
+
+func TestOpenSQLiteDefaultPrefersNewDefaultWhenItExists(t *testing.T) {
+	withTempWorkdir(t)
+	current := openSQLiteMarkerDB(t, config.DefaultSQLiteDatabaseURL, "current")
+	closeGormDB(t, current)
+	legacy := openSQLiteMarkerDB(t, config.LegacySQLiteDatabaseURL, "legacy")
+	closeGormDB(t, legacy)
+
+	database, err := Open(config.Config{
+		DatabaseDriver: "sqlite",
+		DatabaseURL:    config.DefaultSQLiteDatabaseURL,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer closeGormDB(t, database)
+
+	if got := readSQLiteMarker(t, database); got != "current" {
+		t.Fatalf("opened marker = %q, want current database", got)
+	}
+}
+
 func TestSQLiteDSNWithPragmasPreservesExistingQuery(t *testing.T) {
 	dsn := sqliteDSNWithPragmas("storage/mail.db?cache=shared")
 	if !strings.HasPrefix(dsn, "storage/mail.db?cache=shared&") {
@@ -97,6 +141,7 @@ func TestAutoMigrateCreatesIntegrityConstraints(t *testing.T) {
 	assertNotNullColumns(t, database, "api_keys", "name", "key_prefix", "key_hash", "key_value")
 	assertNotNullColumns(t, database, "messages", "recipient", "recipient_domain", "root_domain", "from_address", "subject", "expires_at")
 	assertNotNullColumns(t, database, "message_attachments", "id", "message_id", "sequence", "size_bytes", "sha256")
+	assertNotNullColumns(t, database, "message_daily_stats", "day", "message_count")
 	assertNotNullColumns(t, database, "share_links", "owner_id", "token_hash", "token_prefix", "resource_type", "access_count")
 	assertNotNullColumns(t, database, "share_link_access_logs", "share_link_id", "owner_id", "resource_type", "success", "ip", "user_agent")
 	assertNotNullColumns(t, database, "mailboxes", "owner_id", "email", "local_part", "host", "domain_id")
@@ -129,6 +174,69 @@ func TestAutoMigrateCreatesIntegrityConstraints(t *testing.T) {
 	}
 	assertIndex(t, database, "messages", "idx_messages_root_domain")
 	assertIndex(t, database, "messages", "idx_messages_mailbox_created")
+}
+
+func TestAutoMigrateBackfillsMessageDailyStats(t *testing.T) {
+	database := openSQLiteTestDB(t)
+	if err := database.AutoMigrate(&models.Message{}); err != nil {
+		t.Fatal(err)
+	}
+	today := time.Date(2026, 6, 8, 12, 0, 0, 0, time.Local)
+	oldDay := today.AddDate(0, 0, -2)
+	messages := []models.Message{
+		legacyMessage("message-daily-1", "a@example.test", "example.test", "example.test"),
+		legacyMessage("message-daily-2", "b@example.test", "example.test", "example.test"),
+		legacyMessage("message-daily-3", "c@example.test", "example.test", "example.test"),
+	}
+	messages[0].CreatedAt = oldDay
+	messages[1].CreatedAt = oldDay.Add(time.Hour)
+	messages[2].CreatedAt = today
+	if err := database.Create(&messages).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	if err := AutoMigrate(database); err != nil {
+		t.Fatal(err)
+	}
+
+	var stats []models.MessageDailyStat
+	if err := database.Order("day asc").Find(&stats).Error; err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]int64{
+		oldDay.Local().Format("2006-01-02"): 2,
+		today.Local().Format("2006-01-02"):  1,
+	}
+	if len(stats) != len(want) {
+		t.Fatalf("message daily stats = %+v, want %d days", stats, len(want))
+	}
+	for _, stat := range stats {
+		if stat.MessageCount != want[stat.Day] {
+			t.Fatalf("message daily stat %s = %d, want %d", stat.Day, stat.MessageCount, want[stat.Day])
+		}
+	}
+}
+
+func TestIncrementMessageDailyStatAccumulates(t *testing.T) {
+	database := openSQLiteTestDB(t)
+	if err := database.AutoMigrate(&models.MessageDailyStat{}); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	if err := IncrementMessageDailyStat(database, now, 1); err != nil {
+		t.Fatal(err)
+	}
+	if err := IncrementMessageDailyStat(database, now.Add(time.Hour), 2); err != nil {
+		t.Fatal(err)
+	}
+
+	var stat models.MessageDailyStat
+	if err := database.First(&stat, "day = ?", now.Local().Format("2006-01-02")).Error; err != nil {
+		t.Fatal(err)
+	}
+	if stat.MessageCount != 3 {
+		t.Fatalf("message daily stat = %d, want 3", stat.MessageCount)
+	}
 }
 
 func TestAutoMigrateUpgradesLegacyShareLinksForMailboxShares(t *testing.T) {
@@ -674,6 +782,60 @@ func TestBackfillDomainFirstVerifiedAtProtectsOnlyCurrentlyReadyDomains(t *testi
 type tableColumn struct {
 	Name    string
 	NotNull int `gorm:"column:notnull"`
+}
+
+func withTempWorkdir(t *testing.T) {
+	t.Helper()
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	temp := t.TempDir()
+	if err := os.Chdir(temp); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := os.Chdir(wd); err != nil {
+			t.Fatalf("restore working directory: %v", err)
+		}
+	})
+}
+
+func openSQLiteMarkerDB(t *testing.T, path, value string) *gorm.DB {
+	t.Helper()
+	database, err := Open(config.Config{DatabaseDriver: "sqlite", DatabaseURL: path})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := database.Exec("CREATE TABLE marker (value text NOT NULL)").Error; err != nil {
+		closeGormDB(t, database)
+		t.Fatal(err)
+	}
+	if err := database.Exec("INSERT INTO marker (value) VALUES (?)", value).Error; err != nil {
+		closeGormDB(t, database)
+		t.Fatal(err)
+	}
+	return database
+}
+
+func readSQLiteMarker(t *testing.T, database *gorm.DB) string {
+	t.Helper()
+	var got string
+	if err := database.Raw("SELECT value FROM marker LIMIT 1").Scan(&got).Error; err != nil {
+		t.Fatal(err)
+	}
+	return got
+}
+
+func closeGormDB(t *testing.T, database *gorm.DB) {
+	t.Helper()
+	sqlDB, err := database.DB()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := sqlDB.Close(); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func assertNotNullColumns(t *testing.T, database *gorm.DB, table string, names ...string) {

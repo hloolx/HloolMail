@@ -748,7 +748,14 @@ func TestGenerateEmailMailboxSharePublicAccessAndDeletion(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	accessKey := accessURL.Query().Get("key")
+	if queryKey := accessURL.Query().Get("key"); queryKey != "" {
+		t.Fatalf("access_url placed key in query: %s", generated.Share.AccessURL)
+	}
+	fragmentParams, err := url.ParseQuery(accessURL.Fragment)
+	if err != nil {
+		t.Fatal(err)
+	}
+	accessKey := fragmentParams.Get("key")
 	if accessKey == "" {
 		t.Fatalf("access_url missing key: %s", generated.Share.AccessURL)
 	}

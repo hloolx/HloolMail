@@ -308,6 +308,13 @@ type MessageAttachment struct {
 	CreatedAt        time.Time `json:"created_at"`
 }
 
+type MessageDailyStat struct {
+	Day          string    `gorm:"primaryKey;size:10;not null" json:"day"`
+	MessageCount int64     `gorm:"not null;default:0" json:"message_count"`
+	CreatedAt    time.Time `json:"created_at"`
+	UpdatedAt    time.Time `json:"updated_at"`
+}
+
 type ShareLink struct {
 	ID             uint           `gorm:"primaryKey" json:"id"`
 	OwnerID        uint           `gorm:"index;not null" json:"owner_id"`

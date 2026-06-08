@@ -389,14 +389,13 @@ func (h *Handler) adminStatsTimeseries(c *gin.Context) {
 }
 
 func (h *Handler) adminCreatedCountsSince(since time.Time) gin.H {
-	var messages, mailboxes, domains, users, apiCalls int64
-	h.DB.Model(&models.Message{}).Where("created_at >= ?", since).Count(&messages)
+	var mailboxes, domains, users, apiCalls int64
 	h.DB.Model(&models.Mailbox{}).Where("created_at >= ?", since).Count(&mailboxes)
 	h.DB.Model(&models.Domain{}).Where("created_at >= ?", since).Count(&domains)
 	h.DB.Model(&models.User{}).Where("created_at >= ?", since).Count(&users)
 	h.DB.Model(&models.APIUsageLog{}).Where("created_at >= ?", since).Count(&apiCalls)
 	return gin.H{
-		"messages":  messages,
+		"messages":  h.adminMessageCountSince(since),
 		"mailboxes": mailboxes,
 		"domains":   domains,
 		"users":     users,
@@ -418,9 +417,10 @@ func (h *Handler) adminStatsTimeseriesData(days int) gin.H {
 	newMailboxes := make([]int64, days)
 	users := make([]int64, days)
 	newUsers := make([]int64, days)
+	messageAdds := h.adminMessageCountsByDay(earliest, days)
 
 	var runningMessages, runningDomains, runningMailboxes, runningUsers int64
-	h.DB.Model(&models.Message{}).Where("created_at < ?", earliest).Count(&runningMessages)
+	runningMessages = h.adminMessageCountBefore(earliest)
 	h.DB.Model(&models.Domain{}).Where("created_at < ?", earliest).Count(&runningDomains)
 	h.DB.Model(&models.Mailbox{}).Where("created_at < ?", earliest).Count(&runningMailboxes)
 	h.DB.Model(&models.User{}).Where("created_at < ?", earliest).Count(&runningUsers)
@@ -430,8 +430,8 @@ func (h *Handler) adminStatsTimeseriesData(days int) gin.H {
 		dayEnd := dayStart.AddDate(0, 0, 1)
 		labels[i] = dayStart.Format("2006-01-02")
 
-		var messageAdded, apiCount, domainAdded, mailboxAdded, userAdded int64
-		h.DB.Model(&models.Message{}).Where("created_at >= ? AND created_at < ?", dayStart, dayEnd).Count(&messageAdded)
+		messageAdded := messageAdds[i]
+		var apiCount, domainAdded, mailboxAdded, userAdded int64
 		h.DB.Model(&models.APIUsageLog{}).Where("created_at >= ? AND created_at < ?", dayStart, dayEnd).Count(&apiCount)
 		h.DB.Model(&models.Domain{}).Where("created_at >= ? AND created_at < ?", dayStart, dayEnd).Count(&domainAdded)
 		h.DB.Model(&models.Mailbox{}).Where("created_at >= ? AND created_at < ?", dayStart, dayEnd).Count(&mailboxAdded)
@@ -465,6 +465,74 @@ func (h *Handler) adminStatsTimeseriesData(days int) gin.H {
 		"new_users":      newUsers,
 		"api_calls":      apiCalls,
 	}
+}
+
+func (h *Handler) adminMessageCountSince(since time.Time) int64 {
+	start := startOfDay(since)
+	today := startOfDay(time.Now())
+	days := 1
+	for day := start; day.Before(today); day = day.AddDate(0, 0, 1) {
+		days++
+	}
+	counts := h.adminMessageCountsByDay(start, days)
+	var total int64
+	for _, count := range counts {
+		total += count
+	}
+	return total
+}
+
+func (h *Handler) adminMessageCountBefore(cutoff time.Time) int64 {
+	dayKey := startOfDay(cutoff).Format("2006-01-02")
+	var statTotal int64
+	if h.DB.Migrator().HasTable(&models.MessageDailyStat{}) {
+		h.DB.Model(&models.MessageDailyStat{}).
+			Select("COALESCE(SUM(message_count), 0)").
+			Where("day < ?", dayKey).
+			Scan(&statTotal)
+	}
+	var liveTotal int64
+	h.DB.Unscoped().Model(&models.Message{}).Where("created_at < ?", cutoff).Count(&liveTotal)
+	if liveTotal > statTotal {
+		return liveTotal
+	}
+	return statTotal
+}
+
+func (h *Handler) adminMessageCountsByDay(earliest time.Time, days int) []int64 {
+	counts := make([]int64, days)
+	if days <= 0 {
+		return counts
+	}
+	dayIndex := make(map[string]int, days)
+	for i := 0; i < days; i++ {
+		dayIndex[earliest.AddDate(0, 0, i).Format("2006-01-02")] = i
+	}
+
+	if h.DB.Migrator().HasTable(&models.MessageDailyStat{}) {
+		latest := earliest.AddDate(0, 0, days-1).Format("2006-01-02")
+		var rows []models.MessageDailyStat
+		if err := h.DB.Model(&models.MessageDailyStat{}).
+			Where("day >= ? AND day <= ?", earliest.Format("2006-01-02"), latest).
+			Find(&rows).Error; err == nil {
+			for _, row := range rows {
+				if index, ok := dayIndex[row.Day]; ok && row.MessageCount > counts[index] {
+					counts[index] = row.MessageCount
+				}
+			}
+		}
+	}
+
+	for i := 0; i < days; i++ {
+		dayStart := earliest.AddDate(0, 0, i)
+		dayEnd := dayStart.AddDate(0, 0, 1)
+		var liveCount int64
+		h.DB.Unscoped().Model(&models.Message{}).Where("created_at >= ? AND created_at < ?", dayStart, dayEnd).Count(&liveCount)
+		if liveCount > counts[i] {
+			counts[i] = liveCount
+		}
+	}
+	return counts
 }
 
 type generateEmailRequest struct {

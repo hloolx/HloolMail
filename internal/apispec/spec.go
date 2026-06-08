@@ -210,7 +210,7 @@ var registry = []Operation{
 		Path:        "/api/generate-email",
 		Tags:        []string{TagAutomation},
 		Summary:     "生成邮箱",
-		Description: "为 API Key 调用方创建或复用邮箱。传入已验证域名可使用私有域名；省略 domain 会随机使用公共域名。设置 share=true 或 share.enabled=true 可在同一响应中创建邮箱分享；返回的 data.share.url 是分享页 URL，data.share.access_url 会带上 ?key= 访问参数。",
+		Description: "为 API Key 调用方创建或复用邮箱。传入已验证域名可使用私有域名；省略 domain 会随机使用公共域名。设置 share=true 或 share.enabled=true 可在同一响应中创建邮箱分享；返回的 data.share.url 是分享页 URL，data.share.access_url 会在 URL fragment 中带上 #key=。",
 		Auth:        AuthAPIKey,
 		RequestBody: &RequestBody{Description: "可选的邮箱生成参数。", SchemaName: "GenerateEmailRequest", Example: "{\n  \"prefix\": \"verify\",\n  \"domain\": \"example.com\",\n  \"share\": true\n}", Required: false},
 		Responses: []OperationResponse{

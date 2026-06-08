@@ -377,7 +377,7 @@ export function publicShareURL(link: ShareLinkDTO) {
     return link.share_url.startsWith('/') ? `${window.location.origin}${link.share_url}` : link.share_url;
   }
   if (link.token && link.access_key) {
-    return `${window.location.origin}/share/${encodeURIComponent(link.token)}?key=${encodeURIComponent(link.access_key)}`;
+    return `${window.location.origin}/share/${encodeURIComponent(link.token)}#key=${encodeURIComponent(link.access_key)}`;
   }
   if (!link.token) return '';
   return `${window.location.origin}/share/${encodeURIComponent(link.token)}`;

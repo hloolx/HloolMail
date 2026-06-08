@@ -110,7 +110,7 @@ func Markdown(cfg Config) string {
 		"  -d '{\"prefix\":\"verify\",\"domain\":\"example.com\",\"share\":true}'",
 		"```",
 		"",
-		"响应包含 `data.share.url` 和 `data.share.access_url`。`access_url` 会带上随机 `key` 查询参数，可直接打开邮箱；移除 `?key=...` 后会进入公开解锁页，需要手动输入 key。完整 token/key 只返回一次，后台只保存 hash，需要再次复制时要重新生成分享链接。",
+		"响应包含 `data.share.url` 和 `data.share.access_url`。`access_url` 会在 URL fragment 中带上随机 `#key=...`，可直接打开邮箱；移除 `#key=...` 后会进入公开解锁页，需要手动输入 key。完整 token/key 只返回一次，后台只保存 hash，需要再次复制时要重新生成分享链接。",
 		"",
 		"## 管理已生成邮箱",
 		"",

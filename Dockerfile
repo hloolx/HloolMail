@@ -34,6 +34,6 @@ ENV HTTP_ADDR=:3000 \
     SMTP_ADDR=:2525 \
     HLOOLMAIL_DEPLOYMENT=docker \
     DATABASE_DRIVER=sqlite \
-    DATABASE_URL=/app/storage/gptmail.db
+    DATABASE_URL=/app/storage/hlool-mail.db
 EXPOSE 3000 2525
 CMD ["hloolmail"]

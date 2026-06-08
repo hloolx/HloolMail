@@ -381,8 +381,10 @@ function shareKeyFromLocation() {
 
   const hash = window.location.hash;
   const queryStart = hash.indexOf('?');
-  if (queryStart < 0) return '';
-  return new URLSearchParams(hash.slice(queryStart + 1)).get('key') || '';
+  if (queryStart >= 0) return new URLSearchParams(hash.slice(queryStart + 1)).get('key') || '';
+
+  const hashParams = new URLSearchParams(hash.startsWith('#') ? hash.slice(1) : hash);
+  return hashParams.get('key') || '';
 }
 
 function stripShareKeyFromLocation() {
@@ -398,7 +400,14 @@ function stripShareKeyFromLocation() {
     const hashParams = new URLSearchParams(nextHash.slice(hashQueryStart + 1));
     hashParams.delete('key');
     const nextHashQuery = hashParams.toString();
-    nextHash = `${hashPath}${nextHashQuery ? `?${nextHashQuery}` : ''}`;
+    nextHash = hashPath === '#' && !nextHashQuery ? '' : `${hashPath}${nextHashQuery ? `?${nextHashQuery}` : ''}`;
+  } else if (nextHash.startsWith('#')) {
+    const hashParams = new URLSearchParams(nextHash.slice(1));
+    if (hashParams.has('key')) {
+      hashParams.delete('key');
+      const nextHashQuery = hashParams.toString();
+      nextHash = nextHashQuery ? `#${nextHashQuery}` : '';
+    }
   }
 
   window.history.replaceState(

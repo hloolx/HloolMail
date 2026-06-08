@@ -1,10 +1,12 @@
 package httpapi
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -682,22 +684,109 @@ func TestDecodeLinuxDoUserInfoSupportsNestedUserPayload(t *testing.T) {
 	}
 }
 
-func TestDecodeLinuxDoUserInfoSupportsJWTClaims(t *testing.T) {
+func TestDecodeLinuxDoUserInfoRejectsJWTClaims(t *testing.T) {
 	claims := base64.RawURLEncoding.EncodeToString([]byte(`{
 		"sub": "linux-jwt-1",
 		"email": "jwt@example.com",
 		"name": "JWT Nick",
 		"picture": "https://example.com/picture.png"
 	}`))
-	info, err := decodeLinuxDoUserInfo([]byte("e30." + claims + ".sig"))
+	if _, err := decodeLinuxDoUserInfo([]byte("e30." + claims + ".sig")); err == nil {
+		t.Fatal("expected linux.do userinfo JWT payload to be rejected")
+	}
+	if _, err := decodeLinuxDoUserInfo([]byte(`"e30.` + claims + `.sig"`)); err == nil {
+		t.Fatal("expected JSON string JWT payload to be rejected")
+	}
+}
+
+func TestFetchLinuxDoUserInfoDoesNotFallbackToIDTokenOnPrimaryError(t *testing.T) {
+	restore := stubOAuthHTTPClient(t, func(req *http.Request) (*http.Response, error) {
+		if req.URL.Path != "/api/user" {
+			t.Fatalf("unexpected linux.do endpoint: %s", req.URL.String())
+		}
+		return oauthTestResponse(req, http.StatusInternalServerError, `{"error":"temporary"}`), nil
+	})
+	defer restore()
+
+	_, err := fetchLinuxDoUserInfo(context.Background(), oauthToken{
+		AccessToken: "access-token",
+		IDToken:     unsignedLinuxDoIDToken(`{"sub":"jwt-id","email":"jwt@example.com"}`),
+	})
+	if err == nil {
+		t.Fatal("expected primary userinfo error to be returned without id_token fallback")
+	}
+}
+
+func TestFetchLinuxDoUserInfoDoesNotFallbackToIDTokenOnSecondaryError(t *testing.T) {
+	paths := []string{}
+	restore := stubOAuthHTTPClient(t, func(req *http.Request) (*http.Response, error) {
+		paths = append(paths, req.URL.Path)
+		switch req.URL.Path {
+		case "/api/user":
+			return oauthTestResponse(req, http.StatusNotFound, `{"error":"not found"}`), nil
+		case "/oauth2/userinfo":
+			return oauthTestResponse(req, http.StatusBadGateway, `{"error":"temporary"}`), nil
+		default:
+			t.Fatalf("unexpected linux.do endpoint: %s", req.URL.String())
+			return nil, nil
+		}
+	})
+	defer restore()
+
+	_, err := fetchLinuxDoUserInfo(context.Background(), oauthToken{
+		AccessToken: "access-token",
+		IDToken:     unsignedLinuxDoIDToken(`{"sub":"jwt-id","email":"jwt@example.com"}`),
+	})
+	if err == nil {
+		t.Fatal("expected secondary userinfo error to be returned without id_token fallback")
+	}
+	if got := strings.Join(paths, ","); got != "/api/user,/oauth2/userinfo" {
+		t.Fatalf("linux.do userinfo endpoints = %s", got)
+	}
+}
+
+func TestFetchLinuxDoUserInfoDoesNotFillMissingFieldsFromIDToken(t *testing.T) {
+	restore := stubOAuthHTTPClient(t, func(req *http.Request) (*http.Response, error) {
+		if req.URL.Path != "/api/user" {
+			t.Fatalf("unexpected linux.do endpoint: %s", req.URL.String())
+		}
+		return oauthTestResponse(req, http.StatusOK, `{"name":"Missing Fields"}`), nil
+	})
+	defer restore()
+
+	_, err := fetchLinuxDoUserInfo(context.Background(), oauthToken{
+		AccessToken: "access-token",
+		IDToken:     unsignedLinuxDoIDToken(`{"sub":"jwt-id","email":"jwt@example.com"}`),
+	})
+	if err == nil || !strings.Contains(err.Error(), "user id") {
+		t.Fatalf("expected missing user id error without id_token fallback, got %v", err)
+	}
+}
+
+func TestFetchLinuxDoUserInfoUsesSecondaryUserInfoAfterNotFound(t *testing.T) {
+	restore := stubOAuthHTTPClient(t, func(req *http.Request) (*http.Response, error) {
+		switch req.URL.Path {
+		case "/api/user":
+			return oauthTestResponse(req, http.StatusNotFound, `{"error":"not found"}`), nil
+		case "/oauth2/userinfo":
+			return oauthTestResponse(req, http.StatusOK, `{
+				"sub": "linux-secondary",
+				"email": "secondary@example.com",
+				"name": "Secondary User"
+			}`), nil
+		default:
+			t.Fatalf("unexpected linux.do endpoint: %s", req.URL.String())
+			return nil, nil
+		}
+	})
+	defer restore()
+
+	info, err := fetchLinuxDoUserInfo(context.Background(), oauthToken{AccessToken: "access-token"})
 	if err != nil {
-		t.Fatalf("decode linux.do jwt: %v", err)
+		t.Fatalf("fetch linux.do userinfo: %v", err)
 	}
-	if info.ProviderUID != "linux-jwt-1" || info.Email != "jwt@example.com" || info.Name != "JWT Nick" {
-		t.Fatalf("decoded jwt info = %+v", info)
-	}
-	if info.AvatarURL != "https://example.com/picture.png" {
-		t.Fatalf("decoded jwt avatar_url = %q, want %q", info.AvatarURL, "https://example.com/picture.png")
+	if info.ProviderUID != "linux-secondary" || info.Email != "secondary@example.com" || info.Name != "Secondary User" {
+		t.Fatalf("linux.do secondary userinfo = %+v", info)
 	}
 }
 
@@ -722,4 +811,28 @@ func TestSanitizeOAuthAvatarURLAllowsOnlyHTTPS(t *testing.T) {
 			}
 		})
 	}
+}
+
+func stubOAuthHTTPClient(t *testing.T, fn roundTripFunc) func() {
+	t.Helper()
+	originalClient := oauthHTTPClient
+	oauthHTTPClient = &http.Client{Transport: fn}
+	return func() {
+		oauthHTTPClient = originalClient
+	}
+}
+
+func oauthTestResponse(req *http.Request, status int, body string) *http.Response {
+	header := make(http.Header)
+	header.Set("Content-Type", "application/json")
+	return &http.Response{
+		StatusCode: status,
+		Header:     header,
+		Body:       io.NopCloser(strings.NewReader(body)),
+		Request:    req,
+	}
+}
+
+func unsignedLinuxDoIDToken(claims string) string {
+	return "e30." + base64.RawURLEncoding.EncodeToString([]byte(claims)) + ".sig"
 }

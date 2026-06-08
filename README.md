@@ -45,7 +45,9 @@ docker compose up -d --build
 docker compose logs -f app
 ```
 
-不要直接复用本地开发用的 `.env`，尤其是包含 `DATABASE_URL=storage/gptmail.db` 的文件；Compose 部署请从 `.env.compose.example` 复制，并使用下面的 Compose 专用变量。
+不要直接复用本地开发用的 `.env`，尤其是包含 `DATABASE_URL=storage/hlool-mail.db` 的文件；Compose 部署请从 `.env.compose.example` 复制，并使用下面的 Compose 专用变量。
+
+从早期版本升级且仍在使用 SQLite 的用户，如果已有 `storage/gptmail.db`，默认启动会继续兼容这个旧库，避免升级后误连到空库。计划手动迁移到新文件名时，请先停止服务，再同时重命名 `gptmail.db`、`gptmail.db-wal`、`gptmail.db-shm` 到对应的 `hlool-mail.db*` 文件名。
 
 至少修改这些值：
 
@@ -303,7 +305,7 @@ curl -X POST "$BASE_URL/api/generate-email" \
   -d '{"prefix":"demo","domain":"example.com","share":true}'
 ```
 
-响应中的 `data.share.url` 是不带 key 的分享页 URL；`data.share.access_url` 会带上 `?key=...`，可直接访问分享邮箱。完整 token 和 key 只在创建或重新生成时返回一次；后台只保存 hash，不能再次查看旧完整链接，需要再次复制时请重新生成分享链接。
+响应中的 `data.share.url` 是不带 key 的分享页 URL；`data.share.access_url` 会在 URL fragment 中带上 `#key=...`，可直接访问分享邮箱。完整 token 和 key 只在创建或重新生成时返回一次；后台只保存 hash，不能再次查看旧完整链接，需要再次复制时请重新生成分享链接。
 
 管理接口是 Web Console session-only；公开读取走匿名 token 和 key：
 

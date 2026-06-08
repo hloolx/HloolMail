@@ -829,6 +829,53 @@ func TestAdminRegularStatsAreOwnerScopedAndAdminStatsStayGlobal(t *testing.T) {
 	})
 }
 
+func TestAdminStatsTimeseriesUsesMessageDailyStatsAfterMessageCleanup(t *testing.T) {
+	db := httpTestDB(t)
+	today := startOfDay(time.Now())
+	oldDay := today.AddDate(0, 0, -2)
+	if err := db.Create(&models.MessageDailyStat{
+		Day:          oldDay.Format("2006-01-02"),
+		MessageCount: 4,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	liveMessage := models.Message{
+		ID:              "live-message-today",
+		Recipient:       "today@example.test",
+		RecipientLocal:  "today",
+		RecipientDomain: "example.test",
+		RootDomain:      "example.test",
+		FromAddress:     "sender@example.test",
+		Subject:         "today",
+		CreatedAt:       today.Add(time.Hour),
+		ExpiresAt:       today.Add(2 * time.Hour),
+	}
+	if err := db.Create(&liveMessage).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	handler := &Handler{DB: db}
+	series := handler.adminStatsTimeseriesData(3)
+	newMessages, ok := series["new_messages"].([]int64)
+	if !ok {
+		t.Fatalf("new_messages type = %T", series["new_messages"])
+	}
+	if len(newMessages) != 3 || newMessages[0] != 4 || newMessages[1] != 0 || newMessages[2] != 1 {
+		t.Fatalf("new_messages = %v, want [4 0 1]", newMessages)
+	}
+	messageTotals, ok := series["message_totals"].([]int64)
+	if !ok {
+		t.Fatalf("message_totals type = %T", series["message_totals"])
+	}
+	if len(messageTotals) != 3 || messageTotals[0] != 4 || messageTotals[1] != 4 || messageTotals[2] != 5 {
+		t.Fatalf("message_totals = %v, want [4 4 5]", messageTotals)
+	}
+	growth := handler.adminCreatedCountsSince(today.AddDate(0, 0, -6))
+	if got := growth["messages"]; got != int64(5) {
+		t.Fatalf("growth messages = %v, want 5", got)
+	}
+}
+
 func TestAdminAPIKeyRegularStatsAreOwnerScoped(t *testing.T) {
 	db := httpTestDB(t)
 	hash, err := auth.HashSecret("password123")
@@ -3947,7 +3994,7 @@ func httpTestDB(t *testing.T) *gorm.DB {
 		t.Fatal(err)
 	}
 	sqlDB.SetMaxOpenConns(1)
-	if err := db.AutoMigrate(&models.User{}, &models.PendingRegistration{}, &models.RegistrationCaptcha{}, &models.OAuthIdentity{}, &models.OAuthProviderSetting{}, &models.Domain{}, &models.Mailbox{}, &models.Message{}, &models.MessageAttachment{}, &models.ShareLink{}, &models.ShareLinkAccessLog{}, &models.WebhookEndpoint{}, &models.WebhookDelivery{}, &models.EmailDelivery{}, &models.APIKey{}, &models.SessionToken{}, &models.APIUsageLog{}, &models.Notification{}, &models.Announcement{}, &models.AnnouncementRead{}, &models.AuditLog{}, &models.SystemQuotaSettings{}, &models.APIInterfaceSettings{}, &models.LoginSettings{}); err != nil {
+	if err := db.AutoMigrate(&models.User{}, &models.PendingRegistration{}, &models.RegistrationCaptcha{}, &models.OAuthIdentity{}, &models.OAuthProviderSetting{}, &models.Domain{}, &models.Mailbox{}, &models.Message{}, &models.MessageAttachment{}, &models.MessageDailyStat{}, &models.ShareLink{}, &models.ShareLinkAccessLog{}, &models.WebhookEndpoint{}, &models.WebhookDelivery{}, &models.EmailDelivery{}, &models.APIKey{}, &models.SessionToken{}, &models.APIUsageLog{}, &models.Notification{}, &models.Announcement{}, &models.AnnouncementRead{}, &models.AuditLog{}, &models.SystemQuotaSettings{}, &models.APIInterfaceSettings{}, &models.LoginSettings{}); err != nil {
 		t.Fatal(err)
 	}
 	return db

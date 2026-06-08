@@ -287,7 +287,6 @@ export function InboxPage() {
           message={selectedID ? inbox.detail.data : undefined}
           loading={Boolean(selectedID) && inbox.detail.isLoading}
           error={selectedID ? inbox.detail.error : null}
-          apiKey={apiKey}
           onBack={() => setMobileStep('messages')}
           onRetry={() => inbox.detail.refetch()}
         />

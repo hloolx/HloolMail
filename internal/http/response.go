@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"log"
 	"net/http"
 
 	"gptmail/internal/auth"
@@ -10,6 +11,7 @@ import (
 )
 
 const apiKeyContext = "api_key"
+const internalErrorMessage = "internal server error"
 
 type envelope struct {
 	Success bool              `json:"success"`
@@ -52,12 +54,35 @@ func created(c *gin.Context, data any) {
 }
 
 func fail(c *gin.Context, status int, message string) {
+	if status >= http.StatusInternalServerError {
+		logInternalHTTPError(c, status, message)
+		message = publicServerErrorMessage(status)
+	}
 	c.JSON(status, envelope{
 		Success: false,
 		Data:    nil,
 		Error:   message,
 		Usage:   usage(c),
 	})
+}
+
+func publicServerErrorMessage(status int) string {
+	if message := http.StatusText(status); message != "" {
+		return message
+	}
+	return internalErrorMessage
+}
+
+func logInternalHTTPError(c *gin.Context, status int, message string) {
+	method := ""
+	path := ""
+	if c != nil && c.Request != nil {
+		method = c.Request.Method
+		if c.Request.URL != nil {
+			path = c.Request.URL.RequestURI()
+		}
+	}
+	log.Printf("http 5xx response redacted: status=%d method=%s path=%s error=%s", status, method, path, message)
 }
 
 func usage(c *gin.Context) map[string]string {

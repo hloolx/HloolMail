@@ -10,9 +10,23 @@ permissions:
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+  NPM_CONFIG_REGISTRY: https://registry.npmjs.org/
 
 jobs:
+  validate-tag:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Validate release tag
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ ! "${GITHUB_REF_NAME}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::Release tags must match vX.Y.Z; got ${GITHUB_REF_NAME}"
+            exit 1
+          fi
+
   build:
+    needs: validate-tag
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false

@@ -13,6 +13,7 @@ import (
 	"github.com/glebarez/sqlite"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 	"gorm.io/gorm/logger"
 )
 
@@ -34,6 +35,7 @@ func Open(cfg config.Config) (*gorm.DB, error) {
 }
 
 func openSQLite(dsn string, gormConfig *gorm.Config) (*gorm.DB, error) {
+	dsn = resolveSQLiteDefaultDSN(dsn)
 	dir := filepath.Dir(dsn)
 	if err := os.MkdirAll(dir, 0o755); err != nil && dir != "." {
 		return nil, err
@@ -50,6 +52,31 @@ func openSQLite(dsn string, gormConfig *gorm.Config) (*gorm.DB, error) {
 		return nil, err
 	}
 	return db, nil
+}
+
+func resolveSQLiteDefaultDSN(dsn string) string {
+	defaults := []struct {
+		current string
+		legacy  string
+	}{
+		{current: config.DefaultSQLiteDatabaseURL, legacy: config.LegacySQLiteDatabaseURL},
+		{current: config.DefaultDockerSQLiteDatabaseURL, legacy: config.LegacyDockerSQLiteDatabaseURL},
+	}
+	for _, pair := range defaults {
+		if sameSQLitePath(dsn, pair.current) && sqliteFileExists(pair.legacy) && !sqliteFileExists(pair.current) {
+			return pair.legacy
+		}
+	}
+	return dsn
+}
+
+func sameSQLitePath(a, b string) bool {
+	return filepath.Clean(strings.TrimSpace(a)) == filepath.Clean(strings.TrimSpace(b))
+}
+
+func sqliteFileExists(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && !info.IsDir()
 }
 
 func sqliteDSNWithPragmas(dsn string) string {
@@ -113,6 +140,7 @@ func AutoMigrate(db *gorm.DB) error {
 		&models.Mailbox{},
 		&models.Message{},
 		&models.MessageAttachment{},
+		&models.MessageDailyStat{},
 		&models.ShareLink{},
 		&models.ShareLinkAccessLog{},
 		&models.WebhookEndpoint{},
@@ -143,6 +171,9 @@ func AutoMigrate(db *gorm.DB) error {
 		return err
 	}
 	if err := BackfillMessageOwnership(db); err != nil {
+		return err
+	}
+	if err := BackfillMessageDailyStats(db); err != nil {
 		return err
 	}
 	if err := BackfillMailboxCounters(db); err != nil {
@@ -425,6 +456,74 @@ func backfillUserPublicMailboxToday(db *gorm.DB, now time.Time) error {
 func startOfLocalDay(t time.Time) time.Time {
 	y, m, d := t.Local().Date()
 	return time.Date(y, m, d, 0, 0, 0, 0, t.Location())
+}
+
+func IncrementMessageDailyStat(tx *gorm.DB, at time.Time, amount int64) error {
+	if amount <= 0 {
+		return nil
+	}
+	now := time.Now()
+	return tx.Clauses(clause.OnConflict{
+		Columns: []clause.Column{{Name: "day"}},
+		DoUpdates: clause.Assignments(map[string]interface{}{
+			"message_count": gorm.Expr("message_count + ?", amount),
+			"updated_at":    now,
+		}),
+	}).Create(&models.MessageDailyStat{
+		Day:          at.Local().Format("2006-01-02"),
+		MessageCount: amount,
+		CreatedAt:    now,
+		UpdatedAt:    now,
+	}).Error
+}
+
+func BackfillMessageDailyStats(db *gorm.DB) error {
+	ok, err := hasTableColumns(db, "messages", "created_at")
+	if err != nil || !ok {
+		return err
+	}
+	if !db.Migrator().HasTable(&models.MessageDailyStat{}) {
+		return nil
+	}
+	rows, err := db.Unscoped().Model(&models.Message{}).Select("created_at").Rows()
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+
+	counts := map[string]int64{}
+	for rows.Next() {
+		var createdAt time.Time
+		if err := rows.Scan(&createdAt); err != nil {
+			return err
+		}
+		if createdAt.IsZero() {
+			continue
+		}
+		counts[createdAt.Local().Format("2006-01-02")]++
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+
+	now := time.Now()
+	for day, count := range counts {
+		if err := db.Clauses(clause.OnConflict{
+			Columns: []clause.Column{{Name: "day"}},
+			DoUpdates: clause.Assignments(map[string]interface{}{
+				"message_count": gorm.Expr("CASE WHEN message_count < ? THEN ? ELSE message_count END", count, count),
+				"updated_at":    now,
+			}),
+		}).Create(&models.MessageDailyStat{
+			Day:          day,
+			MessageCount: count,
+			CreatedAt:    now,
+			UpdatedAt:    now,
+		}).Error; err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func EnsureLoginSettings(db *gorm.DB) (*models.LoginSettings, error) {

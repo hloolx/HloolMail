@@ -72,6 +72,94 @@ func TestSecurityHeadersAllowTurnstile(t *testing.T) {
 	}
 }
 
+func TestLegacyAdminTokenRequiresExplicitEnable(t *testing.T) {
+	gin.SetMode(gin.ReleaseMode)
+
+	for _, tc := range []struct {
+		name string
+		cfg  config.Config
+		want int
+	}{
+		{
+			name: "disabled by default even when token is set",
+			cfg:  config.Config{AdminToken: "test-admin-token"},
+			want: http.StatusForbidden,
+		},
+		{
+			name: "enabled by explicit legacy flag",
+			cfg:  config.Config{AdminToken: "test-admin-token", AllowLegacyAdminToken: true},
+			want: http.StatusOK,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			handler := &Handler{Config: tc.cfg}
+			router := gin.New()
+			router.GET("/admin-only", func(c *gin.Context) {
+				if !handler.requireAdmin(c) {
+					return
+				}
+				ok(c, gin.H{"admin": true})
+			})
+
+			recorder := httptest.NewRecorder()
+			request := httptest.NewRequest(http.MethodGet, "/admin-only", nil)
+			request.Header.Set("X-Admin-Token", "test-admin-token")
+			router.ServeHTTP(recorder, request)
+
+			if recorder.Code != tc.want {
+				t.Fatalf("admin token response = %d, want %d: %s", recorder.Code, tc.want, recorder.Body.String())
+			}
+		})
+	}
+}
+
+func TestCORSDoesNotAllowAdminTokenHeaderByDefault(t *testing.T) {
+	gin.SetMode(gin.ReleaseMode)
+
+	for _, tc := range []struct {
+		name       string
+		cfg        config.Config
+		wantHeader bool
+	}{
+		{
+			name:       "legacy token disabled",
+			cfg:        config.Config{AllowedOrigin: "https://app.example", AdminToken: "test-admin-token"},
+			wantHeader: false,
+		},
+		{
+			name:       "legacy token explicitly enabled",
+			cfg:        config.Config{AllowedOrigin: "https://app.example", AdminToken: "test-admin-token", AllowLegacyAdminToken: true},
+			wantHeader: true,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			handler := &Handler{Config: tc.cfg}
+			router := gin.New()
+			router.Use(handler.cors())
+			router.GET("/", func(c *gin.Context) {
+				c.String(http.StatusOK, "ok")
+			})
+
+			recorder := httptest.NewRecorder()
+			request := httptest.NewRequest(http.MethodOptions, "/", nil)
+			request.Header.Set("Origin", "https://app.example")
+			router.ServeHTTP(recorder, request)
+
+			if recorder.Code != http.StatusNoContent {
+				t.Fatalf("preflight status = %d, want %d", recorder.Code, http.StatusNoContent)
+			}
+			headers := recorder.Header().Get("Access-Control-Allow-Headers")
+			if !strings.Contains(headers, "X-API-Key") {
+				t.Fatalf("allowed headers missing X-API-Key: %q", headers)
+			}
+			hasAdminTokenHeader := strings.Contains(headers, "X-Admin-Token")
+			if hasAdminTokenHeader != tc.wantHeader {
+				t.Fatalf("X-Admin-Token allowed = %t, want %t in %q", hasAdminTokenHeader, tc.wantHeader, headers)
+			}
+		})
+	}
+}
+
 func TestSecurityHeadersNoIndexSensitivePaths(t *testing.T) {
 	gin.SetMode(gin.ReleaseMode)
 	handler := &Handler{}

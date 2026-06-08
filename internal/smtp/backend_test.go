@@ -137,6 +137,28 @@ func TestDataStoresAttachmentMetadataOnly(t *testing.T) {
 	}
 }
 
+func TestDataIncrementsMessageDailyStats(t *testing.T) {
+	session, db := newSMTPTestSession(t, config.Config{
+		MaxMessageBytes:  4096,
+		MessageRetention: time.Hour,
+	})
+
+	if err := session.Data(strings.NewReader("From: Sender <sender@example.test>\r\n" +
+		"To: demo@example.test\r\n" +
+		"Subject: Count me\r\n\r\n" +
+		"hello\r\n")); err != nil {
+		t.Fatal(err)
+	}
+
+	var stat models.MessageDailyStat
+	if err := db.First(&stat).Error; err != nil {
+		t.Fatal(err)
+	}
+	if stat.Day != time.Now().Local().Format("2006-01-02") || stat.MessageCount != 1 {
+		t.Fatalf("message daily stat = %+v, want today count 1", stat)
+	}
+}
+
 func TestDataTruncatesLongAttachmentMetadataBeforeStore(t *testing.T) {
 	session, db := newSMTPTestSession(t, config.Config{
 		MaxMessageBytes:    4096,
@@ -376,7 +398,7 @@ func newSMTPTestSession(t *testing.T, cfg config.Config) (*Session, *gorm.DB) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := db.AutoMigrate(&models.User{}, &models.Domain{}, &models.Mailbox{}, &models.Message{}, &models.MessageAttachment{}, &models.WebhookEndpoint{}, &models.WebhookDelivery{}); err != nil {
+	if err := db.AutoMigrate(&models.User{}, &models.Domain{}, &models.Mailbox{}, &models.Message{}, &models.MessageAttachment{}, &models.MessageDailyStat{}, &models.WebhookEndpoint{}, &models.WebhookDelivery{}); err != nil {
 		t.Fatal(err)
 	}
 	d := models.Domain{

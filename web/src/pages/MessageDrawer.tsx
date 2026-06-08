@@ -5,29 +5,16 @@ import { buildEmailSrcDoc } from '../lib/emailHtml';
 import { useText } from '../locales';
 import { EmptyState, LoadingState, SenderBrandAvatar } from '../components/shared';
 
-function injectApiKeyIntoHtml(html: string, apiKey: string): string {
-  if (!apiKey) return html;
-  return html.replace(
-    /(<a\s[^>]*href\s*=\s*["'])(\/api\/[^"']+)(["'])/gi,
-    (_m, prefix, url, suffix) => {
-      const sep = url.includes('?') ? '&' : '?';
-      return `${prefix}${url}${sep}api_key=${encodeURIComponent(apiKey)}${suffix}`;
-    }
-  );
-}
-
 export function MessageDrawer({
   message,
   loading,
   error,
-  apiKey,
   onBack,
   onRetry
 }: {
   message?: MessageDetail;
   loading: boolean;
   error?: unknown;
-  apiKey: string;
   onBack?: () => void;
   onRetry?: () => void;
 }) {
@@ -67,7 +54,7 @@ export function MessageDrawer({
           aria-label={`${text.inbox.messages}: ${message.subject || text.common.noSubject}`}
           sandbox="allow-downloads"
           referrerPolicy="no-referrer"
-          srcDoc={buildEmailSrcDoc(injectApiKeyIntoHtml(message.html_content || '', apiKey))}
+          srcDoc={buildEmailSrcDoc(message.html_content || '')}
         />
       ) : message.text_content ? (
         <div className="message-rendered-text">{message.text_content}</div>

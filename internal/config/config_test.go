@@ -78,6 +78,76 @@ func TestLoadDisablesAPIKeyQueryParamByDefault(t *testing.T) {
 	}
 }
 
+func TestLoadDisablesLegacyAdminTokenByDefault(t *testing.T) {
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	temp := t.TempDir()
+	if err := os.Chdir(temp); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := os.Chdir(wd); err != nil {
+			t.Fatalf("restore working directory: %v", err)
+		}
+	})
+	t.Setenv("ADMIN_TOKEN", "legacy-token")
+	t.Setenv("ALLOW_LEGACY_ADMIN_TOKEN", "")
+
+	cfg := Load()
+	if cfg.AdminToken != "legacy-token" {
+		t.Fatalf("admin token = %q, want configured token", cfg.AdminToken)
+	}
+	if cfg.AllowLegacyAdminToken {
+		t.Fatal("expected legacy admin token support to be disabled by default")
+	}
+}
+
+func TestLoadCanEnableLegacyAdminToken(t *testing.T) {
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	temp := t.TempDir()
+	if err := os.Chdir(temp); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := os.Chdir(wd); err != nil {
+			t.Fatalf("restore working directory: %v", err)
+		}
+	})
+	t.Setenv("ALLOW_LEGACY_ADMIN_TOKEN", "true")
+
+	cfg := Load()
+	if !cfg.AllowLegacyAdminToken {
+		t.Fatal("expected ALLOW_LEGACY_ADMIN_TOKEN=true to enable legacy admin token support")
+	}
+}
+
+func TestLoadDefaultsSQLiteDatabaseURLToHloolMail(t *testing.T) {
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	temp := t.TempDir()
+	if err := os.Chdir(temp); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := os.Chdir(wd); err != nil {
+			t.Fatalf("restore working directory: %v", err)
+		}
+	})
+	t.Setenv("DATABASE_URL", "")
+
+	cfg := Load()
+	if cfg.DatabaseURL != DefaultSQLiteDatabaseURL {
+		t.Fatalf("database url = %q, want %q", cfg.DatabaseURL, DefaultSQLiteDatabaseURL)
+	}
+}
+
 func TestLoadCanEnableAPIKeyQueryParam(t *testing.T) {
 	wd, err := os.Getwd()
 	if err != nil {

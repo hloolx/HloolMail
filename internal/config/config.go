@@ -13,6 +13,13 @@ const InsecureDefaultSecret = "change-this-in-production"
 const minProductionSecretLength = 16
 
 const (
+	DefaultSQLiteDatabaseURL       = "storage/hlool-mail.db"
+	LegacySQLiteDatabaseURL        = "storage/gptmail.db"
+	DefaultDockerSQLiteDatabaseURL = "/app/storage/hlool-mail.db"
+	LegacyDockerSQLiteDatabaseURL  = "/app/storage/gptmail.db"
+)
+
+const (
 	PublicIndexingNone    = "none"
 	PublicIndexingLanding = "landing"
 	PublicIndexingDocs    = "docs"
@@ -32,6 +39,7 @@ type Config struct {
 	MaxAttachmentBytes                 int64
 	MessageRetention                   time.Duration
 	AdminToken                         string
+	AllowLegacyAdminToken              bool
 	DevMode                            bool
 	AllowedOrigin                      string
 	InboxTokenSecret                   string
@@ -73,11 +81,12 @@ func Load() Config {
 		ExpectedMX:                         strings.TrimSuffix(strings.ToLower(getEnv("EXPECTED_MX", "mail.example.com")), "."),
 		MXStrict:                           getBool("MX_STRICT", false),
 		DatabaseDriver:                     strings.ToLower(getEnv("DATABASE_DRIVER", "sqlite")),
-		DatabaseURL:                        getEnv("DATABASE_URL", "storage/hlool-mail.db"),
+		DatabaseURL:                        getEnv("DATABASE_URL", DefaultSQLiteDatabaseURL),
 		MaxMessageBytes:                    maxMessageBytes,
 		MaxAttachmentBytes:                 getInt64("MAX_ATTACHMENT_BYTES", maxMessageBytes),
 		MessageRetention:                   time.Duration(retentionHours) * time.Hour,
 		AdminToken:                         getEnv("ADMIN_TOKEN", ""),
+		AllowLegacyAdminToken:              getBool("ALLOW_LEGACY_ADMIN_TOKEN", false),
 		DevMode:                            getBool("DEV_MODE", false),
 		AllowedOrigin:                      getEnv("ALLOWED_ORIGIN", ""),
 		InboxTokenSecret:                   getEnv("INBOX_TOKEN_SECRET", InsecureDefaultSecret),
