@@ -54,6 +54,7 @@ export function formatAPIKeyExpiry(value?: string, language?: Language) {
 
 type CodeExtractableMessage = {
   subject?: string | null;
+  verification_code?: string | null;
   preview?: string | null;
   text_content?: string | null;
   html_content?: string | null;
@@ -82,6 +83,9 @@ const strongCodeKeywords = [
   '登入碼',
   '确认码',
   '確認碼',
+  '認証コード',
+  '인증 코드',
+  '인증코드',
   'verification code',
   'security code',
   'login code',
@@ -108,7 +112,9 @@ const weakCodeKeywords = [
   'captcha',
   '校验',
   '验证',
-  '驗證'
+  '驗證',
+  '認証',
+  '인증'
 ];
 
 const falsePositiveKeywords = [
@@ -149,10 +155,17 @@ const falsePositiveKeywords = [
   'postal',
   'zip',
   'address',
-  'card'
+  'card',
+  'issue',
+  'pull request',
+  'ticket',
+  'build',
+  'commit'
 ];
 
 export function extractCode(message: CodeExtractableMessage | Pick<MessageSummary, 'subject' | 'preview'>) {
+  const explicitCode = 'verification_code' in message ? normalizeCodeValue(message.verification_code || '') : '';
+  if (explicitCode && isCodeShape(explicitCode)) return explicitCode;
   return extractCodeCandidates(message)[0]?.value;
 }
 
@@ -184,6 +197,7 @@ export function VerificationCodeCopyButton({ code, compact = false, className = 
 
 function extractCodeCandidates(message: CodeExtractableMessage | Pick<MessageSummary, 'subject' | 'preview'>) {
   const sources = [
+    { text: 'verification_code' in message ? message.verification_code : '', weight: 36 },
     { text: message.subject, weight: 22 },
     { text: message.preview, weight: 14 },
     { text: 'text_content' in message ? message.text_content : '', weight: 6 },
@@ -247,7 +261,7 @@ function pushCandidate(candidates: CodeCandidate[], seen: Set<string>, text: str
 function isCodeShape(value: string) {
   if (!/^[A-Za-z0-9]+$/.test(value) || !/\d/.test(value)) return false;
   if (/^\d+$/.test(value)) return value.length >= 4 && value.length <= 8;
-  return value.length >= 4 && value.length <= 10;
+  return value.length >= 4 && value.length <= 12;
 }
 
 function isLikelyFalsePositive(text: string, value: string, index: number) {
@@ -367,6 +381,10 @@ function codePointToString(codePoint: number, fallback: string) {
 
 function normalizeCodeText(value?: string | null) {
   return decodeHtmlEntities(value || '').replace(/\s+/g, ' ').trim();
+}
+
+function normalizeCodeValue(value: string) {
+  return value.trim().replace(/-/g, '');
 }
 
 export function relativeTime(value?: string) {

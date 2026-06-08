@@ -8,6 +8,7 @@ import type { MeResponse, OAuthProvider, PublicLoginSettings } from '../types';
 import { roleText, useText } from '../locales';
 import { DialogShell, IconButton, InfoTip, LoadingIndicator, UserAvatar } from '../components/shared';
 import { notifySuccess } from '../lib/feedback';
+import { queryKeys } from '../lib/queryKeys';
 import { registerPasskey, type PasskeyCredentialSummary } from '../lib/passkeys';
 import { displayName, displaySubtitle, normalizeNicknameInput, validateNicknameInput } from '../lib/userDisplay';
 
@@ -38,7 +39,7 @@ export function UserProfileDialog({ open, onClose, user }: { open: boolean; onCl
   });
 
   const providers = useQuery({
-    queryKey: ['oauth-providers'],
+    queryKey: queryKeys.oauthProviders,
     queryFn: () => api<OAuthProvider[]>('/api/oauth/providers'),
     enabled: open,
     retry: false,
@@ -46,7 +47,7 @@ export function UserProfileDialog({ open, onClose, user }: { open: boolean; onCl
   });
 
   const loginSettings = useQuery({
-    queryKey: ['login-settings'],
+    queryKey: queryKeys.loginSettings,
     queryFn: () => api<PublicLoginSettings>('/api/auth/login-settings'),
     enabled: open,
     retry: false,

@@ -1,6 +1,7 @@
 import { useMutation, useQuery } from '@tanstack/react-query';
 import type { UseMutationOptions } from '@tanstack/react-query';
 import { api, patchJSON, postJSON } from '../../api';
+import { queryKeys } from '../../lib/queryKeys';
 import type {
   AdminWebhookEndpointDTO,
   PaginatedResponse,
@@ -16,16 +17,7 @@ export const WEBHOOKS_PER_PAGE = 10;
 export const WEBHOOK_DELIVERIES_PER_PAGE = 20;
 export const MESSAGE_RECEIVED_EVENT = 'message.received';
 
-export const webhookKeys = {
-  all: ['webhooks'] as const,
-  list: (page: number, perPage: number) => ['webhooks', page, perPage] as const,
-  deliveriesRoot: (endpointId: number) => ['webhook-deliveries', endpointId] as const,
-  deliveries: (endpointId: number, page: number) => ['webhook-deliveries', endpointId, page] as const,
-  adminAll: ['admin-webhooks'] as const,
-  adminList: (query: string) => ['admin-webhooks', query] as const,
-  adminDeliveriesRoot: (endpointId: number) => ['admin-webhook-deliveries', endpointId] as const,
-  adminDeliveries: (endpointId: number, page: number) => ['admin-webhook-deliveries', endpointId, page] as const
-};
+export const webhookKeys = queryKeys.webhooks;
 
 type MutationOptions<TData, TVariables> = UseMutationOptions<TData, Error, TVariables>;
 
@@ -104,7 +96,7 @@ export function useWebhookDeliveriesQuery(endpointId: number, page: number) {
 
 export function useAdminWebhooksQuery(query: string) {
   return useQuery({
-    queryKey: webhookKeys.adminList(query),
+    queryKey: queryKeys.admin.webhooks(query),
     queryFn: () => fetchAdminWebhooks(query),
     retry: false,
     staleTime: 30_000
@@ -113,7 +105,7 @@ export function useAdminWebhooksQuery(query: string) {
 
 export function useAdminWebhookDeliveriesQuery(endpointId: number, page: number) {
   return useQuery({
-    queryKey: webhookKeys.adminDeliveries(endpointId, page),
+    queryKey: queryKeys.admin.webhookDeliveries(endpointId, page),
     queryFn: () => fetchAdminWebhookDeliveries(endpointId, page),
     retry: false
   });

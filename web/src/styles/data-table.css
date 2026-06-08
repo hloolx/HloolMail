@@ -412,6 +412,13 @@
     overflow-wrap: anywhere;
   }
 
+  .data-table-mobile-card :where(.admin-domain-cell b, .admin-domain-cell small) {
+    overflow: visible;
+    text-overflow: clip;
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+
   .data-table-mobile-card-subtitle {
     display: flex;
     min-width: 0;
@@ -510,6 +517,14 @@
     border-radius: 0.62rem;
     background: color-mix(in srgb, var(--panel) 72%, transparent);
   }
+
+  .data-table-mobile-empty.data-table-state-cell {
+    padding: 1rem;
+  }
+
+  .data-table-mobile-card-skeleton {
+    pointer-events: none;
+  }
 }
 
 @media (max-width: 420px) {
@@ -550,6 +565,62 @@
   background: var(--panel);
   color: var(--muted);
   font-size: 0.82rem;
+}
+
+.data-table-state-cell {
+  height: 6rem;
+}
+
+.data-table-query-state {
+  display: inline-flex;
+  max-width: min(100%, 28rem);
+  min-width: 0;
+  align-items: center;
+  justify-content: center;
+  gap: 0.55rem;
+  color: var(--muted);
+  line-height: 1.45;
+}
+
+.data-table-query-state > span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.data-table-query-state .data-table-empty-action {
+  flex: 0 0 auto;
+  gap: 0.35rem;
+}
+
+.data-table-skeleton-row td {
+  pointer-events: none;
+}
+
+.data-table-skeleton-cell {
+  display: inline-block;
+  width: 64%;
+  max-width: 100%;
+  height: 0.78rem;
+  min-width: 2rem;
+  border-radius: 999px;
+  background: linear-gradient(
+    90deg,
+    color-mix(in srgb, var(--soft) 72%, transparent),
+    color-mix(in srgb, var(--border) 66%, transparent),
+    color-mix(in srgb, var(--soft) 72%, transparent)
+  );
+  background-size: 220% 100%;
+  animation: loading-state-sheen 1.8s ease-in-out infinite;
+}
+
+.data-table-skeleton-title {
+  width: 56%;
+  height: 0.95rem;
+}
+
+.data-table-skeleton-subtitle {
+  width: 76%;
+  height: 0.7rem;
 }
 
 .data-table-hidden-empty {

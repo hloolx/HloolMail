@@ -6,8 +6,9 @@ import type { AdminAnnouncement } from '../api';
 import { api, postJSON } from '../api';
 import { relativeTime } from '../lib/display';
 import { notifySuccess, runDeleteEffect } from '../lib/feedback';
+import { queryKeys } from '../lib/queryKeys';
 import { useText } from '../locales';
-import { DataTable, InfoTip } from '../components/shared';
+import { ConfirmModal, DataTable, InfoTip } from '../components/shared';
 import { simpleMarkdownToHTML } from '../lib/markdown';
 
 export function AnnouncementsPage() {
@@ -17,10 +18,11 @@ export function AnnouncementsPage() {
   const [title, setTitle] = useState('');
   const [content, setContent] = useState('');
   const [preview, setPreview] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState<{ announcement: AdminAnnouncement; row: HTMLElement | null } | null>(null);
   const createButtonRef = useRef<HTMLButtonElement | null>(null);
 
   const announcements = useQuery({
-    queryKey: ['admin-announcements'],
+    queryKey: queryKeys.admin.announcements,
     queryFn: () => api<AdminAnnouncement[]>('/api/admin/announcements'),
     retry: false
   });
@@ -37,7 +39,7 @@ export function AnnouncementsPage() {
       setTitle('');
       setContent('');
       setPreview(false);
-      queryClient.invalidateQueries({ queryKey: ['admin-announcements'] });
+      queryClient.invalidateQueries({ queryKey: queryKeys.admin.announcements });
       queryClient.invalidateQueries({ queryKey: ['announcements'] });
       queryClient.invalidateQueries({ queryKey: ['announcements-unread-count'] });
       notifySuccess(text.announcements.created, { origin: createButtonRef.current });
@@ -48,9 +50,10 @@ export function AnnouncementsPage() {
   const deleteAnnouncement = useMutation({
     mutationFn: (id: number) => api(`/api/admin/announcements/${id}`, { method: 'DELETE' }),
     onSuccess: (_, id) => {
-      queryClient.setQueryData<AdminAnnouncement[]>(['admin-announcements'], (old) =>
+      queryClient.setQueryData<AdminAnnouncement[]>(queryKeys.admin.announcements, (old) =>
         (old || []).filter((a) => a.id !== id)
       );
+      setDeleteTarget(null);
       queryClient.invalidateQueries({ queryKey: ['announcements'] });
       queryClient.invalidateQueries({ queryKey: ['announcements-unread-count'] });
       notifySuccess(text.announcements.deleted, { burst: false });
@@ -58,16 +61,12 @@ export function AnnouncementsPage() {
     onError: (error) => toast.error(error.message)
   });
 
-  const handleDelete = async (ann: AdminAnnouncement) => {
-    if (!window.confirm(text.announcements.deleteConfirm)) return;
-
-    const row = document.querySelector(`[data-announcement-id="${ann.id}"]`)?.closest('tr') as HTMLElement | null;
-    if (row) {
-      await runDeleteEffect(row);
-    }
-    deleteAnnouncement.mutate(ann.id);
+  const handleDelete = (ann: AdminAnnouncement) => {
+    const row = document.querySelector(`[data-announcement-id="${ann.id}"]`)?.closest('tr, .data-table-mobile-card') as HTMLElement | null;
+    setDeleteTarget({ announcement: ann, row });
   };
 
+  const deletingAnnouncementId = deleteAnnouncement.isPending ? deleteAnnouncement.variables : null;
   const rows = (announcements.data || []).map((ann) => ({
     key: ann.id,
     cells: [
@@ -81,7 +80,7 @@ export function AnnouncementsPage() {
         <button
           className="btn-ghost"
           onClick={() => handleDelete(ann)}
-          disabled={deleteAnnouncement.isPending}
+          disabled={deletingAnnouncementId === ann.id}
           aria-label={text.announcements.deleteAnnouncement}
         >
           <Trash2 size={14} aria-hidden="true" />
@@ -172,6 +171,13 @@ export function AnnouncementsPage() {
         <DataTable
           ariaLabel={text.announcements.listTitle}
           emptyLabel={text.announcements.noAnnouncements}
+          loading={announcements.isLoading}
+          loadingLabel={text.common.loading}
+          error={announcements.isError}
+          errorLabel={announcements.error instanceof Error && announcements.error.message ? announcements.error.message : text.announcements.noAnnouncements}
+          retryLabel={text.common.retry}
+          retryPending={announcements.isFetching}
+          onRetry={() => announcements.refetch()}
           columns={[
             { key: 'title', header: text.announcements.title, minWidth: '18rem' },
             { key: 'created', header: text.common.refresh, width: '8rem' },
@@ -181,6 +187,26 @@ export function AnnouncementsPage() {
           rows={rows}
         />
       </section>
+      <ConfirmModal
+        open={deleteTarget !== null}
+        title={text.announcements.deleteAnnouncement}
+        description={deleteTarget ? `${text.announcements.deleteConfirm}\n\n${deleteTarget.announcement.title}` : ''}
+        confirmText={text.announcements.deleteAnnouncement}
+        cancelText={text.common.cancel}
+        danger
+        confirmLoading={deleteAnnouncement.isPending}
+        onConfirm={async () => {
+          if (!deleteTarget) return;
+          const target = deleteTarget;
+          if (target.row?.isConnected) {
+            await runDeleteEffect(target.row);
+          }
+          return deleteAnnouncement.mutateAsync(target.announcement.id);
+        }}
+        onCancel={() => {
+          if (!deleteAnnouncement.isPending) setDeleteTarget(null);
+        }}
+      />
     </div>
   );
 }

@@ -1,12 +1,12 @@
 import { lazy, Suspense, useEffect, useState } from 'react';
-import { AnimatePresence, motion } from 'framer-motion';
+import { AnimatePresence } from 'framer-motion';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from './api';
 import type { InstallStatus } from './api';
 import type { MeResponse } from './types';
 import { useText } from './locales';
 import { useAppStore } from './store';
-import { CenteredState, ErrorBoundary } from './components/shared';
+import { CenteredState, ErrorBoundary, PageTransition } from './components/shared';
 import { Console } from './components/layout/Console';
 import { notifySuccess } from './lib/feedback';
 import { expireUserSession } from './lib/queryClient';
@@ -124,25 +124,17 @@ function AppContent() {
     <Suspense fallback={<CenteredState key="app-loader">{text.common.loading}</CenteredState>}>
       <AnimatePresence mode="wait" initial={false}>
         {sharedToken ? (
-          <SharedMessagePage token={sharedToken} />
+          <PageTransition key="shared-content">
+            <SharedMessagePage token={sharedToken} />
+          </PageTransition>
         ) : isLegalRoute ? (
-          <motion.div
-            key="legal-content"
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            transition={{ duration: 0.35, ease: [0.22, 1, 0.36, 1] }}
-          >
+          <PageTransition key="legal-content">
             <LegalPage type={legalRoute} />
-          </motion.div>
+          </PageTransition>
         ) : bootLoading ? (
           <CenteredState key="loader">{text.loading.starting}</CenteredState>
         ) : (
-          <motion.div
-            key="app-content"
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            transition={{ duration: 0.35, ease: [0.22, 1, 0.36, 1] }}
-          >
+          <PageTransition key="app-content">
             {!me.isError && me.data?.installed === false ? (
               <InstallPage
                 status={installStatus.data}
@@ -171,7 +163,7 @@ function AppContent() {
             ) : (
               <Console user={me.data.user} />
             )}
-          </motion.div>
+          </PageTransition>
         )}
       </AnimatePresence>
     </Suspense>

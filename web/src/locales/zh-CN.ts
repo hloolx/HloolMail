@@ -15,6 +15,14 @@ const zhCN = {
     users: '用户与额度',
     'admin-oauth': '登录设置',
     admin: '管理后台',
+    'admin-overview': '运营概览',
+    'admin-dns': 'DNS 检查',
+    'admin-domains': '域名健康',
+    'admin-quota-alerts': '额度告警',
+    'admin-api-interfaces': 'API 接口',
+    'admin-share-links': '分享链接治理',
+    'admin-webhooks': 'Webhook 治理',
+    'admin-audit': '审计日志',
     announcements: '公告通知'
   },
   nav: {

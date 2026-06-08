@@ -1,24 +1,31 @@
 import { motion, useReducedMotion } from 'framer-motion';
 import type { ReactNode } from 'react';
+import {
+  brandPresenceTransition,
+  reducedMotionExit,
+  reducedMotionInitial,
+  reducedMotionLoopTransition,
+  reducedMotionTransition
+} from '../../lib/motion';
 import { AppLogo } from './AppLogo';
 
 export function CenteredState({ children }: { children: ReactNode }) {
-  const shouldReduceMotion = useReducedMotion();
+  const shouldReduceMotion = Boolean(useReducedMotion());
 
   return (
     <motion.div
       className="brand-loader-overlay"
-      initial={shouldReduceMotion ? false : { opacity: 0 }}
+      initial={reducedMotionInitial(shouldReduceMotion, { opacity: 0 })}
       animate={{ opacity: 1 }}
-      exit={shouldReduceMotion ? { opacity: 0 } : { opacity: 0, scale: 0.98 }}
-      transition={shouldReduceMotion ? { duration: 0 } : { duration: 0.45, ease: [0.22, 1, 0.36, 1] }}
+      exit={reducedMotionExit(shouldReduceMotion, { opacity: 0, scale: 0.98 })}
+      transition={reducedMotionTransition(shouldReduceMotion, brandPresenceTransition)}
     >
       <div className="brand-loader-inner">
         <div className="brand-loader-logo-wrap">
           <motion.div
             className="brand-loader-breathe"
             animate={shouldReduceMotion ? { opacity: 1 } : { opacity: [0.5, 0.9, 0.5] }}
-            transition={shouldReduceMotion ? { duration: 0 } : { duration: 2.4, repeat: Infinity, ease: 'easeInOut' }}
+            transition={reducedMotionLoopTransition(shouldReduceMotion, 2.4)}
           >
             <AppLogo className="brand-loader-logo" />
           </motion.div>
@@ -26,7 +33,7 @@ export function CenteredState({ children }: { children: ReactNode }) {
         <motion.p
           className="brand-loader-text"
           animate={shouldReduceMotion ? { opacity: 1 } : { opacity: [0.4, 0.85, 0.4] }}
-          transition={shouldReduceMotion ? { duration: 0 } : { duration: 1.8, repeat: Infinity, ease: 'easeInOut' }}
+          transition={reducedMotionLoopTransition(shouldReduceMotion, 1.8)}
         >
           {children}
         </motion.p>

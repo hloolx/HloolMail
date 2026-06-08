@@ -16,7 +16,7 @@ import { ApiError, api } from '../api';
 import { buildEmailSrcDoc } from '../lib/emailHtml';
 import { extractCode, VerificationCodeCopyButton } from '../lib/display';
 import { useText } from '../locales';
-import { EmptyState, LoadingState } from '../components/shared';
+import { EmptyState, LoadingState, SenderBrandAvatar } from '../components/shared';
 import { MessageList } from './inbox/MessageList';
 
 const SHARED_MAILBOX_PAGE_SIZE = 12;
@@ -268,9 +268,12 @@ function SharedMailboxMessageDetail({
         {text.inbox.backToMessages}
       </button>
       <div className="panel-header">
-        <div className="min-w-0">
-          <h2 className="truncate">{message.subject || text.common.noSubject}</h2>
-          <p className="truncate">{message.from_address}</p>
+        <div className="mail-detail-title-row">
+          <SenderBrandAvatar fromAddress={message.from_address} fromName={message.from_name} size="lg" className="mail-detail-avatar" />
+          <div className="min-w-0">
+            <h2 className="truncate">{message.subject || text.common.noSubject}</h2>
+            <p className="truncate">{message.from_name || message.from_address}</p>
+          </div>
         </div>
       </div>
       <div className="mb-3 grid gap-1 text-xs text-[var(--muted)]">

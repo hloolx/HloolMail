@@ -6,7 +6,10 @@ import { toast } from 'sonner';
 import { api, patchJSON, postJSON } from '../api';
 import type { EmailDelivery, EmailDeliveryStatus, LoginSettings, LoginSettingsTestEmailResponse, OAuthProvider } from '../types';
 import { ConfirmModal, DialogShell, InfoTip, LoadingIndicator, SegmentedTabs, SelectDropdown } from '../components/shared';
+import { formatDeliveryError, isEmailDeliveryDone, isEmailDeliveryFailed, isEmailDeliveryInProgress, isEmailDeliverySucceeded } from '../lib/emailDelivery';
 import { notifySuccess } from '../lib/feedback';
+import { queryKeys } from '../lib/queryKeys';
+import { useDirtyNavigationGuard } from '../hooks/useDirtyNavigationGuard';
 import { useText } from '../locales';
 
 type OAuthForm = {
@@ -14,6 +17,12 @@ type OAuthForm = {
   client_secret: string;
   redirect_url: string;
   enabled: boolean;
+};
+
+type TurnstileForm = {
+  enabled: boolean;
+  site_key: string;
+  secret_key: string;
 };
 
 type RegistrationForm = {
@@ -31,6 +40,8 @@ type RegistrationForm = {
   smtp_from_email: string;
 };
 
+const INVALID_SMTP_PORT_MESSAGE = 'SMTP port must be a whole number between 1 and 65535.';
+
 export function LoginSettingsPage() {
   const text = useText();
   const queryClient = useQueryClient();
@@ -38,7 +49,7 @@ export function LoginSettingsPage() {
 
   // --- OAuth section ---
   const providers = useQuery({
-    queryKey: ['admin-oauth-providers'],
+    queryKey: queryKeys.admin.oauthProviders,
     queryFn: () => api<OAuthProvider[]>('/api/admin/oauth/providers'),
     retry: false
   });
@@ -83,10 +94,10 @@ export function LoginSettingsPage() {
       }),
     onSuccess: (updatedProvider) => {
       // Update cache and state BEFORE closing modal so the card underneath shows fresh data
-      queryClient.setQueryData<OAuthProvider[]>(['admin-oauth-providers'], (current) =>
+      queryClient.setQueryData<OAuthProvider[]>(queryKeys.admin.oauthProviders, (current) =>
         current?.map((provider) => provider.provider === updatedProvider.provider ? updatedProvider : provider)
       );
-      queryClient.invalidateQueries({ queryKey: ['oauth-providers'] });
+      queryClient.invalidateQueries({ queryKey: queryKeys.oauthProviders });
       setForms((current) => ({
         ...current,
         [updatedProvider.provider]: formFromProvider(updatedProvider)
@@ -97,6 +108,7 @@ export function LoginSettingsPage() {
       }));
       setSavingProvider(null);
       setEditing(null);
+      queryClient.invalidateQueries({ queryKey: queryKeys.loginSettings });
       notifySuccess(text.oauth.saved, { origin: oauthSaveButtonRef.current });
     },
     onError: (error) => {
@@ -107,13 +119,13 @@ export function LoginSettingsPage() {
 
   // --- Login settings (Turnstile + Passkey) ---
   const loginSettings = useQuery({
-    queryKey: ['admin-login-settings'],
+    queryKey: queryKeys.admin.loginSettings,
     queryFn: () => api<LoginSettings>('/api/admin/login-settings'),
     retry: false
   });
 
-  const [turnstileForm, setTurnstileForm] = useState({ enabled: false, site_key: '', secret_key: '' });
-  const [turnstileInitial, setTurnstileInitial] = useState({ enabled: false, site_key: '', secret_key: '' });
+  const [turnstileForm, setTurnstileForm] = useState<TurnstileForm>({ enabled: false, site_key: '', secret_key: '' });
+  const [turnstileInitial, setTurnstileInitial] = useState<TurnstileForm>({ enabled: false, site_key: '', secret_key: '' });
   const [savingTurnstile, setSavingTurnstile] = useState(false);
   const [passkeyEnabled, setPasskeyEnabled] = useState(false);
   const [registrationForm, setRegistrationForm] = useState<RegistrationForm>(emptyRegistrationForm());
@@ -124,9 +136,13 @@ export function LoginSettingsPage() {
   const [testDeliverySnapshot, setTestDeliverySnapshot] = useState<{ status?: EmailDeliveryStatus; error?: string }>({});
   const [testDeliveryRegistrationKey, setTestDeliveryRegistrationKey] = useState('');
   const completedTestDeliveryRef = useRef('');
+  const turnstileFormRef = useRef(turnstileForm);
+  const turnstileInitialRef = useRef(turnstileInitial);
+  const registrationFormRef = useRef(registrationForm);
+  const registrationInitialRef = useRef(registrationInitial);
 
   const testDelivery = useQuery({
-    queryKey: ['admin-login-settings', 'email-delivery', testDeliveryId],
+    queryKey: queryKeys.admin.loginSettingsEmailDelivery(testDeliveryId),
     queryFn: () => api<EmailDelivery>(`/api/email-deliveries/${encodeURIComponent(String(testDeliveryId))}`),
     enabled: testDeliveryId !== null,
     retry: false,
@@ -134,21 +150,43 @@ export function LoginSettingsPage() {
   });
 
   useEffect(() => {
+    turnstileFormRef.current = turnstileForm;
+  }, [turnstileForm]);
+
+  useEffect(() => {
+    turnstileInitialRef.current = turnstileInitial;
+  }, [turnstileInitial]);
+
+  useEffect(() => {
+    registrationFormRef.current = registrationForm;
+  }, [registrationForm]);
+
+  useEffect(() => {
+    registrationInitialRef.current = registrationInitial;
+  }, [registrationInitial]);
+
+  useEffect(() => {
     if (!loginSettings.data) return;
     const s = loginSettings.data;
-    setTurnstileForm({ enabled: s.turnstile_enabled, site_key: s.turnstile_site_key || '', secret_key: '' });
-    setTurnstileInitial({ enabled: s.turnstile_enabled, site_key: s.turnstile_site_key || '', secret_key: '' });
+    const nextTurnstile = turnstileFormFromSettings(s);
+    if (!turnstileChanged(turnstileFormRef.current, turnstileInitialRef.current)) {
+      setTurnstileForm(nextTurnstile);
+      setTurnstileInitial(nextTurnstile);
+    }
     setPasskeyEnabled(s.passkey_enabled);
     const nextRegistration = registrationFormFromSettings(s);
-    setRegistrationForm(nextRegistration);
-    setRegistrationInitial(nextRegistration);
+    if (!registrationChanged(registrationFormRef.current, registrationInitialRef.current)) {
+      setRegistrationForm(nextRegistration);
+      setRegistrationInitial(nextRegistration);
+    }
   }, [loginSettings.data]);
 
   const saveLoginSettings = useMutation({
     mutationFn: (body: Record<string, unknown>) => patchJSON<LoginSettings>('/api/admin/login-settings', body),
     onSuccess: (settings) => {
-      queryClient.setQueryData<LoginSettings>(['admin-login-settings'], settings);
-      queryClient.invalidateQueries({ queryKey: ['admin-login-settings'] });
+      queryClient.setQueryData<LoginSettings>(queryKeys.admin.loginSettings, settings);
+      queryClient.invalidateQueries({ queryKey: queryKeys.admin.loginSettings });
+      queryClient.invalidateQueries({ queryKey: queryKeys.loginSettings });
       setSavingTurnstile(false);
       notifySuccess(text.loginSettings.saved, { origin: loginSettingsFeedbackOriginRef.current });
       loginSettingsFeedbackOriginRef.current = null;
@@ -163,9 +201,9 @@ export function LoginSettingsPage() {
   const saveRegistrationSettings = useMutation({
     mutationFn: (form: RegistrationForm) => patchJSON<LoginSettings>('/api/admin/login-settings', registrationPayload(form)),
     onSuccess: (settings) => {
-      queryClient.setQueryData<LoginSettings>(['admin-login-settings'], settings);
-      queryClient.invalidateQueries({ queryKey: ['admin-login-settings'] });
-      queryClient.invalidateQueries({ queryKey: ['login-settings'] });
+      queryClient.setQueryData<LoginSettings>(queryKeys.admin.loginSettings, settings);
+      queryClient.invalidateQueries({ queryKey: queryKeys.admin.loginSettings });
+      queryClient.invalidateQueries({ queryKey: queryKeys.loginSettings });
       const nextRegistration = registrationFormFromSettings(settings);
       setRegistrationForm(nextRegistration);
       setRegistrationInitial(nextRegistration);
@@ -186,9 +224,6 @@ export function LoginSettingsPage() {
       });
     },
     onSuccess: (settings) => {
-      queryClient.setQueryData<LoginSettings>(['admin-login-settings'], settings);
-      queryClient.invalidateQueries({ queryKey: ['admin-login-settings'] });
-      queryClient.invalidateQueries({ queryKey: ['login-settings'] });
       setTestDeliveryId(settings.delivery_id ?? null);
       setTestDeliverySnapshot({
         status: settings.email_delivery_status,
@@ -222,8 +257,8 @@ export function LoginSettingsPage() {
 
     if (isEmailDeliverySucceeded(delivery.status)) {
       setLastTestedRegistrationKey(testDeliveryRegistrationKey);
-      queryClient.invalidateQueries({ queryKey: ['admin-login-settings'] });
-      queryClient.invalidateQueries({ queryKey: ['login-settings'] });
+      queryClient.invalidateQueries({ queryKey: queryKeys.admin.loginSettings });
+      queryClient.invalidateQueries({ queryKey: queryKeys.loginSettings });
       notifySuccess(text.loginSettings.testEmailSent);
     } else {
       toast.error(delivery.error || text.loginSettings.emailDeliveryFailed);
@@ -242,7 +277,13 @@ export function LoginSettingsPage() {
     } else if (turnstileInitial.secret_key) {
       body.turnstile_secret_key = '***';
     }
-    saveLoginSettings.mutate(body);
+    saveLoginSettings.mutate(body, {
+      onSuccess: (settings) => {
+        const nextTurnstile = turnstileFormFromSettings(settings);
+        setTurnstileForm(nextTurnstile);
+        setTurnstileInitial(nextTurnstile);
+      }
+    });
   };
 
   const handleTogglePasskey = () => {
@@ -271,6 +312,9 @@ export function LoginSettingsPage() {
 
   const turnstileReplacesTextCaptcha = turnstileForm.enabled;
   const hasRegistrationChanges = registrationChanged(registrationForm, registrationInitial);
+  const smtpPortValidationError = registrationForm.email_verification_mode === 'smtp' && !isValidSMTPPortInput(registrationForm.smtp_port)
+    ? INVALID_SMTP_PORT_MESSAGE
+    : '';
   const currentRegistrationKey = registrationTestKey(registrationForm);
   const initialRegistrationKey = registrationTestKey(registrationInitial);
   const testDeliveryAppliesToCurrentForm = testDeliveryRegistrationKey === currentRegistrationKey;
@@ -336,6 +380,16 @@ export function LoginSettingsPage() {
 
   const editingProvider = providerRows.find((provider) => provider.provider === editing);
   const editingForm = editingProvider ? forms[editingProvider.provider] || formFromProvider(editingProvider) : null;
+  const hasOAuthEditorChanges = editingProvider && editingForm
+    ? hasUnsavedChanges(editingForm, initialForms[editingProvider.provider])
+    : false;
+  useDirtyNavigationGuard(
+    (hasOAuthEditorChanges || hasTurnstileChanges || hasRegistrationChanges) &&
+      savingProvider === null &&
+      !savingTurnstile &&
+      !saveRegistrationSettings.isPending,
+    text.oauth.unsaved_desc
+  );
   const closeOAuthEditor = () => {
     if (!editingProvider || savingProvider !== null) return;
     handleEditClick(editingProvider.provider);
@@ -623,6 +677,7 @@ export function LoginSettingsPage() {
                   <label className="user-form-field">
                     <span>{text.loginSettings.smtpPort}</span>
                     <input className="input" value={registrationForm.smtp_port} onChange={(event) => setRegistrationForm((form) => ({ ...form, smtp_port: event.target.value }))} inputMode="numeric" placeholder="587" />
+                    {smtpPortValidationError && <span className="field-error" role="alert">{smtpPortValidationError}</span>}
                   </label>
                   <label className="user-form-field">
                     <span>{text.loginSettings.smtpSecurity}</span>
@@ -661,7 +716,7 @@ export function LoginSettingsPage() {
                   <span>{text.loginSettings.testRecipient}</span>
                   <input className="input" value={testRecipient} onChange={(event) => setTestRecipient(event.target.value)} type="email" placeholder="you@example.com" />
                 </label>
-                <button className="btn-secondary" type="button" onClick={() => testEmail.mutate()} disabled={testEmail.isPending || testDeliveryInProgress}>
+                <button className="btn-secondary" type="button" onClick={() => testEmail.mutate()} disabled={testEmail.isPending || testDeliveryInProgress || Boolean(smtpPortValidationError)}>
                   {testEmail.isPending || testDeliveryInProgress ? <LoadingIndicator size={14} /> : <Send size={14} />}
                   {testEmail.isPending || testDeliveryInProgress ? text.loginSettings.emailDeliverySending : text.loginSettings.testEmail}
                 </button>
@@ -681,7 +736,7 @@ export function LoginSettingsPage() {
 
             <div className="admin-oauth-form-actions">
               {hasRegistrationChanges && (
-                <button ref={registrationSaveButtonRef} className="btn-primary" type="button" onClick={() => saveRegistrationSettings.mutate(registrationForm)} disabled={saveRegistrationSettings.isPending}>
+                <button ref={registrationSaveButtonRef} className="btn-primary" type="button" onClick={() => saveRegistrationSettings.mutate(registrationForm)} disabled={saveRegistrationSettings.isPending || Boolean(smtpPortValidationError)}>
                   {saveRegistrationSettings.isPending ? <Loader2 size={16} className="animate-spin" /> : <Save size={16} />}
                   {text.loginSettings.save}
                 </button>
@@ -849,6 +904,14 @@ function emptyRegistrationForm(): RegistrationForm {
   };
 }
 
+function turnstileFormFromSettings(settings: LoginSettings): TurnstileForm {
+  return {
+    enabled: settings.turnstile_enabled,
+    site_key: settings.turnstile_site_key || '',
+    secret_key: ''
+  };
+}
+
 function registrationFormFromSettings(settings: LoginSettings): RegistrationForm {
   const hasSavedSMTPPassword = settings.smtp_password === '***';
   return {
@@ -867,6 +930,14 @@ function registrationFormFromSettings(settings: LoginSettings): RegistrationForm
   };
 }
 
+function turnstileChanged(form: TurnstileForm, initial: TurnstileForm): boolean {
+  return (
+    form.enabled !== initial.enabled ||
+    form.site_key.trim() !== initial.site_key ||
+    form.secret_key.trim() !== ''
+  );
+}
+
 function registrationPayload(form: RegistrationForm): Record<string, unknown> {
   const body: Record<string, unknown> = {
     registration_open: form.registration_open,
@@ -874,7 +945,7 @@ function registrationPayload(form: RegistrationForm): Record<string, unknown> {
     email_verification_mode: form.email_verification_mode,
     internal_sender_prefix: form.internal_sender_prefix.trim(),
     smtp_host: form.smtp_host.trim(),
-    smtp_port: Number.parseInt(form.smtp_port, 10) || 0,
+    smtp_port: parseSMTPPort(form.smtp_port, form.email_verification_mode === 'smtp'),
     smtp_security: form.smtp_security,
     smtp_username: form.smtp_username.trim(),
     smtp_from_name: form.smtp_from_name.trim(),
@@ -890,7 +961,7 @@ function registrationTestKey(form: RegistrationForm): string {
     email_verification_mode: form.email_verification_mode,
     internal_sender_prefix: form.internal_sender_prefix.trim(),
     smtp_host: form.smtp_host.trim(),
-    smtp_port: Number.parseInt(form.smtp_port, 10) || 0,
+    smtp_port: normalizedSMTPPortForKey(form),
     smtp_security: form.smtp_security,
     smtp_username: form.smtp_username.trim(),
     smtp_password: form.smtp_password.trim() || (form.smtp_password_set ? '__saved__' : ''),
@@ -914,6 +985,25 @@ function registrationChanged(form: RegistrationForm, initial: RegistrationForm):
     form.smtp_from_name.trim() !== initial.smtp_from_name ||
     form.smtp_from_email.trim() !== initial.smtp_from_email
   );
+}
+
+function parseSMTPPort(value: string, required: boolean) {
+  const trimmed = value.trim();
+  if (!trimmed && !required) return 587;
+  if (!isValidSMTPPortInput(value)) throw new Error(INVALID_SMTP_PORT_MESSAGE);
+  return Number.parseInt(trimmed, 10);
+}
+
+function normalizedSMTPPortForKey(form: RegistrationForm) {
+  if (form.email_verification_mode !== 'smtp' && !isValidSMTPPortInput(form.smtp_port)) return 587;
+  return isValidSMTPPortInput(form.smtp_port) ? Number.parseInt(form.smtp_port.trim(), 10) : form.smtp_port.trim();
+}
+
+function isValidSMTPPortInput(value: string) {
+  const trimmed = value.trim();
+  if (!/^\d+$/.test(trimmed)) return false;
+  const parsed = Number.parseInt(trimmed, 10);
+  return parsed >= 1 && parsed <= 65535;
 }
 
 function formFromProvider(provider: OAuthProvider): OAuthForm {
@@ -945,24 +1035,4 @@ function hasUnsavedChanges(form: OAuthForm | undefined, initial: OAuthForm | und
     form.enabled !== initial.enabled ||
     form.client_secret.trim() !== ''
   );
-}
-
-function isEmailDeliveryInProgress(status?: EmailDeliveryStatus) {
-  return status === 'pending' || status === 'delivering' || status === 'retry';
-}
-
-function isEmailDeliverySucceeded(status?: EmailDeliveryStatus) {
-  return status === 'succeeded';
-}
-
-function isEmailDeliveryFailed(status?: EmailDeliveryStatus) {
-  return status === 'failed';
-}
-
-function isEmailDeliveryDone(status?: EmailDeliveryStatus) {
-  return isEmailDeliverySucceeded(status) || isEmailDeliveryFailed(status);
-}
-
-function formatDeliveryError(template: string, error: string) {
-  return template.replace('{error}', error);
 }

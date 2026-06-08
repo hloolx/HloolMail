@@ -168,6 +168,48 @@ func TestMessageDTOHelpersExposeAttachmentMetadata(t *testing.T) {
 	}
 }
 
+func TestMessageSummaryDTOIncludesVerificationCode(t *testing.T) {
+	now := time.Date(2026, 5, 20, 11, 0, 0, 0, time.UTC)
+	msg := models.Message{
+		ID:          "message-code",
+		Recipient:   "demo@example.test",
+		FromAddress: "noreply@openai.com",
+		Subject:     "Your OpenAI verification code",
+		TextContent: "Use 123-456 to finish signing in. This code expires soon.",
+		HTMLContent: "<p>Order 998877</p>",
+		CreatedAt:   now,
+		ExpiresAt:   now.Add(time.Hour),
+	}
+
+	summary := mustJSONMap(t, messageSummaryDTO(msg))
+	if summary["verification_code"] != "123456" {
+		t.Fatalf("summary verification_code = %v", summary["verification_code"])
+	}
+
+	detail := mustJSONMap(t, publicMessageDetail(msg))
+	if detail["verification_code"] != "123456" {
+		t.Fatalf("detail verification_code = %v", detail["verification_code"])
+	}
+}
+
+func TestMessageSummaryDTOOmitsVerificationFalsePositive(t *testing.T) {
+	now := time.Date(2026, 5, 20, 11, 10, 0, 0, time.UTC)
+	msg := models.Message{
+		ID:          "message-order",
+		Recipient:   "demo@example.test",
+		FromAddress: "shop@example.com",
+		Subject:     "Order 20260520 shipped",
+		TextContent: "Your tracking number is 123456789 and the total is 1299.",
+		CreatedAt:   now,
+		ExpiresAt:   now.Add(time.Hour),
+	}
+
+	summary := mustJSONMap(t, messageSummaryDTO(msg))
+	if _, ok := summary["verification_code"]; ok {
+		t.Fatalf("summary should omit verification_code for order-like mail: %+v", summary)
+	}
+}
+
 func mustJSONMap(t *testing.T, value any) map[string]any {
 	t.Helper()
 	raw, err := json.Marshal(value)

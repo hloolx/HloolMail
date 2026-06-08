@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { AlertTriangle, Bell, CheckCheck, Mail, Megaphone, X } from 'lucide-react';
-import { motion, AnimatePresence } from 'framer-motion';
+import { AlertTriangle, Bell, CheckCheck, Mail, Megaphone, RefreshCw, X } from 'lucide-react';
+import { motion, AnimatePresence, useReducedMotion } from 'framer-motion';
 import { toast } from 'sonner';
 import type { AppNotification, Announcement } from '../../api';
 import { api, patchJSON, postJSON } from '../../api';
@@ -19,6 +19,7 @@ type UnreadCount = {
 export function NotificationBell() {
   const queryClient = useQueryClient();
   const text = useText();
+  const shouldReduceMotion = Boolean(useReducedMotion());
   const [open, setOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
   const {
@@ -169,10 +170,10 @@ export function NotificationBell() {
         {open && (
           <motion.div
             className="notification-popover message-center-popover"
-            initial={{ opacity: 0, y: -8, scale: 0.96 }}
-            animate={{ opacity: 1, y: 0, scale: 1 }}
-            exit={{ opacity: 0, y: -8, scale: 0.96 }}
-            transition={{ duration: 0.18, ease: [0.22, 1, 0.36, 1] }}
+            initial={shouldReduceMotion ? false : { opacity: 0, y: -8, scale: 0.96 }}
+            animate={shouldReduceMotion ? { opacity: 1 } : { opacity: 1, y: 0, scale: 1 }}
+            exit={shouldReduceMotion ? { opacity: 0 } : { opacity: 0, y: -8, scale: 0.96 }}
+            transition={shouldReduceMotion ? { duration: 0 } : { duration: 0.18, ease: [0.22, 1, 0.36, 1] }}
           >
             {/* Header */}
             <div className="notification-popover-head">
@@ -180,16 +181,16 @@ export function NotificationBell() {
                 <h2>{text.notifications.title}</h2>
                 <p>{headline}</p>
               </div>
-              {totalCount > 0 && (
+              {sysCount > 0 && (
                 <button
                   className="notification-mark-all"
                   type="button"
-                  title={text.notifications.markAllRead}
-                  aria-label={text.notifications.markAllRead}
+                  title={`${text.notifications.systemAlerts}: ${text.notifications.markAllRead}`}
+                  aria-label={`${text.notifications.systemAlerts}: ${text.notifications.markAllRead}`}
                   onClick={() => {
                     markAllNotifsRead.mutate();
                   }}
-                  disabled={!sysCount || markAllNotifsRead.isPending}
+                  disabled={markAllNotifsRead.isPending}
                 >
                   <CheckCheck size={15} />
                 </button>
@@ -245,7 +246,16 @@ export function NotificationBell() {
                 label={text.announcements.title}
                 count={annCount}
               >
-                {annList.length === 0 ? (
+                {announcements.isLoading ? (
+                  <div className="notification-empty">{text.common.loading}</div>
+                ) : announcements.isError ? (
+                  <NotificationSectionError
+                    label={announcements.error instanceof Error ? announcements.error.message : text.announcements.loadError}
+                    retryLabel={text.common.retry}
+                    onRetry={() => { void announcements.refetch(); }}
+                    isPending={announcements.isFetching}
+                  />
+                ) : annList.length === 0 ? (
                   <div className="notification-empty">{text.announcements.noAnnouncements}</div>
                 ) : (
                   annList.slice(0, 5).map((ann) => (
@@ -273,10 +283,10 @@ export function NotificationBell() {
                         {expandedAnnouncementId === ann.id && (
                           <motion.div
                             className="message-center-announcement-body"
-                            initial={{ height: 0, opacity: 0 }}
-                            animate={{ height: 'auto', opacity: 1 }}
-                            exit={{ height: 0, opacity: 0 }}
-                            transition={{ duration: 0.2 }}
+                            initial={shouldReduceMotion ? false : { height: 0, opacity: 0 }}
+                            animate={shouldReduceMotion ? { opacity: 1 } : { height: 'auto', opacity: 1 }}
+                            exit={shouldReduceMotion ? { opacity: 0 } : { height: 0, opacity: 0 }}
+                            transition={shouldReduceMotion ? { duration: 0 } : { duration: 0.2 }}
                           >
                             <div
                               className="message-center-markdown"
@@ -297,7 +307,16 @@ export function NotificationBell() {
                 label={text.notifications.systemAlerts}
                 count={sysCount}
               >
-                {sysList.length === 0 ? (
+                {notifications.isLoading ? (
+                  <div className="notification-empty">{text.common.loading}</div>
+                ) : notifications.isError ? (
+                  <NotificationSectionError
+                    label={notifications.error instanceof Error ? notifications.error.message : text.notifications.empty}
+                    retryLabel={text.common.retry}
+                    onRetry={() => { void notifications.refetch(); }}
+                    isPending={notifications.isFetching}
+                  />
+                ) : sysList.length === 0 ? (
                   <div className="notification-empty">{text.notifications.empty}</div>
                 ) : (
                   sysList.map((notification) => (
@@ -325,6 +344,28 @@ export function NotificationBell() {
           </motion.div>
         )}
       </AnimatePresence>
+    </div>
+  );
+}
+
+function NotificationSectionError({
+  label,
+  retryLabel,
+  onRetry,
+  isPending
+}: {
+  label: string;
+  retryLabel: string;
+  onRetry: () => void;
+  isPending: boolean;
+}) {
+  return (
+    <div className="notification-empty notification-error" role="alert">
+      <span>{label}</span>
+      <button type="button" className="notification-error-retry" onClick={onRetry} disabled={isPending}>
+        <RefreshCw size={12} className={isPending ? 'animate-spin' : ''} />
+        {retryLabel}
+      </button>
     </div>
   );
 }

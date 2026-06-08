@@ -1,12 +1,14 @@
 import { MutationCache, QueryCache, QueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { ApiError } from '../api';
+import { ApiError, clearPendingGetRequests } from '../api';
+import { clearStoredRequestHistory } from '../hooks/useRequestHistory';
 import { useAppStore } from '../store';
 
 const SESSION_EXPIRED_MESSAGE = 'Session expired. Please sign in again.';
 const DEFAULT_ERROR_MESSAGE = 'Request failed. Please try again.';
 const USER_QUERY_ROOTS = new Set([
   'admin-announcements',
+  'admin-api-interface-settings',
   'admin-audit-logs',
   'admin-domain-check-runs',
   'admin-domain-check-settings',
@@ -15,7 +17,12 @@ const USER_QUERY_ROOTS = new Set([
   'admin-oauth-providers',
   'admin-quota-alerts',
   'admin-quota-settings',
+  'admin-share-link-access-logs',
+  'admin-share-links',
   'admin-stats',
+  'admin-stats-timeseries',
+  'admin-webhook-deliveries',
+  'admin-webhooks',
   'announcements',
   'announcements-unread-count',
   'api-keys',
@@ -33,6 +40,7 @@ const USER_QUERY_ROOTS = new Set([
   'share-links',
   'stats',
   'stats-timeseries',
+  'user-onboarding',
   'user-oauth-identities',
   'user-passkeys',
   'users',
@@ -72,7 +80,7 @@ export function createAppQueryClient() {
 }
 
 function handleQueryError(error: unknown, queryClient: QueryClient, queryKey: readonly unknown[]) {
-  if (isAuthProbeUnauthorized(error, queryKey)) return;
+  if (handleAuthProbeUnauthorized(error, queryClient, queryKey)) return;
   if (handleAuthError(error, queryClient)) return;
 }
 
@@ -90,8 +98,10 @@ function handleAuthError(error: unknown, queryClient: QueryClient) {
 }
 
 export function expireUserSession(queryClient: QueryClient) {
+  clearPendingGetRequests();
   useAppStore.getState().logout();
   clearUserQueryCache(queryClient);
+  clearStoredRequestHistory();
   notifySessionExpired();
 
   if (typeof window !== 'undefined' && !window.location.hash.startsWith('#/login')) {
@@ -100,8 +110,10 @@ export function expireUserSession(queryClient: QueryClient) {
 }
 
 export function clearUserSession(queryClient: QueryClient) {
+  clearPendingGetRequests();
   useAppStore.getState().logout();
   clearUserQueryCache(queryClient);
+  clearStoredRequestHistory();
 }
 
 export function clearUserQueryCache(queryClient: QueryClient) {
@@ -123,8 +135,10 @@ function notifySessionExpired() {
   }, 5000);
 }
 
-function isAuthProbeUnauthorized(error: unknown, queryKey: readonly unknown[]) {
-  return error instanceof ApiError && error.status === 401 && queryKey[0] === 'me';
+function handleAuthProbeUnauthorized(error: unknown, queryClient: QueryClient, queryKey: readonly unknown[]) {
+  if (!(error instanceof ApiError) || error.status !== 401 || queryKey[0] !== 'me') return false;
+  clearUserSession(queryClient);
+  return true;
 }
 
 function readErrorMessage(error: unknown) {

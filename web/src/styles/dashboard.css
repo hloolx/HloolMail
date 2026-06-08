@@ -64,9 +64,10 @@
 
 .dashboard-alert span {
   min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow: visible;
+  line-height: 1.45;
+  text-overflow: clip;
+  white-space: normal;
 }
 
 .dashboard-alert-warning {
@@ -98,6 +99,27 @@
   touch-action: none;
   user-select: none;
 }
+
+.chart-loading .chart-svg {
+  cursor: default;
+}
+
+.chart-skeleton-svg {
+  opacity: 0.9;
+}
+
+.chart-skeleton-area {
+  fill: color-mix(in srgb, var(--soft) 78%, transparent);
+  animation: metric-shimmer 1.6s ease-in-out infinite;
+}
+
+.chart-skeleton-line {
+  fill: none;
+  stroke: color-mix(in srgb, var(--muted) 28%, transparent);
+  stroke-width: 1.6;
+  stroke-linecap: round;
+  animation: metric-shimmer 1.6s ease-in-out infinite;
+}
 .chart-empty {
   display: flex;
   flex-direction: column;
@@ -125,6 +147,15 @@
   color: var(--muted);
   font-size: 0.62rem;
   font-variant-numeric: tabular-nums;
+}
+
+.chart-skeleton-labels span {
+  display: inline-block;
+  width: 2.2rem;
+  height: 0.45rem;
+  border-radius: 999px;
+  background: var(--soft);
+  animation: metric-shimmer 1.6s ease-in-out infinite;
 }
 
 /* Dashboard domain cell */

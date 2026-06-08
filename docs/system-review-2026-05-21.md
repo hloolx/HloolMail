@@ -34,10 +34,10 @@
 
 已执行或子代理已执行的验证：
 
-- `rtk go test ./internal/http ./internal/auth` 通过，70 个测试通过。
-- `rtk go test ./internal/apispec ./internal/http ./internal/cli` 通过，71 个测试通过。
+- `go test ./internal/http ./internal/auth` 通过，70 个测试通过。
+- `go test ./internal/apispec ./internal/http ./internal/cli` 通过，71 个测试通过。
 - 前端 `tsc --noEmit` 类型检查通过。
-- 之前综合验证记录显示 `rtk go test ./...` 和前端构建通过；本报告后面仍建议在修复代码后重新跑全量测试。
+- 之前综合验证记录显示 `go test ./...` 和前端构建通过；本报告后面仍建议在修复代码后重新跑全量测试。
 
 ## 优先级说明
 

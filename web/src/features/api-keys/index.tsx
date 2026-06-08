@@ -136,6 +136,7 @@ export function ApiKeysFeature({ user }: { user: User }) {
             selectedKeyIds={selectedKeyIds}
             onSelectedKeyIdsChange={setSelectedKeyIds}
             deletePending={deleteKeys.isPending}
+            deletingKeyIds={(deleteKeys.variables || []).map((key) => key.id)}
             onRequestDelete={requestDelete}
           />
         )}

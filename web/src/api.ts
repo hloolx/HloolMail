@@ -71,6 +71,7 @@ export type MessageSummary = {
   from_address: string;
   from_name?: string;
   subject: string;
+  verification_code?: string;
   seen: boolean;
   preview: string;
   attachment_count?: number;
@@ -102,6 +103,7 @@ export type MessageDetail = {
   from_address: string;
   from_name?: string;
   subject: string;
+  verification_code?: string;
   seen: boolean;
   text_content?: string;
   html_content?: string;
@@ -212,6 +214,7 @@ export type PublicSharedMailboxMessage = {
   from_address: string;
   from_name?: string;
   subject: string;
+  verification_code?: string;
   text_content?: string;
   html_content?: string;
   attachments: AttachmentMetadata[];
@@ -501,6 +504,12 @@ export class ApiError extends Error {
 const DEFAULT_TIMEOUT = 30000;
 const BUSINESS_ERROR_STATUS = 422;
 const pendingGetRequests = new Map<string, Promise<unknown>>();
+let sessionRequestEpoch = 0;
+
+export function clearPendingGetRequests() {
+  sessionRequestEpoch += 1;
+  pendingGetRequests.clear();
+}
 
 export async function api<T>(path: string, options: RequestOptions = {}): Promise<T> {
   const {
@@ -661,6 +670,7 @@ function getDedupeKey(path: string, headers: Headers, apiKey?: string) {
   return JSON.stringify([
     path,
     apiKey || '',
+    apiKey ? '' : sessionRequestEpoch,
     Array.from(headers.entries()).sort(([left], [right]) => left.localeCompare(right))
   ]);
 }

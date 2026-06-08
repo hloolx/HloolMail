@@ -1,4 +1,4 @@
-import { ArrowDown, ArrowUp, ArrowUpDown } from 'lucide-react';
+import { AlertCircle, ArrowDown, ArrowUp, ArrowUpDown, Loader2, RefreshCw } from 'lucide-react';
 import { isValidElement, type CSSProperties, type ReactNode } from 'react';
 import { useText } from '../../locales';
 
@@ -52,6 +52,14 @@ export type DataTableProps = {
   emptyLabel?: ReactNode;
   hiddenLabel?: ReactNode;
   showAllColumnsLabel?: ReactNode;
+  loading?: boolean;
+  loadingLabel?: ReactNode;
+  loadingRowCount?: number;
+  error?: boolean;
+  errorLabel?: ReactNode;
+  retryLabel?: ReactNode;
+  onRetry?: () => void;
+  retryPending?: boolean;
   ariaLabel?: string;
   className?: string;
   density?: 'default' | 'compact';
@@ -70,6 +78,14 @@ export function DataTable({
   emptyLabel = '-',
   hiddenLabel = 'No columns selected',
   showAllColumnsLabel = 'Show all columns',
+  loading = false,
+  loadingLabel,
+  loadingRowCount = 5,
+  error = false,
+  errorLabel,
+  retryLabel,
+  onRetry,
+  retryPending = false,
   ariaLabel,
   className,
   density = 'default',
@@ -87,6 +103,8 @@ export function DataTable({
     .map((column, index) => ({ column, index }))
     .filter(({ column }) => !hiddenColumnSet.has(column.key));
   const visibleColumnCount = Math.max(visibleColumns.length, 1);
+  const state = error ? 'error' : loading ? 'loading' : null;
+  const mobileListRole = state === 'loading' || (!state && rows.length > 0) ? 'list' : undefined;
   const lastColumn = visibleColumns[visibleColumns.length - 1]?.column;
   const shouldStickLastColumn = visibleColumns.length > 0 && (stickyLastColumn || (stickyActions && Boolean(lastColumn && isActionColumn(lastColumn))));
   const shellClassName = [
@@ -116,7 +134,7 @@ export function DataTable({
 
   return (
     <div className={shellClassName}>
-      <table className={tableClassName} aria-label={ariaLabel}>
+      <table className={tableClassName} aria-label={ariaLabel} aria-busy={loading ? 'true' : undefined}>
         <thead>
           <tr>
             {visibleColumns.length > 0 ? visibleColumns.map(({ column }) => {
@@ -148,6 +166,19 @@ export function DataTable({
             <tr>
               <td className="table-empty data-table-hidden-empty" colSpan={visibleColumnCount}>{renderHiddenState()}</td>
             </tr>
+          ) : state === 'loading' ? (
+            renderLoadingRows(visibleColumns, visibleColumnCount, loadingRowCount, loadingLabel ?? text.common.loading)
+          ) : state === 'error' ? (
+            <tr>
+              <td className="table-empty data-table-state-cell" colSpan={visibleColumnCount}>
+                {renderErrorState({
+                  label: errorLabel ?? '-',
+                  retryLabel: retryLabel ?? text.common.retry,
+                  onRetry,
+                  retryPending
+                })}
+              </td>
+            </tr>
           ) : rows.length > 0 ? (
             rows.map((row) => (
               <tr
@@ -165,7 +196,7 @@ export function DataTable({
           )}
         </tbody>
       </table>
-      <div className="data-table-mobile-list" aria-label={ariaLabel}>
+      <div className="data-table-mobile-list" aria-label={ariaLabel} role={mobileListRole}>
         {renderMobileRows({
           rows,
           visibleColumns,
@@ -173,7 +204,14 @@ export function DataTable({
           hiddenLabel,
           showAllColumnsLabel,
           onHiddenColumnKeysChange,
-          renderHiddenState
+          renderHiddenState,
+          state,
+          loadingLabel: loadingLabel ?? text.common.loading,
+          loadingRowCount,
+          errorLabel: errorLabel ?? '-',
+          retryLabel: retryLabel ?? text.common.retry,
+          onRetry,
+          retryPending
         })}
       </div>
     </div>
@@ -187,7 +225,14 @@ function renderMobileRows({
   hiddenLabel,
   showAllColumnsLabel,
   onHiddenColumnKeysChange,
-  renderHiddenState
+  renderHiddenState,
+  state,
+  loadingLabel,
+  loadingRowCount,
+  errorLabel,
+  retryLabel,
+  onRetry,
+  retryPending
 }: {
   rows: DataTableRow[];
   visibleColumns: Array<{ column: DataTableColumn; index: number }>;
@@ -196,6 +241,13 @@ function renderMobileRows({
   showAllColumnsLabel: ReactNode;
   onHiddenColumnKeysChange: DataTableProps['onHiddenColumnKeysChange'];
   renderHiddenState: () => ReactNode;
+  state: 'loading' | 'error' | null;
+  loadingLabel: ReactNode;
+  loadingRowCount: number;
+  errorLabel: ReactNode;
+  retryLabel: ReactNode;
+  onRetry?: () => void;
+  retryPending: boolean;
 }) {
   if (visibleColumns.length === 0) {
     return (
@@ -210,11 +262,100 @@ function renderMobileRows({
     );
   }
 
+  if (state === 'loading') {
+    return renderMobileLoadingRows(Math.min(Math.max(loadingRowCount, 1), 6), loadingLabel);
+  }
+
+  if (state === 'error') {
+    return (
+      <div className="table-empty data-table-mobile-empty data-table-state-cell">
+        {renderErrorState({ label: errorLabel, retryLabel, onRetry, retryPending })}
+      </div>
+    );
+  }
+
   if (rows.length === 0) {
     return <div className="table-empty data-table-mobile-empty">{emptyLabel}</div>;
   }
 
   return rows.map((row) => renderMobileCard(row, visibleColumns));
+}
+
+function renderLoadingRows(
+  visibleColumns: Array<{ column: DataTableColumn; index: number }>,
+  visibleColumnCount: number,
+  rowCount: number,
+  label: ReactNode
+) {
+  const count = Math.min(Math.max(rowCount, 1), 8);
+  return Array.from({ length: count }, (_, rowIndex) => (
+    <tr className="data-table-skeleton-row" key={`loading-${rowIndex}`} aria-hidden={rowIndex === 0 ? undefined : 'true'}>
+      {visibleColumns.map(({ column }, columnIndex) => (
+        <td
+          key={column.key}
+          data-align={column.align || 'left'}
+          data-column-key={column.key}
+          data-column-role={isActionColumn(column) ? 'actions' : undefined}
+          style={columnStyle(column)}
+        >
+          {rowIndex === 0 && columnIndex === 0 ? (
+            <span className="sr-only" role="status" aria-live="polite">{label}</span>
+          ) : null}
+          <span
+            className="data-table-skeleton-cell"
+            style={{ width: skeletonWidth(rowIndex, columnIndex, visibleColumnCount) }}
+          />
+        </td>
+      ))}
+    </tr>
+  ));
+}
+
+function renderMobileLoadingRows(rowCount: number, label: ReactNode) {
+  return Array.from({ length: rowCount }, (_, rowIndex) => (
+    <article className="data-table-mobile-card data-table-mobile-card-skeleton" key={`mobile-loading-${rowIndex}`} role="listitem" aria-hidden={rowIndex === 0 ? undefined : 'true'}>
+      {rowIndex === 0 ? <span className="sr-only" role="status" aria-live="polite">{label}</span> : null}
+      <span className="data-table-skeleton-cell data-table-skeleton-title" />
+      <span className="data-table-skeleton-cell data-table-skeleton-subtitle" />
+      <div className="data-table-mobile-card-fields">
+        <span className="data-table-skeleton-cell" />
+        <span className="data-table-skeleton-cell" />
+        <span className="data-table-skeleton-cell" />
+        <span className="data-table-skeleton-cell" />
+      </div>
+    </article>
+  ));
+}
+
+function renderErrorState({
+  label,
+  retryLabel,
+  onRetry,
+  retryPending
+}: {
+  label: ReactNode;
+  retryLabel: ReactNode;
+  onRetry?: () => void;
+  retryPending: boolean;
+}) {
+  return (
+    <div className="data-table-query-state" role="alert">
+      <AlertCircle size={16} aria-hidden="true" />
+      <span>{label}</span>
+      {onRetry ? (
+        <button className="data-table-empty-action" type="button" onClick={onRetry} disabled={retryPending}>
+          {retryPending ? <Loader2 size={13} className="animate-spin" aria-hidden="true" /> : <RefreshCw size={13} aria-hidden="true" />}
+          {retryLabel}
+        </button>
+      ) : null}
+    </div>
+  );
+}
+
+function skeletonWidth(rowIndex: number, columnIndex: number, columnCount: number) {
+  if (columnCount <= 1) return '68%';
+  const seed = (rowIndex * 17 + columnIndex * 11) % 31;
+  return `${48 + seed}%`;
 }
 
 function renderMobileCard(
@@ -239,6 +380,7 @@ function renderMobileCard(
         className={['data-table-mobile-card', 'data-table-mobile-card-span', row.className || ''].filter(Boolean).join(' ')}
         data-selected={row.selected ? 'true' : undefined}
         key={row.key}
+        role="listitem"
       >
         <div className={spanningItem.cell.className}>{spanningItem.cell.content}</div>
       </article>
@@ -262,6 +404,7 @@ function renderMobileCard(
       className={['data-table-mobile-card', row.className || ''].filter(Boolean).join(' ')}
       data-selected={row.selected ? 'true' : undefined}
       key={row.key}
+      role="listitem"
     >
       {hasHeader ? (
         <div className="data-table-mobile-card-head">

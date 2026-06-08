@@ -43,6 +43,12 @@ export function WebhooksFeature() {
   const [pendingTargets, setPendingTargets] = useState<WebhookPendingTarget[]>([]);
   const pendingTargetKeys = useRef(new Set<string>());
   const webhooks = useWebhooksQuery(page, rowsPerPage);
+  const rotateConfirmPending = rotateTarget
+    ? pendingTargets.some((target) => target.endpointId === rotateTarget.id && target.action === 'rotateSecret')
+    : false;
+  const deleteConfirmPending = deleteTarget
+    ? pendingTargets.some((target) => target.endpointId === deleteTarget.id && target.action === 'delete')
+    : false;
 
   const toggle = useToggleWebhookMutation({
     onSuccess: () => {
@@ -165,10 +171,12 @@ export function WebhooksFeature() {
         description={text.webhooks.rotateSecretConfirm}
         confirmText={text.webhooks.rotateSecret}
         cancelText={text.common.cancel}
+        confirmLoading={rotateConfirmPending}
         onConfirm={() => {
           if (rotateTarget) {
-            void runWithEndpointPending(rotateTarget, 'rotateSecret', () => rotate.mutateAsync(rotateTarget));
+            return runWithEndpointPending(rotateTarget, 'rotateSecret', () => rotate.mutateAsync(rotateTarget));
           }
+          return undefined;
         }}
         onCancel={() => setRotateTarget(null)}
       />
@@ -179,10 +187,12 @@ export function WebhooksFeature() {
         danger
         confirmText={text.common.delete}
         cancelText={text.common.cancel}
+        confirmLoading={deleteConfirmPending}
         onConfirm={() => {
           if (deleteTarget) {
-            void runWithEndpointPending(deleteTarget, 'delete', () => remove.mutateAsync(deleteTarget));
+            return runWithEndpointPending(deleteTarget, 'delete', () => remove.mutateAsync(deleteTarget));
           }
+          return undefined;
         }}
         onCancel={() => setDeleteTarget(null)}
       />

@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
-import type { MouseEventHandler } from 'react'
+import type { MouseEvent } from 'react'
 import { AnimatePresence, motion, useReducedMotion } from 'framer-motion'
-import { AlertTriangle, X } from 'lucide-react'
+import { AlertTriangle, Loader2, X } from 'lucide-react'
 
 type ConfirmModalProps = {
   open: boolean
@@ -11,7 +11,9 @@ type ConfirmModalProps = {
   cancelText?: string
   danger?: boolean
   requireType?: string
-  onConfirm: MouseEventHandler<HTMLButtonElement>
+  confirmLoading?: boolean
+  confirmDisabled?: boolean
+  onConfirm: (event: MouseEvent<HTMLButtonElement>) => void | Promise<unknown>
   onCancel: () => void
 }
 
@@ -23,10 +25,13 @@ export function ConfirmModal({
   cancelText = 'Cancel',
   danger = false,
   requireType,
+  confirmLoading = false,
+  confirmDisabled = false,
   onConfirm,
   onCancel,
 }: ConfirmModalProps) {
   const [inputValue, setInputValue] = useState('')
+  const [promisePending, setPromisePending] = useState(false)
   const panelRef = useRef<HTMLDivElement>(null)
   const confirmButtonRef = useRef<HTMLButtonElement>(null)
   const cancelButtonRef = useRef<HTMLButtonElement>(null)
@@ -34,7 +39,8 @@ export function ConfirmModal({
   const closeButtonRef = useRef<HTMLButtonElement>(null)
   const shouldReduceMotion = useReducedMotion()
 
-  const canConfirm = requireType ? inputValue === requireType : true
+  const isConfirmPending = confirmLoading || promisePending
+  const canConfirm = (requireType ? inputValue === requireType : true) && !confirmDisabled && !isConfirmPending
 
   useEffect(() => {
     if (open) {
@@ -53,12 +59,16 @@ export function ConfirmModal({
   }, [open, requireType])
 
   useEffect(() => {
+    if (!open) setPromisePending(false)
+  }, [open])
+
+  useEffect(() => {
     if (!open) return
 
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
         event.preventDefault()
-        onCancel()
+        if (!isConfirmPending) onCancel()
         return
       }
 
@@ -83,7 +93,22 @@ export function ConfirmModal({
 
     document.addEventListener('keydown', handleKeyDown)
     return () => document.removeEventListener('keydown', handleKeyDown)
-  }, [open, onCancel])
+  }, [isConfirmPending, open, onCancel])
+
+  const handleConfirm = async (event: MouseEvent<HTMLButtonElement>) => {
+    if (!canConfirm) return
+    const result = onConfirm(event)
+    if (!isPromiseLike(result)) return
+
+    setPromisePending(true)
+    try {
+      await result
+    } catch {
+      // Callers own error feedback, usually through mutation onError handlers.
+    } finally {
+      setPromisePending(false)
+    }
+  }
 
   return (
     <AnimatePresence initial={!shouldReduceMotion}>
@@ -99,7 +124,9 @@ export function ConfirmModal({
           <div
             className="absolute inset-0"
             style={{ background: 'color-mix(in srgb, var(--foreground) 50%, transparent)' }}
-            onClick={onCancel}
+            onClick={() => {
+              if (!isConfirmPending) onCancel()
+            }}
             aria-hidden="true"
           />
 
@@ -120,6 +147,7 @@ export function ConfirmModal({
             <button
               ref={closeButtonRef}
               onClick={onCancel}
+              disabled={isConfirmPending}
               className="absolute right-4 top-4 rounded-md p-1 text-[var(--muted)] transition-colors hover:bg-[var(--soft)] hover:text-[var(--foreground)]"
               aria-label="Close"
             >
@@ -162,6 +190,7 @@ export function ConfirmModal({
                   type="text"
                   value={inputValue}
                   onChange={(e) => setInputValue(e.target.value)}
+                  disabled={isConfirmPending}
                   className="w-full rounded-lg border border-[var(--border)] bg-[var(--background)] px-3 py-2 text-sm text-[var(--foreground)] outline-none transition-colors focus:border-[var(--focus)] focus:ring-1 focus:ring-[var(--focus)]"
                   placeholder={requireType}
                 />
@@ -173,20 +202,23 @@ export function ConfirmModal({
               <button
                 ref={cancelButtonRef}
                 onClick={onCancel}
+                disabled={isConfirmPending}
                 className="rounded-lg border border-[var(--border)] bg-[var(--soft)] px-4 py-2 text-sm font-medium text-[var(--foreground)] transition-colors hover:bg-[var(--border)]"
               >
                 {cancelText}
               </button>
               <button
                 ref={confirmButtonRef}
-                onClick={onConfirm}
+                onClick={handleConfirm}
                 disabled={!canConfirm}
-                className={`rounded-lg px-4 py-2 text-sm font-medium text-[var(--accent-foreground)] transition-colors ${
+                aria-busy={isConfirmPending ? 'true' : undefined}
+                className={`inline-flex items-center justify-center gap-2 rounded-lg px-4 py-2 text-sm font-medium text-[var(--accent-foreground)] transition-colors ${
                   danger
                     ? 'bg-[var(--bad)] hover:bg-[var(--bad)]/90 disabled:bg-[var(--bad)]/40'
                     : 'bg-[var(--good)] hover:bg-[var(--good)]/90 disabled:bg-[var(--good)]/40'
                 } disabled:cursor-not-allowed`}
               >
+                {isConfirmPending && <Loader2 size={15} className="animate-spin" aria-hidden="true" />}
                 {confirmText}
               </button>
             </div>
@@ -195,4 +227,8 @@ export function ConfirmModal({
       )}
     </AnimatePresence>
   )
+}
+
+function isPromiseLike(value: void | Promise<unknown>): value is Promise<unknown> {
+  return Boolean(value && typeof value === 'object' && 'then' in value && typeof value.then === 'function')
 }

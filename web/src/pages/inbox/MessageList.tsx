@@ -2,7 +2,7 @@ import { forwardRef } from 'react';
 import { motion } from 'framer-motion';
 import { ChevronDown, MailOpen } from 'lucide-react';
 import type { MessageSummary } from '../../api';
-import { EmptyState, PaginationControls } from '../../components/shared';
+import { EmptyState, PaginationControls, SenderBrandAvatar } from '../../components/shared';
 import { extractCode, relativeTime, VerificationCodeCopyButton } from '../../lib/display';
 import { formatCount, mailListVariants, mailRowVariants } from './utils';
 import type { InboxText } from './types';
@@ -109,13 +109,16 @@ export function MessageRow({
           onClick={onSelect}
           aria-current={expanded ? 'true' : undefined}
         >
-          <div className="min-w-0">
-            <div className="flex items-center gap-2">
-              {expanded ? <MailOpen size={15} className="shrink-0 text-[var(--focus)]" /> : null}
-              <span className="truncate text-sm font-medium">{message.subject || text.common.noSubject}</span>
-            </div>
-            <div className="truncate text-xs text-[var(--muted)]">
-              {message.from_address || 'unknown'}
+          <div className="mail-row-summary">
+            <SenderBrandAvatar fromAddress={message.from_address} fromName={message.from_name} size="sm" className="mail-row-avatar" />
+            <div className="min-w-0">
+              <div className="flex items-center gap-2">
+                {expanded ? <MailOpen size={15} className="shrink-0 text-[var(--focus)]" /> : null}
+                <span className="truncate text-sm font-medium">{message.subject || text.common.noSubject}</span>
+              </div>
+              <div className="truncate text-xs text-[var(--muted)]">
+                {message.from_name || message.from_address || 'unknown'}
+              </div>
             </div>
           </div>
           <div className="mail-row-side">

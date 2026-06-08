@@ -7,6 +7,7 @@ import { api, patchJSON } from '../api';
 import type { OAuthProvider } from '../types';
 import { ConfirmModal, InfoTip, LoadingIndicator } from '../components/shared';
 import { notifySuccess } from '../lib/feedback';
+import { queryKeys } from '../lib/queryKeys';
 import { useText } from '../locales';
 
 type OAuthForm = {
@@ -16,11 +17,12 @@ type OAuthForm = {
   enabled: boolean;
 };
 
+/** @deprecated Unreachable from Console routing; use LoginSettingsPage instead. */
 export function AdminOAuthPage() {
   const text = useText();
   const queryClient = useQueryClient();
   const providers = useQuery({
-    queryKey: ['admin-oauth-providers'],
+    queryKey: queryKeys.admin.oauthProviders,
     queryFn: () => api<OAuthProvider[]>('/api/admin/oauth/providers'),
     retry: false
   });
@@ -59,8 +61,8 @@ export function AdminOAuthPage() {
       enabled: form.enabled
     }),
     onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: ['admin-oauth-providers'] });
-      await queryClient.invalidateQueries({ queryKey: ['oauth-providers'] });
+      await queryClient.invalidateQueries({ queryKey: queryKeys.admin.oauthProviders });
+      await queryClient.invalidateQueries({ queryKey: queryKeys.oauthProviders });
       setEditing(null);
       setSavingProvider(null);
       notifySuccess(text.oauth.saved, { origin: saveButtonRef.current });

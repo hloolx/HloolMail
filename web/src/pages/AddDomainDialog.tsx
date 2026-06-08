@@ -11,6 +11,7 @@ import { useCopyState } from '../hooks/useCopyState';
 import { copy } from '../lib/clipboard';
 import { domainInputWantsWildcard, normalizeDomainInput } from '../lib/domain';
 import { notifySuccess } from '../lib/feedback';
+import { queryKeys } from '../lib/queryKeys';
 import { DialogShell, IconButton, InfoTip, LoadingIndicator } from '../components/shared';
 
 const MAX_BATCH_SIZE = 50;
@@ -302,9 +303,10 @@ export function AddDomainDialog({
 }
 
 export function invalidateDomainQueries(queryClient: ReturnType<typeof useQueryClient>) {
-  queryClient.invalidateQueries({ queryKey: ['domains-all'] });
-  queryClient.invalidateQueries({ queryKey: ['domains-available'] });
-  queryClient.invalidateQueries({ queryKey: ['user-onboarding'] });
+  queryClient.invalidateQueries({ queryKey: queryKeys.domains.all });
+  queryClient.invalidateQueries({ queryKey: queryKeys.domains.available });
+  queryClient.invalidateQueries({ queryKey: queryKeys.userOnboarding });
+  queryClient.invalidateQueries({ queryKey: queryKeys.admin.domainHealthRoot });
 }
 
 export function pendingDeleteAt(domain: Domain) {

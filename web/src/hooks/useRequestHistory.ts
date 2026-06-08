@@ -18,6 +18,15 @@ const STORAGE_KEY = "hlool-mail.apiExplorerHistory";
 const LEGACY_STORAGE_KEY = "hlool_api_explorer_history";
 const MAX_ENTRIES = 30;
 
+export function clearStoredRequestHistory(): void {
+  try {
+    localStorage.removeItem(STORAGE_KEY);
+    localStorage.removeItem(LEGACY_STORAGE_KEY);
+  } catch {
+    // Storage can be unavailable in private or constrained browser contexts.
+  }
+}
+
 function generateId(): string {
   return `${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
 }

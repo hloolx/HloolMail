@@ -1,7 +1,6 @@
 import { useRef, useState } from 'react';
 import type React from 'react';
 import { Activity } from 'lucide-react';
-import { LoadingState } from '../shared';
 
 function formatChartLabel(label: string): string {
   // Expects "YYYY-MM-DD" format; extracts "MM-DD"
@@ -24,6 +23,7 @@ export function LineChart({
   unit,
   emptyLabel = 'No data',
   loading = false,
+  loadingLabel,
   ariaLabel,
 }: {
   data: number[];
@@ -32,6 +32,7 @@ export function LineChart({
   unit: string;
   emptyLabel?: string;
   loading?: boolean;
+  loadingLabel?: string;
   ariaLabel?: string;
 }) {
   const svgRef = useRef<SVGSVGElement>(null);
@@ -39,8 +40,23 @@ export function LineChart({
 
   if (loading) {
     return (
-      <div className="chart-empty chart-loading">
-        <LoadingState label="Loading" />
+      <div className="chart-wrap chart-loading" role="status" aria-live="polite" aria-label={loadingLabel || ariaLabel || emptyLabel}>
+        <svg viewBox="0 0 400 180" className="chart-svg chart-skeleton-svg" aria-hidden="true">
+          {[34, 68, 102, 136].map((y) => (
+            <line key={y} x1="12" y1={y} x2="388" y2={y} stroke="var(--border)" strokeWidth="0.5" />
+          ))}
+          <path
+            className="chart-skeleton-area"
+            d="M12,132 C58,118 76,86 120,96 C166,106 182,52 228,66 C270,79 294,116 334,94 C358,81 376,74 388,66 L388,164 L12,164 Z"
+          />
+          <path
+            className="chart-skeleton-line"
+            d="M12,132 C58,118 76,86 120,96 C166,106 182,52 228,66 C270,79 294,116 334,94 C358,81 376,74 388,66"
+          />
+        </svg>
+        <div className="chart-x-labels chart-skeleton-labels" aria-hidden="true">
+          {Array.from({ length: 5 }, (_, index) => <span key={index} />)}
+        </div>
       </div>
     );
   }

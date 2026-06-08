@@ -9,6 +9,7 @@ import { useText } from '../locales';
 import type { Language } from '../store';
 import { useAppStore } from '../store';
 import { notifySuccess, runDeleteEffect } from '../lib/feedback';
+import { queryKeys } from '../lib/queryKeys';
 import { boolBadge, domainModeLabel, formatDomainExpiry } from '../lib/display';
 import { DataTable, DataTableToolbar, DataTableViewOptions, EmptyState, IconButton, InfoTip } from '../components/shared';
 import type { DataTableColumn, DataTableSortState } from '../components/shared';
@@ -27,6 +28,7 @@ export function DomainManagementPage({ user }: { user: User }) {
   const [managedSortState, setManagedSortState] = useState<DataTableSortState | null>(null);
   const [waitingSortState, setWaitingSortState] = useState<DataTableSortState | null>(null);
   const [inactiveSortState, setInactiveSortState] = useState<DataTableSortState | null>(null);
+  const [pendingModeDomainIds, setPendingModeDomainIds] = useState<number[]>([]);
   const feedbackOriginRef = useRef<HTMLElement | null>(null);
   const domains = useQuery({ queryKey: ['domains-all'], queryFn: () => api<Domain[]>('/api/domains'), retry: false, staleTime: 30_000 });
   const onboarding = useQuery({
@@ -138,6 +140,18 @@ export function DomainManagementPage({ user }: { user: User }) {
       toast.error(error.message);
     }
   });
+  const updateDomainMode = async (domain: Domain, mode: Domain['mode'], origin: HTMLElement | null) => {
+    if (pendingModeDomainIds.includes(domain.id)) return;
+    feedbackOriginRef.current = origin;
+    setPendingModeDomainIds((current) => current.includes(domain.id) ? current : [...current, domain.id]);
+    try {
+      await updateDomain.mutateAsync({ id: domain.id, mode });
+    } catch {
+      // Mutation handlers own feedback.
+    } finally {
+      setPendingModeDomainIds((current) => current.filter((id) => id !== domain.id));
+    }
+  };
   const checkWaitingMX = useMutation({
     mutationFn: (domain: string) => postJSON<DomainCheckResult>('/api/domains/check-mx', { domain }),
     onSuccess: (result) => {
@@ -164,8 +178,8 @@ export function DomainManagementPage({ user }: { user: User }) {
     mutationFn: (domain: Domain) => patchJSON(`/api/domains/${domain.id}`, { active: true }),
     onSuccess: () => {
       invalidateDomainQueries(queryClient);
-      queryClient.invalidateQueries({ queryKey: ['admin-stats'] });
-      queryClient.invalidateQueries({ queryKey: ['admin-domain-health'] });
+      queryClient.invalidateQueries({ queryKey: queryKeys.admin.stats });
+      queryClient.invalidateQueries({ queryKey: queryKeys.admin.domainHealthRoot });
       notifySuccess(text.domains.reactivated, { origin: feedbackOriginRef.current });
       feedbackOriginRef.current = null;
     },
@@ -228,7 +242,7 @@ export function DomainManagementPage({ user }: { user: User }) {
             onSortChange={setManagedSortState}
             rows={sortedManagedDomains.map((domain) => {
               const canEdit = domain.owner_id === user.id;
-              const modeBusy = updateDomain.isPending;
+              const modeBusy = pendingModeDomainIds.includes(domain.id);
               return {
                 key: domain.id,
                 cells: [
@@ -237,15 +251,13 @@ export function DomainManagementPage({ user }: { user: User }) {
                   <div className="segmented-control">
                     <button type="button" className={`segment-choice ${domain.mode === 'private' ? 'segment-choice-active' : ''}`} style={{ fontSize: '0.75rem' }} disabled={!canEdit || modeBusy} onClick={(event) => {
                       if (domain.mode === 'private' || modeBusy) return;
-                      feedbackOriginRef.current = event.currentTarget;
-                      updateDomain.mutate({ id: domain.id, mode: 'private' });
+                      void updateDomainMode(domain, 'private', event.currentTarget);
                     }}>
                       {text.domains.modePrivate}
                     </button>
                     <button type="button" className={`segment-choice ${domain.mode === 'public' ? 'segment-choice-active' : ''}`} style={{ fontSize: '0.75rem' }} disabled={!canEdit || modeBusy} onClick={(event) => {
                       if (domain.mode === 'public' || modeBusy) return;
-                      feedbackOriginRef.current = event.currentTarget;
-                      updateDomain.mutate({ id: domain.id, mode: 'public' });
+                      void updateDomainMode(domain, 'public', event.currentTarget);
                     }}>
                       {text.domains.modePublic}
                     </button>
@@ -323,8 +335,8 @@ export function DomainManagementPage({ user }: { user: User }) {
                             await runDeleteEffect(row);
                             setConfirmDeleteId(null);
                             invalidateDomainQueries(queryClient);
-                            queryClient.invalidateQueries({ queryKey: ['admin-stats'] });
-                            queryClient.invalidateQueries({ queryKey: ['admin-domain-health'] });
+                            queryClient.invalidateQueries({ queryKey: queryKeys.admin.stats });
+                            queryClient.invalidateQueries({ queryKey: queryKeys.admin.domainHealthRoot });
                             notifySuccess(text.domains.domainDeleted, { burst: false });
                           } catch {
                             // Error toast is handled by the mutation.

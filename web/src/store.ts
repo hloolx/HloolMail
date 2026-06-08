@@ -1,6 +1,8 @@
 import { create } from 'zustand';
+import { adminLegacyTabAliases, adminPageIds, defaultAdminPageId } from './features/admin/pageIds';
 
-const pages = ['dashboard', 'inbox', 'share-links', 'domain-management', 'api-keys', 'webhooks', 'api-docs', 'users', 'admin', 'admin-oauth', 'announcements'] as const;
+const basePages = ['dashboard', 'inbox', 'share-links', 'domain-management', 'api-keys', 'webhooks', 'api-docs', 'users', 'admin-oauth', 'announcements'] as const;
+const pages = [...basePages, ...adminPageIds] as const;
 
 export type Page = (typeof pages)[number];
 export type ThemeMode = 'system' | 'light' | 'dark';
@@ -54,8 +56,10 @@ const defaultPage: Page = 'dashboard';
 const pageSet = new Set<Page>(pages);
 const pageAliases: Record<string, Page> = {
   'domain-settings': 'domain-management',
-  domains: 'domain-management'
+  domains: 'domain-management',
+  admin: defaultAdminPageId
 };
+const legacyAdminTabAliases: Record<string, Page> = adminLegacyTabAliases();
 
 const readStorage = (key: string) => {
   try { return localStorage.getItem(storageKey(key)); }
@@ -88,12 +92,19 @@ const isPage = (value: string): value is Page => pageSet.has(value as Page);
 const pageFromHashValue = (hash: string): Page => {
   let value = hash.startsWith('#') ? hash.slice(1) : hash;
   value = value.startsWith('/') ? value.slice(1) : value;
-  value = value.split('?')[0].trim();
+  const queryIndex = value.indexOf('?');
+  const hashPath = (queryIndex >= 0 ? value.slice(0, queryIndex) : value).trim();
+  const hashSearch = queryIndex >= 0 ? value.slice(queryIndex + 1) : '';
 
   try {
-    value = decodeURIComponent(value);
+    value = decodeURIComponent(hashPath);
   } catch {
     return defaultPage;
+  }
+
+  if (value === 'admin' && hashSearch) {
+    const legacyTab = new URLSearchParams(hashSearch).get('tab');
+    if (legacyTab && legacyAdminTabAliases[legacyTab]) return legacyAdminTabAliases[legacyTab];
   }
 
   return isPage(value) ? value : pageAliases[value] || defaultPage;
@@ -209,7 +220,13 @@ export const useAppStore = create<AppState>((set, get) => ({
   logout: () => {
     removeStorage('email');
     clearStoredAPIKeys();
-    set({ email: '', apiKey: '' });
+    set({
+      email: '',
+      apiKey: '',
+      mailNotifications: [],
+      awayMailCount: 0,
+      awayAnnouncementCount: 0
+    });
   }
 }));
 

@@ -95,6 +95,9 @@ export function Topbar({ user, onReplayTutorial }: TopbarProps) {
             mailbox_email: event.recipient,
             created_at: event.created_at
           });
+          queryClient.invalidateQueries({ queryKey: ['emails'] });
+          queryClient.invalidateQueries({ queryKey: ['mailboxes'] });
+          queryClient.invalidateQueries({ queryKey: ['mailbox-stats'] });
           notify(
             `${text.notifications.newMail}: ${parsed.from_name || parsed.from_address}`,
             {
@@ -112,7 +115,7 @@ export function Topbar({ user, onReplayTutorial }: TopbarProps) {
       }
     })();
     return () => controller.abort();
-  }, [email, page, addMailNotification, notify, text]);
+  }, [email, page, addMailNotification, notify, queryClient, text]);
 
   return (
     <header className="topbar">

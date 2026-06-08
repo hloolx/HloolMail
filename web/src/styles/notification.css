@@ -62,7 +62,6 @@
   background: color-mix(in srgb, var(--panel) 96%, transparent);
   box-shadow: 0 24px 70px rgba(0, 0, 0, 0.18);
   backdrop-filter: blur(18px);
-  animation: popover-in 180ms cubic-bezier(0.22, 1, 0.36, 1);
 }
 
 .notification-popover-head {
@@ -98,6 +97,33 @@
   color: var(--muted);
   font-size: 0.8rem;
   text-align: center;
+}
+
+.notification-error {
+  display: grid;
+  gap: 0.55rem;
+  justify-items: center;
+  color: var(--bad);
+}
+
+.notification-error-retry {
+  display: inline-flex;
+  height: 1.8rem;
+  align-items: center;
+  justify-content: center;
+  gap: 0.35rem;
+  border: 1px solid var(--border);
+  border-radius: 0.45rem;
+  background: var(--panel);
+  color: var(--foreground);
+  padding: 0 0.55rem;
+  font-size: 0.74rem;
+  font-weight: 650;
+}
+
+.notification-error-retry:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
 }
 
 .notification-item {

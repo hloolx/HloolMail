@@ -5,15 +5,17 @@ import { ArrowRight, Bot, Check, CircleAlert, CircleUserRound, Code2, Copy as Co
 import { toast } from 'sonner';
 import type { InstallStatus, User } from '../api';
 import { api, postJSON } from '../api';
-import type { EmailDelivery, EmailDeliveryStatus, PublicLoginSettings, RegisterCaptcha, RegisterResponse } from '../types';
+import type { EmailDelivery, PublicLoginSettings, RegisterCaptcha, RegisterResponse } from '../types';
 import { useText } from '../locales';
 import { useCountUp } from '../hooks/useCountUp';
 import { useCopyState } from '../hooks/useCopyState';
 import { HeaderSettings } from '../components/layout/HeaderSettings';
 import { AppLogo } from '../components/shared/AppLogo';
 import { InfoTip, LoadingIndicator } from '../components/shared';
-import { notifySuccess } from '../lib/feedback';
 import { copy } from '../lib/clipboard';
+import { formatDeliveryError, isEmailDeliveryDone, isEmailDeliveryFailed, isEmailDeliveryInProgress, isEmailDeliverySucceeded } from '../lib/emailDelivery';
+import { notifySuccess } from '../lib/feedback';
+import { queryKeys } from '../lib/queryKeys';
 import { loginWithPasskey } from '../lib/passkeys';
 import { normalizeNicknameInput, validateNicknameInput } from '../lib/userDisplay';
 
@@ -71,7 +73,7 @@ export function LandingPage({ status, onDone, authMode = 'home', initialMode = '
   const [captchaAnswer, setCaptchaAnswer] = useState('');
   const [authFieldErrors, setAuthFieldErrors] = useState<AuthFieldErrors>({});
   const loginSettings = useQuery({
-    queryKey: ['login-settings'],
+    queryKey: queryKeys.loginSettings,
     queryFn: () => api<PublicLoginSettings>('/api/auth/login-settings'),
     retry: false,
     staleTime: 60_000
@@ -409,7 +411,7 @@ export function LandingPage({ status, onDone, authMode = 'home', initialMode = '
   });
   const verificationDeliveryId = verification?.delivery_id ?? null;
   const verificationDelivery = useQuery({
-    queryKey: ['login-settings', 'email-delivery', verificationDeliveryId],
+    queryKey: queryKeys.loginSettingsEmailDelivery(verificationDeliveryId),
     queryFn: () => api<EmailDelivery>(`/api/email-deliveries/${encodeURIComponent(String(verificationDeliveryId))}`),
     enabled: verificationDeliveryId !== null,
     retry: false,
@@ -1168,26 +1170,6 @@ function oauthProviderDisplayName(provider: string) {
   if (provider === 'github') return 'GitHub';
   if (provider === 'linuxdo') return 'Linux.do';
   return provider;
-}
-
-function isEmailDeliveryInProgress(status?: EmailDeliveryStatus) {
-  return status === 'pending' || status === 'delivering' || status === 'retry';
-}
-
-function isEmailDeliverySucceeded(status?: EmailDeliveryStatus) {
-  return status === 'succeeded';
-}
-
-function isEmailDeliveryFailed(status?: EmailDeliveryStatus) {
-  return status === 'failed';
-}
-
-function isEmailDeliveryDone(status?: EmailDeliveryStatus) {
-  return isEmailDeliverySucceeded(status) || isEmailDeliveryFailed(status);
-}
-
-function formatDeliveryError(template: string, error: string) {
-  return template.replace('{error}', error);
 }
 
 type LandingStatProps = {

@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from 'react';
+import { useCallback, useMemo, useRef, useState } from 'react';
 import type { Dispatch, MouseEvent, SetStateAction } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { Copy, Loader2, Trash2 } from 'lucide-react';
@@ -20,6 +20,7 @@ type ApiKeysTableProps = {
   selectedKeyIds: number[];
   onSelectedKeyIdsChange: Dispatch<SetStateAction<number[]>>;
   deletePending: boolean;
+  deletingKeyIds?: number[];
   onRequestDelete: (targets: APIKey[], targetElement: HTMLElement | null) => void;
 };
 
@@ -29,15 +30,19 @@ export function ApiKeysTable({
   selectedKeyIds,
   onSelectedKeyIdsChange,
   deletePending,
+  deletingKeyIds = [],
   onRequestDelete
 }: ApiKeysTableProps) {
   const queryClient = useQueryClient();
   const text = useText();
   const [copyingKeyId, setCopyingKeyId] = useState<number | null>(null);
+  const [togglingKeyIds, setTogglingKeyIds] = useState<number[]>([]);
   const [hiddenColumnKeys, setHiddenColumnKeys] = useState<string[]>([]);
   const [sortState, setSortState] = useState<DataTableSortState | null>(null);
   const feedbackOriginRef = useRef<HTMLElement | null>(null);
   const selectedCount = keys.filter((key) => selectedKeyIds.includes(key.id)).length;
+  const deletingKeyIdSet = useMemo(() => new Set(deletingKeyIds), [deletingKeyIds]);
+  const togglingKeyIdSet = useMemo(() => new Set(togglingKeyIds), [togglingKeyIds]);
   const allKeysSelected = keys.length > 0 && selectedCount === keys.length;
   const someKeysSelected = selectedCount > 0 && !allKeysSelected;
   const toggleKey = useMutation({
@@ -70,15 +75,26 @@ export function ApiKeysTable({
     }
   };
 
+  const handleToggleKey = (key: APIKey, origin: HTMLElement | null) => {
+    if (togglingKeyIdSet.has(key.id)) return;
+    feedbackOriginRef.current = origin;
+    setTogglingKeyIds((current) => current.includes(key.id) ? current : [...current, key.id]);
+    toggleKey.mutate(key, {
+      onSettled: () => {
+        setTogglingKeyIds((current) => current.filter((id) => id !== key.id));
+      }
+    });
+  };
+
   const toggleSelectedKey = (id: number) => {
     onSelectedKeyIdsChange((current) => (
       current.includes(id) ? current.filter((item) => item !== id) : [...current, id]
     ));
   };
 
-  const toggleSelectAllKeys = () => {
+  const toggleSelectAllKeys = useCallback(() => {
     onSelectedKeyIdsChange(allKeysSelected ? [] : keys.map((key) => key.id));
-  };
+  }, [allKeysSelected, keys, onSelectedKeyIdsChange]);
 
   const columns = useMemo<DataTableColumn[]>(() => [
     {
@@ -113,7 +129,7 @@ export function ApiKeysTable({
     { key: 'created', header: text.common.createdAt, width: '8rem', sortable: true, sortLabel: String(text.common.createdAt), mobilePriority: 4 },
     { key: 'last-used', header: text.apiKeys.lastUsed, width: '8rem', sortable: true, sortLabel: String(text.apiKeys.lastUsed), mobilePriority: 5 },
     { key: 'actions', role: 'actions', header: text.apiKeys.actions, align: 'right', width: '5rem', hideable: false }
-  ], [allKeysSelected, deletePending, keys.length, someKeysSelected, text]);
+  ], [allKeysSelected, deletePending, keys.length, someKeysSelected, text, toggleSelectAllKeys]);
   const sortedKeys = useMemo(
     () => sortApiKeys(keys, sortState),
     [keys, sortState]
@@ -143,8 +159,12 @@ export function ApiKeysTable({
       hiddenLabel={text.common.noColumnsSelected}
       showAllColumnsLabel={text.common.showAllColumns}
       emptyLabel={isLoading ? text.common.loading : text.apiKeys.empty}
+      loading={isLoading}
+      loadingLabel={text.common.loading}
       rows={sortedKeys.map((key) => {
         const maskedKey = maskAPIKey(key.key_prefix);
+        const keyDeleting = deletingKeyIdSet.has(key.id);
+        const keyToggling = togglingKeyIdSet.has(key.id);
         return {
           key: key.id,
           selected: selectedKeyIds.includes(key.id),
@@ -153,7 +173,7 @@ export function ApiKeysTable({
               <input
                 type="checkbox"
                 checked={selectedKeyIds.includes(key.id)}
-                disabled={deletePending}
+                disabled={keyDeleting}
                 onChange={() => toggleSelectedKey(key.id)}
                 aria-label={`${text.apiKeys.selectKey} ${key.name}`}
               />
@@ -176,8 +196,8 @@ export function ApiKeysTable({
               onClick={(event) => {
                 feedbackOriginRef.current = event.currentTarget;
               }}
-              onCheckedChange={() => toggleKey.mutate(key)}
-              disabled={toggleKey.isPending}
+              onCheckedChange={() => handleToggleKey(key, feedbackOriginRef.current)}
+              disabled={keyToggling || keyDeleting}
               aria-label={key.enabled ? text.common.enabled : text.common.disabled}
             />,
             <QuotaThermometer used={key.used_today} limit={key.daily_limit} />,
@@ -193,9 +213,9 @@ export function ApiKeysTable({
                   const row = (event.currentTarget as HTMLElement).closest('tr, .data-table-mobile-card') as HTMLElement | null;
                   onRequestDelete([key], row);
                 }}
-                disabled={deletePending}
+                disabled={keyDeleting}
               >
-                <Trash2 size={14} />
+                {keyDeleting ? <Loader2 size={14} className="animate-spin" /> : <Trash2 size={14} />}
               </IconButton>
             </div>
           ]

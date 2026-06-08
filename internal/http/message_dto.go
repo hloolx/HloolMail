@@ -12,31 +12,33 @@ import (
 type AttachmentMetadata = messagekit.AttachmentMetadata
 
 type MessageSummaryDTO struct {
-	ID              string    `json:"id"`
-	Recipient       string    `json:"recipient"`
-	FromAddress     string    `json:"from_address"`
-	FromName        string    `json:"from_name,omitempty"`
-	Subject         string    `json:"subject"`
-	Seen            bool      `json:"seen"`
-	Preview         string    `json:"preview"`
-	AttachmentCount int64     `json:"attachment_count"`
-	CreatedAt       time.Time `json:"created_at"`
-	ExpiresAt       time.Time `json:"expires_at"`
+	ID               string    `json:"id"`
+	Recipient        string    `json:"recipient"`
+	FromAddress      string    `json:"from_address"`
+	FromName         string    `json:"from_name,omitempty"`
+	Subject          string    `json:"subject"`
+	VerificationCode string    `json:"verification_code,omitempty"`
+	Seen             bool      `json:"seen"`
+	Preview          string    `json:"preview"`
+	AttachmentCount  int64     `json:"attachment_count"`
+	CreatedAt        time.Time `json:"created_at"`
+	ExpiresAt        time.Time `json:"expires_at"`
 }
 
 type MessageAutomationDetailDTO struct {
-	ID              string               `json:"id"`
-	Recipient       string               `json:"recipient"`
-	FromAddress     string               `json:"from_address"`
-	FromName        string               `json:"from_name,omitempty"`
-	Subject         string               `json:"subject"`
-	Seen            bool                 `json:"seen"`
-	TextContent     string               `json:"text_content,omitempty"`
-	HeadersJSON     string               `json:"headers_json,omitempty"`
-	AttachmentCount int64                `json:"attachment_count"`
-	Attachments     []AttachmentMetadata `json:"attachments"`
-	CreatedAt       time.Time            `json:"created_at"`
-	ExpiresAt       time.Time            `json:"expires_at"`
+	ID               string               `json:"id"`
+	Recipient        string               `json:"recipient"`
+	FromAddress      string               `json:"from_address"`
+	FromName         string               `json:"from_name,omitempty"`
+	Subject          string               `json:"subject"`
+	VerificationCode string               `json:"verification_code,omitempty"`
+	Seen             bool                 `json:"seen"`
+	TextContent      string               `json:"text_content,omitempty"`
+	HeadersJSON      string               `json:"headers_json,omitempty"`
+	AttachmentCount  int64                `json:"attachment_count"`
+	Attachments      []AttachmentMetadata `json:"attachments"`
+	CreatedAt        time.Time            `json:"created_at"`
+	ExpiresAt        time.Time            `json:"expires_at"`
 }
 
 type MessageDetailDTO struct {
@@ -45,16 +47,17 @@ type MessageDetailDTO struct {
 }
 
 type PublicSharedMailboxMessageDTO struct {
-	ID          string               `json:"id"`
-	Recipient   string               `json:"recipient"`
-	FromAddress string               `json:"from_address"`
-	FromName    string               `json:"from_name,omitempty"`
-	Subject     string               `json:"subject"`
-	TextContent string               `json:"text_content,omitempty"`
-	HTMLContent string               `json:"html_content,omitempty"`
-	Attachments []AttachmentMetadata `json:"attachments"`
-	CreatedAt   time.Time            `json:"created_at"`
-	ExpiresAt   time.Time            `json:"expires_at"`
+	ID               string               `json:"id"`
+	Recipient        string               `json:"recipient"`
+	FromAddress      string               `json:"from_address"`
+	FromName         string               `json:"from_name,omitempty"`
+	Subject          string               `json:"subject"`
+	VerificationCode string               `json:"verification_code,omitempty"`
+	TextContent      string               `json:"text_content,omitempty"`
+	HTMLContent      string               `json:"html_content,omitempty"`
+	Attachments      []AttachmentMetadata `json:"attachments"`
+	CreatedAt        time.Time            `json:"created_at"`
+	ExpiresAt        time.Time            `json:"expires_at"`
 }
 
 type WebhookMessagePayloadDTO = messagekit.WebhookMessagePayloadDTO
@@ -210,34 +213,36 @@ func messageSummaryDTO(msg models.Message, attachmentCount ...int64) MessageSumm
 		count = attachmentCount[0]
 	}
 	return MessageSummaryDTO{
-		ID:              msg.ID,
-		Recipient:       msg.Recipient,
-		FromAddress:     msg.FromAddress,
-		FromName:        msg.FromName,
-		Subject:         msg.Subject,
-		Seen:            msg.Seen,
-		Preview:         preview,
-		AttachmentCount: count,
-		CreatedAt:       msg.CreatedAt,
-		ExpiresAt:       msg.ExpiresAt,
+		ID:               msg.ID,
+		Recipient:        msg.Recipient,
+		FromAddress:      msg.FromAddress,
+		FromName:         msg.FromName,
+		Subject:          msg.Subject,
+		VerificationCode: extractVerificationCode(msg),
+		Seen:             msg.Seen,
+		Preview:          preview,
+		AttachmentCount:  count,
+		CreatedAt:        msg.CreatedAt,
+		ExpiresAt:        msg.ExpiresAt,
 	}
 }
 
 func publicMessageDetail(msg models.Message, attachments ...[]AttachmentMetadata) publicMessageDetailDTO {
 	metadata := optionalAttachments(attachments)
 	return MessageAutomationDetailDTO{
-		ID:              msg.ID,
-		Recipient:       msg.Recipient,
-		FromAddress:     msg.FromAddress,
-		FromName:        msg.FromName,
-		Subject:         msg.Subject,
-		Seen:            msg.Seen,
-		TextContent:     msg.TextContent,
-		HeadersJSON:     msg.HeadersJSON,
-		AttachmentCount: int64(len(metadata)),
-		Attachments:     metadata,
-		CreatedAt:       msg.CreatedAt,
-		ExpiresAt:       msg.ExpiresAt,
+		ID:               msg.ID,
+		Recipient:        msg.Recipient,
+		FromAddress:      msg.FromAddress,
+		FromName:         msg.FromName,
+		Subject:          msg.Subject,
+		VerificationCode: extractVerificationCode(msg),
+		Seen:             msg.Seen,
+		TextContent:      msg.TextContent,
+		HeadersJSON:      msg.HeadersJSON,
+		AttachmentCount:  int64(len(metadata)),
+		Attachments:      metadata,
+		CreatedAt:        msg.CreatedAt,
+		ExpiresAt:        msg.ExpiresAt,
 	}
 }
 
@@ -250,16 +255,17 @@ func webMessageDetail(msg models.Message, attachments ...[]AttachmentMetadata) w
 
 func publicSharedMailboxMessageDTO(msg models.Message, attachments []AttachmentMetadata) PublicSharedMailboxMessageDTO {
 	return PublicSharedMailboxMessageDTO{
-		ID:          msg.ID,
-		Recipient:   msg.Recipient,
-		FromAddress: msg.FromAddress,
-		FromName:    msg.FromName,
-		Subject:     msg.Subject,
-		TextContent: msg.TextContent,
-		HTMLContent: mailhtml.Sanitize(msg.HTMLContent),
-		Attachments: attachmentsOrEmpty(attachments),
-		CreatedAt:   msg.CreatedAt,
-		ExpiresAt:   msg.ExpiresAt,
+		ID:               msg.ID,
+		Recipient:        msg.Recipient,
+		FromAddress:      msg.FromAddress,
+		FromName:         msg.FromName,
+		Subject:          msg.Subject,
+		VerificationCode: extractVerificationCode(msg),
+		TextContent:      msg.TextContent,
+		HTMLContent:      mailhtml.Sanitize(msg.HTMLContent),
+		Attachments:      attachmentsOrEmpty(attachments),
+		CreatedAt:        msg.CreatedAt,
+		ExpiresAt:        msg.ExpiresAt,
 	}
 }
 

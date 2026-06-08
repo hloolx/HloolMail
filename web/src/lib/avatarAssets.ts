@@ -49,17 +49,26 @@ type AvatarUser = Pick<User, 'email' | 'nickname'>;
 
 export function defaultAvatarKeyForUser(user: AvatarUser): DefaultAvatarKey {
   const name = displayName(user).normalize('NFKC').trim();
+  return defaultAvatarKeyForIdentity(name || user.email);
+}
+
+export function defaultAvatarKeyForIdentity(identity: string): DefaultAvatarKey {
+  const name = identity.normalize('NFKC').trim();
   const initial = Array.from(name)[0]?.toLowerCase() || '';
 
   if (DIRECT_AVATAR_KEY.test(initial)) {
     return initial as DefaultAvatarKey;
   }
 
-  return DEFAULT_AVATAR_KEYS[stableHash(name || user.email) % DEFAULT_AVATAR_KEYS.length];
+  return DEFAULT_AVATAR_KEYS[stableHash(name || '?') % DEFAULT_AVATAR_KEYS.length];
 }
 
 export function defaultAvatarURLForUser(user: AvatarUser) {
   return `${DEFAULT_AVATAR_BASE_PATH}/avatar-${defaultAvatarKeyForUser(user)}.png`;
+}
+
+export function defaultAvatarURLForIdentity(identity: string) {
+  return `${DEFAULT_AVATAR_BASE_PATH}/avatar-${defaultAvatarKeyForIdentity(identity)}.png`;
 }
 
 function stableHash(value: string) {

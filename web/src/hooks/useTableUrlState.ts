@@ -6,6 +6,9 @@ type TableFilterValues = Record<string, string>;
 type Updater<T> = T | ((current: T) => T);
 
 const HASH_SEARCH_CHANGE_EVENT = 'hlool:hash-search-change';
+const EMPTY_FILTER_VALUES = {} as TableFilterValues;
+const EMPTY_FILTER_PARAMS = {} as Partial<Record<string, string>>;
+const EMPTY_FILTER_OPTIONS = {} as Partial<Record<string, readonly string[]>>;
 
 export type UseTableUrlStateOptions<TFilters extends TableFilterValues = Record<string, never>> = {
   defaultPage?: number;
@@ -66,12 +69,12 @@ export function useTableUrlState<TFilters extends TableFilterValues = Record<str
   const defaultPage = options.defaultPage ?? 1;
   const defaultPageSize = options.defaultPageSize ?? 10;
   const defaultSearch = options.defaultSearch ?? '';
-  const defaultFilters = options.defaultFilters ?? ({} as TFilters);
+  const defaultFilters = (options.defaultFilters ?? EMPTY_FILTER_VALUES) as TFilters;
   const pageParam = options.pageParam ?? 'page';
   const pageSizeParam = options.pageSizeParam ?? 'pageSize';
   const searchParam = options.searchParam ?? 'search';
-  const filterParams: Partial<Record<keyof TFilters, string>> = options.filterParams ?? {};
-  const filterOptions: Partial<{ [K in keyof TFilters]: readonly TFilters[K][] }> = options.filterOptions ?? {};
+  const filterParams = (options.filterParams ?? EMPTY_FILTER_PARAMS) as Partial<Record<keyof TFilters, string>>;
+  const filterOptions = (options.filterOptions ?? EMPTY_FILTER_OPTIONS) as Partial<{ [K in keyof TFilters]: readonly TFilters[K][] }>;
   const pageSizeOptions = options.pageSizeOptions;
   const historyMode = options.historyMode ?? 'push';
   const { params, setParams } = useHashSearchState();

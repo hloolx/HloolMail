@@ -25,8 +25,8 @@ backend worker when `WEBHOOKS_ENABLED` is not `false`.
 
 | Check | Command | Result |
 | --- | --- | --- |
-| Go tests | `rtk go test ./...` | Passed: 138 tests in 20 packages |
-| Web build | `rtk npm run build` in `web` | Passed: TypeScript + Vite build. Vite reported the existing large chunk warning for `assets/index-*.js` |
+| Go tests | `go test ./...` | Passed: 138 tests in 20 packages |
+| Web build | `npm run build` in `web` | Passed: TypeScript + Vite build. Vite reported the existing large chunk warning for `assets/index-*.js` |
 
 ## Hard Rules
 

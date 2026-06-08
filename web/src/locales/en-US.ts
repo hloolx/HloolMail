@@ -17,6 +17,14 @@ const enUS: typeof zhCN = {
     users: 'Users & Quotas',
     'admin-oauth': 'Login Settings',
     admin: 'Admin Console',
+    'admin-overview': 'Operations Overview',
+    'admin-dns': 'DNS Checks',
+    'admin-domains': 'Domain Health',
+    'admin-quota-alerts': 'Quota Alerts',
+    'admin-api-interfaces': 'API Interfaces',
+    'admin-share-links': 'Share Link Governance',
+    'admin-webhooks': 'Webhook Governance',
+    'admin-audit': 'Audit Logs',
     announcements: 'Announcements'
   },
   nav: {

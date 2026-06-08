@@ -1,11 +1,9 @@
-import { Check, Copy, Paperclip } from 'lucide-react';
+import { Paperclip } from 'lucide-react';
 import type { AttachmentMetadata, MessageDetail } from '../api';
-import { copy } from '../lib/clipboard';
 import { extractCode, VerificationCodeCopyButton } from '../lib/display';
 import { buildEmailSrcDoc } from '../lib/emailHtml';
-import { useCopyState } from '../hooks/useCopyState';
 import { useText } from '../locales';
-import { EmptyState, IconButton, LoadingState } from '../components/shared';
+import { EmptyState, LoadingState, SenderBrandAvatar } from '../components/shared';
 
 function injectApiKeyIntoHtml(html: string, apiKey: string): string {
   if (!apiKey) return html;
@@ -34,7 +32,6 @@ export function MessageDrawer({
   onRetry?: () => void;
 }) {
   const text = useText();
-  const [codeCopied, markCodeCopied] = useCopyState();
 
   if (loading) return <aside className="panel mail-detail-panel"><LoadingState label={text.common.loading} /></aside>;
   if (error) return <MessageDetailError label={readErrorMessage(error)} actionLabel={text.common.retry} onRetry={onRetry} />;
@@ -49,14 +46,12 @@ export function MessageDrawer({
         </button>
       )}
       <div className="panel-header">
-        <div className="min-w-0">
-          <h2 className="truncate">{message.subject || text.common.noSubject}</h2>
-          <p className="truncate">{message.from_address}</p>
-        </div>
-        <div className="inline-flex gap-2">
-          <IconButton title={codeCopied ? text.common.copied : text.inbox.copyCode} onClick={() => { copy(code || message.subject || ''); markCodeCopied(); }}>
-            {codeCopied ? <Check size={16} /> : <Copy size={16} />}
-          </IconButton>
+        <div className="mail-detail-title-row">
+          <SenderBrandAvatar fromAddress={message.from_address} fromName={message.from_name} size="lg" className="mail-detail-avatar" />
+          <div className="min-w-0">
+            <h2 className="truncate">{message.subject || text.common.noSubject}</h2>
+            <p className="truncate">{message.from_name || message.from_address}</p>
+          </div>
         </div>
       </div>
       <div className="mb-3 grid gap-1 text-xs text-[var(--muted)]">

@@ -6,6 +6,7 @@ import type { PaginatedResponse, WebhookDeliveryDTO, WebhookEndpointDTO } from '
 import { api, patchJSON, postJSON } from '../api';
 import { useText } from '../locales';
 import { copy } from '../lib/clipboard';
+import { queryKeys } from '../lib/queryKeys';
 import { relativeTime } from '../lib/display';
 import { useCopyState } from '../hooks/useCopyState';
 import { ConfirmModal, DataTable, DialogShell, EmptyState, IconButton, PaginationControls } from '../components/shared';
@@ -24,6 +25,7 @@ type WebhookFormState = {
   messageReceived: boolean;
 };
 
+/** @deprecated Unreachable from Console routing; use features/webhooks instead. */
 export function WebhooksPage() {
   const text = useText();
   const queryClient = useQueryClient();
@@ -34,7 +36,7 @@ export function WebhooksPage() {
   const [deleteTarget, setDeleteTarget] = useState<WebhookEndpointDTO | null>(null);
   const [oneTimeSecret, setOneTimeSecret] = useState<WebhookEndpointDTO | null>(null);
   const webhooks = useQuery({
-    queryKey: ['webhooks', page],
+    queryKey: queryKeys.webhooks.list(page, WEBHOOK_PER_PAGE),
     queryFn: () => api<PaginatedResponse<WebhookEndpointDTO>>(`/api/webhooks?page=${page}&per_page=${WEBHOOK_PER_PAGE}`),
     retry: false
   });
@@ -42,7 +44,7 @@ export function WebhooksPage() {
   const toggle = useMutation({
     mutationFn: (endpoint: WebhookEndpointDTO) => patchJSON<WebhookEndpointDTO>(`/api/webhooks/${endpoint.id}`, { enabled: !endpoint.enabled }),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['webhooks'] });
+      queryClient.invalidateQueries({ queryKey: queryKeys.webhooks.all });
       toast.success(text.webhooks.saved);
     },
     onError: (error) => toast.error(error.message)
@@ -52,7 +54,7 @@ export function WebhooksPage() {
     onSuccess: (data) => {
       setRotateTarget(null);
       setOneTimeSecret(data);
-      queryClient.invalidateQueries({ queryKey: ['webhooks'] });
+      queryClient.invalidateQueries({ queryKey: queryKeys.webhooks.all });
       toast.success(text.webhooks.secretRotated);
     },
     onError: (error) => toast.error(error.message)
@@ -60,7 +62,7 @@ export function WebhooksPage() {
   const test = useMutation({
     mutationFn: (endpoint: WebhookEndpointDTO) => postJSON<WebhookDeliveryDTO>(`/api/webhooks/${endpoint.id}/test`, {}),
     onSuccess: (_data, endpoint) => {
-      queryClient.invalidateQueries({ queryKey: ['webhook-deliveries', endpoint.id] });
+      queryClient.invalidateQueries({ queryKey: queryKeys.webhooks.deliveriesRoot(endpoint.id) });
       toast.success(text.webhooks.testQueued);
     },
     onError: (error) => toast.error(error.message)
@@ -69,7 +71,7 @@ export function WebhooksPage() {
     mutationFn: (endpoint: WebhookEndpointDTO) => api(`/api/webhooks/${endpoint.id}`, { method: 'DELETE' }),
     onSuccess: () => {
       setDeleteTarget(null);
-      queryClient.invalidateQueries({ queryKey: ['webhooks'] });
+      queryClient.invalidateQueries({ queryKey: queryKeys.webhooks.all });
       toast.success(text.webhooks.deleted);
     },
     onError: (error) => toast.error(error.message)
@@ -158,7 +160,7 @@ export function WebhooksPage() {
           onSaved={(endpoint) => {
             setEditorTarget(null);
             if (endpoint.secret) setOneTimeSecret(endpoint);
-            queryClient.invalidateQueries({ queryKey: ['webhooks'] });
+            queryClient.invalidateQueries({ queryKey: queryKeys.webhooks.all });
           }}
         />
       )}
@@ -169,7 +171,8 @@ export function WebhooksPage() {
         description={text.webhooks.rotateSecretConfirm}
         confirmText={text.webhooks.rotateSecret}
         cancelText={text.common.cancel}
-        onConfirm={() => rotateTarget && rotate.mutate(rotateTarget)}
+        confirmLoading={rotate.isPending}
+        onConfirm={() => rotateTarget ? rotate.mutateAsync(rotateTarget) : undefined}
         onCancel={() => setRotateTarget(null)}
       />
       <ConfirmModal
@@ -179,7 +182,8 @@ export function WebhooksPage() {
         danger
         confirmText={text.common.delete}
         cancelText={text.common.cancel}
-        onConfirm={() => deleteTarget && remove.mutate(deleteTarget)}
+        confirmLoading={remove.isPending}
+        onConfirm={() => deleteTarget ? remove.mutateAsync(deleteTarget) : undefined}
         onCancel={() => setDeleteTarget(null)}
       />
     </div>
@@ -321,7 +325,7 @@ function WebhookDeliveriesModal({ endpoint, onClose }: { endpoint: WebhookEndpoi
   const text = useText();
   const [page, setPage] = useState(1);
   const deliveries = useQuery({
-    queryKey: ['webhook-deliveries', endpoint.id, page],
+    queryKey: queryKeys.webhooks.deliveries(endpoint.id, page),
     queryFn: () => api<PaginatedResponse<WebhookDeliveryDTO>>(`/api/webhooks/${endpoint.id}/deliveries?page=${page}&per_page=${DELIVERY_PER_PAGE}`),
     retry: false
   });

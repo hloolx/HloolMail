@@ -1,9 +1,10 @@
 import { useQuery } from '@tanstack/react-query';
 import { api, patchJSON, postJSON } from '../../api';
+import { queryKeys } from '../../lib/queryKeys';
 import type { APIKey, CreateApiKeyPayload, CreateApiKeyResponse, MailboxStats, RevealApiKeyResponse } from './types';
 
-export const apiKeysQueryKey = ['api-keys'] as const;
-export const apiKeyMailboxStatsQueryKey = ['api-keys', 'mailbox-stats'] as const;
+export const apiKeysQueryKey = queryKeys.apiKeys.all;
+export const apiKeyMailboxStatsQueryKey = queryKeys.apiKeys.mailboxStats;
 
 export type DeleteApiKeysResult = {
   deleted: APIKey[];

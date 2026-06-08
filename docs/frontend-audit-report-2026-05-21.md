@@ -279,8 +279,8 @@
 
 已执行：
 
-- `rtk git diff --check`：通过。
-- `rtk npm run build`：通过。
+- `git diff --check`：通过。
+- `npm run build`：通过。
 - 生产构建产物搜索开发快捷账号和跳过安装 key：未命中。
 
 构建提示：

@@ -1,11 +1,12 @@
 import { useDeferredValue, useEffect, useMemo, useRef, useState, type MouseEvent } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Ban, CheckCircle, ChevronDown, ChevronRight, Copy, Eye, KeyRound, Loader2, Pencil, RefreshCw, Save, Search, Trash2, UserCog } from 'lucide-react';
+import { Ban, CheckCircle, ChevronDown, ChevronRight, Copy, Eye, KeyRound, Loader2, Pencil, Save, Search, Trash2, UserCog } from 'lucide-react';
 import { toast } from 'sonner';
 import type { APIKey, PaginatedResponse, SystemQuotaSettings, User } from '../api';
 import { api, patchJSON, postJSON } from '../api';
 import { roleText, useText } from '../locales';
 import { notifySuccess, runDeleteEffect } from '../lib/feedback';
+import { queryKeys } from '../lib/queryKeys';
 import { boolBadge, formatAPIKeyExpiry, relativeTime } from '../lib/display';
 import { copy as copyText } from '../lib/clipboard';
 import { displayName, displaySubtitle } from '../lib/userDisplay';
@@ -20,6 +21,7 @@ const USER_PAGE_SIZE_OPTIONS = [10, 20, 50, 100];
 const USER_API_KEY_PAGE_SIZE_OPTIONS = [5, 10, 20];
 const USER_ROLE_FILTER_OPTIONS = ['all', 'admin', 'user'] as const;
 const USER_STATUS_FILTER_OPTIONS = ['all', 'enabled', 'disabled'] as const;
+const INVALID_QUOTA_MESSAGE = 'Quota values must be whole numbers greater than or equal to 0.';
 
 type UserTableFilters = {
   role: 'all' | User['role'];
@@ -99,9 +101,9 @@ export function UsersPage({ currentUser }: { currentUser: User }) {
 
   const invalidateUserViews = () => {
     queryClient.invalidateQueries({ queryKey: ['users'] });
-    queryClient.invalidateQueries({ queryKey: ['admin-stats'] });
-    queryClient.invalidateQueries({ queryKey: ['admin-quota-alerts'] });
-    queryClient.invalidateQueries({ queryKey: ['admin-audit-logs'] });
+    queryClient.invalidateQueries({ queryKey: queryKeys.admin.stats });
+    queryClient.invalidateQueries({ queryKey: queryKeys.admin.quotaAlertsRoot });
+    queryClient.invalidateQueries({ queryKey: queryKeys.admin.auditLogsRoot });
   };
 
   const create = useMutation({
@@ -119,7 +121,7 @@ export function UsersPage({ currentUser }: { currentUser: User }) {
   });
 
   const quotaSettings = useQuery({
-    queryKey: ['admin-quota-settings'],
+    queryKey: queryKeys.admin.quotaSettings,
     queryFn: () => api<SystemQuotaSettings>('/api/admin/quota-settings'),
     retry: false,
     staleTime: 30_000
@@ -130,6 +132,7 @@ export function UsersPage({ currentUser }: { currentUser: User }) {
     require_public_domain_for_quota: false,
     enable_user_onboarding: false
   });
+  const quotaValidationError = validateQuotaForm(quotaForm);
   useEffect(() => {
     const qs = quotaSettings.data;
     if (!qs || quotaDirty) return;
@@ -143,14 +146,14 @@ export function UsersPage({ currentUser }: { currentUser: User }) {
 
   const saveQuotaSettings = useMutation({
     mutationFn: () => patchJSON<SystemQuotaSettings>('/api/admin/quota-settings', {
-      public_domain_mailbox_limit: toPositiveInt64(quotaForm.public_domain_mailbox_limit, 0),
-      user_daily_public_mailbox_limit: toPositiveInt64(quotaForm.user_daily_public_mailbox_limit, 0),
+      public_domain_mailbox_limit: parseNonNegativeInteger(quotaForm.public_domain_mailbox_limit),
+      user_daily_public_mailbox_limit: parseNonNegativeInteger(quotaForm.user_daily_public_mailbox_limit),
       require_public_domain_for_quota: quotaForm.require_public_domain_for_quota,
       enable_user_onboarding: quotaForm.enable_user_onboarding
     }),
     onSuccess: () => {
       setQuotaDirty(false);
-      queryClient.invalidateQueries({ queryKey: ['admin-quota-settings'] });
+      queryClient.invalidateQueries({ queryKey: queryKeys.admin.quotaSettings });
       notifySuccess(text.admin.quotaSettings.saved, { origin: quotaSaveButtonRef.current });
     },
     onError: (error) => toast.error(error.message)
@@ -212,7 +215,7 @@ export function UsersPage({ currentUser }: { currentUser: User }) {
               ref={quotaSaveButtonRef}
               className="btn-secondary"
               onClick={() => saveQuotaSettings.mutate()}
-              disabled={saveQuotaSettings.isPending || quotaSettings.isError}
+              disabled={saveQuotaSettings.isPending || quotaSettings.isError || Boolean(quotaValidationError)}
             >
               <Save size={15} />
               {text.admin.quotaSettings.save}
@@ -227,6 +230,9 @@ export function UsersPage({ currentUser }: { currentUser: User }) {
               <span className="text-[var(--muted)]">{text.admin.quotaSettings.userDailyPublicMailboxLimit}<InfoTip text={text.admin.quotaSettings.userDailyPublicMailboxLimitHint} /></span>
               <input className="input" type="number" min="0" value={quotaForm.user_daily_public_mailbox_limit} onChange={(event) => { setQuotaDirty(true); setQuotaForm((current) => ({ ...current, user_daily_public_mailbox_limit: event.target.value })); }} />
             </label>
+            {quotaValidationError && (
+              <p className="field-error" role="alert">{quotaValidationError}</p>
+            )}
             <label className="grid gap-1 text-sm">
               <div className="toggle-row">
                 <span className="toggle-row-label">{text.admin.quotaSettings.requirePublicDomainForQuota}<InfoTip text={text.admin.quotaSettings.requirePublicDomainForQuotaHint} /></span>
@@ -293,24 +299,20 @@ export function UsersPage({ currentUser }: { currentUser: User }) {
               />
             )}
           />
-          {users.isError && (
-            <TableQueryError
-              label={users.error instanceof Error && users.error.message ? users.error.message : text.users.errorLoading}
-              actionLabel={text.common.retry}
-              isFetching={users.isFetching}
-              onRetry={() => users.refetch()}
-            />
-          )}
           <DataTable
             ariaLabel={text.users.title}
             hiddenColumnKeys={hiddenColumnKeys}
             onHiddenColumnKeysChange={setHiddenColumnKeys}
             hiddenLabel={text.common.noColumnsSelected}
             showAllColumnsLabel={text.common.showAllColumns}
-            emptyLabel={
-              users.isLoading ? text.common.loading
-              : text.users.empty
-            }
+            emptyLabel={text.users.empty}
+            loading={users.isLoading}
+            loadingLabel={text.common.loading}
+            error={users.isError}
+            errorLabel={users.error instanceof Error && users.error.message ? users.error.message : text.users.errorLoading}
+            retryLabel={text.common.retry}
+            retryPending={users.isFetching}
+            onRetry={() => { void users.refetch(); }}
             columns={userColumns}
             rows={visibleUsers.flatMap((user) => {
               const expanded = expandedUserIds.includes(user.id);
@@ -441,9 +443,10 @@ export function UsersPage({ currentUser }: { currentUser: User }) {
           danger
           confirmText={text.common.disabled}
           cancelText={text.common.cancel}
+          confirmLoading={toggleUser.isPending}
           onConfirm={(event) => {
             userFeedbackOriginRef.current = event.currentTarget;
-            toggleUser.mutate({ user: disableTarget, enabled: false });
+            return toggleUser.mutateAsync({ user: disableTarget, enabled: false });
           }}
           onCancel={() => setDisableTarget(null)}
         />
@@ -457,6 +460,7 @@ export function UsersPage({ currentUser }: { currentUser: User }) {
           danger
           confirmText={text.users.confirmDelete}
           cancelText={text.common.cancel}
+          confirmLoading={deleteUser.isPending || deleteInFlightRef.current}
           onConfirm={async () => {
             if (deleteUser.isPending || deleteInFlightRef.current) return;
             const target = deleteTarget;
@@ -483,30 +487,6 @@ export function UsersPage({ currentUser }: { currentUser: User }) {
         />
       )}
     </>
-  );
-}
-
-function TableQueryError({
-  label,
-  actionLabel,
-  isFetching,
-  onRetry
-}: {
-  label: string;
-  actionLabel: string;
-  isFetching: boolean;
-  onRetry: () => void;
-}) {
-  return (
-    <div className="grid gap-3 rounded-lg border border-[var(--bad)]/30 bg-[var(--bad)]/5 p-3" role="alert">
-      <div className="grid min-h-24 place-items-center rounded-lg border border-dashed border-[var(--border)] text-sm text-[var(--bad)]">
-        {label}
-      </div>
-      <button className="btn-secondary btn-sm justify-self-center" type="button" onClick={onRetry} disabled={isFetching}>
-        <RefreshCw size={14} className={isFetching ? 'animate-spin' : ''} />
-        {actionLabel}
-      </button>
-    </div>
   );
 }
 
@@ -604,11 +584,14 @@ function UserApiKeysPanel({ user }: { user: User }) {
         density="compact"
         stickyActions={false}
         columns={keyColumns}
-        emptyLabel={
-          keys.isLoading ? text.common.loading
-          : keys.isError ? text.users.apiKeysErrorLoading
-          : text.apiKeys.empty
-        }
+        emptyLabel={text.apiKeys.empty}
+        loading={keys.isLoading}
+        loadingLabel={text.common.loading}
+        error={keys.isError}
+        errorLabel={keys.error instanceof Error && keys.error.message ? keys.error.message : text.users.apiKeysErrorLoading}
+        retryLabel={text.common.retry}
+        retryPending={keys.isFetching}
+        onRetry={() => { void keys.refetch(); }}
         rows={visibleKeys.map((key) => {
           const plainKey = revealedKeys[key.id];
           return {
@@ -661,7 +644,21 @@ function UserApiKeysPanel({ user }: { user: User }) {
   );
 }
 
-function toPositiveInt64(value: string, fallback: number) {
-  const parsed = Number.parseInt(value, 10);
-  return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback;
+function validateQuotaForm(form: {
+  public_domain_mailbox_limit: string;
+  user_daily_public_mailbox_limit: string;
+}) {
+  return isNonNegativeIntegerInput(form.public_domain_mailbox_limit) &&
+    isNonNegativeIntegerInput(form.user_daily_public_mailbox_limit)
+    ? ''
+    : INVALID_QUOTA_MESSAGE;
+}
+
+function parseNonNegativeInteger(value: string) {
+  if (!isNonNegativeIntegerInput(value)) throw new Error(INVALID_QUOTA_MESSAGE);
+  return Number.parseInt(value.trim(), 10);
+}
+
+function isNonNegativeIntegerInput(value: string) {
+  return /^\d+$/.test(value.trim());
 }

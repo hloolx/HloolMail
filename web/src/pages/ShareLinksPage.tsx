@@ -1,6 +1,6 @@
 import { FormEvent, useMemo, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Check, Copy, ListChecks, RefreshCw, Share2, Trash2, X } from 'lucide-react';
+import { Check, Copy, ListChecks, Loader2, RefreshCw, Share2, Trash2, X } from 'lucide-react';
 import { toast } from 'sonner';
 import type { MailboxInfo, PaginatedResponse, ShareLinkAccessLogDTO, ShareLinkDTO } from '../api';
 import { api, postJSON } from '../api';
@@ -46,13 +46,7 @@ export function ShareLinksPage() {
     { key: 'actions', role: 'actions', header: text.shareLinks.actions, align: 'right', width: '7rem', hideable: false }
   ], [text]);
   const deleteLink = useMutation({
-    mutationFn: (link: ShareLinkDTO) => api(`/api/share-links/${link.id}`, { method: 'DELETE' }),
-    onSuccess: () => {
-      setDeleteTarget(null);
-      queryClient.invalidateQueries({ queryKey: ['share-links'] });
-      notifySuccess(text.shareLinks.deletedToast, { burst: false });
-    },
-    onError: (error) => toast.error(error.message)
+    mutationFn: (link: ShareLinkDTO) => api(`/api/share-links/${link.id}`, { method: 'DELETE' })
   });
   const rotate = useMutation({
     mutationFn: (link: ShareLinkDTO) => postJSON<ShareLinkDTO>(`/api/share-links/${link.id}/rotate-token`, {}),
@@ -64,6 +58,8 @@ export function ShareLinksPage() {
     },
     onError: (error) => toast.error(error.message)
   });
+  const deletingLinkId = deleteLink.isPending ? deleteLink.variables?.id : null;
+  const rotatingLinkId = rotate.isPending ? rotate.variables?.id : null;
 
   return (
     <div className="admin-table-page share-links-page">
@@ -110,7 +106,9 @@ export function ShareLinksPage() {
             onHiddenColumnKeysChange={setHiddenColumnKeys}
             hiddenLabel={text.common.noColumnsSelected}
             showAllColumnsLabel={text.common.showAllColumns}
-            emptyLabel={links.isLoading ? text.common.loading : text.shareLinks.empty}
+            emptyLabel={text.shareLinks.empty}
+            loading={links.isLoading}
+            loadingLabel={text.common.loading}
             rows={list.map((link) => ({
               key: link.id,
               cells: [
@@ -125,15 +123,15 @@ export function ShareLinksPage() {
                   <IconButton title={text.shareLinks.logs} onClick={() => setLogsTarget(link)}>
                     <ListChecks size={14} />
                   </IconButton>
-                  <IconButton title={text.shareLinks.rotate} onClick={() => setRotateTarget(link)} disabled={rotate.isPending}>
-                    <RefreshCw size={14} />
+                  <IconButton title={text.shareLinks.rotate} onClick={() => setRotateTarget(link)} disabled={rotatingLinkId === link.id}>
+                    {rotatingLinkId === link.id ? <Loader2 size={14} className="animate-spin" /> : <RefreshCw size={14} />}
                   </IconButton>
                   <IconButton title={text.shareLinks.deleteLink} onClick={(event) => {
                     const row = (event.currentTarget as HTMLElement).closest('tr, .data-table-mobile-card') as HTMLElement | null;
                     setDissolveTarget(row);
                     setDeleteTarget(link);
-                  }} disabled={deleteLink.isPending}>
-                    <Trash2 size={14} />
+                  }} disabled={deletingLinkId === link.id}>
+                    {deletingLinkId === link.id ? <Loader2 size={14} className="animate-spin" /> : <Trash2 size={14} />}
                   </IconButton>
                 </div>
               ]
@@ -169,14 +167,23 @@ export function ShareLinksPage() {
         danger
         confirmText={text.common.delete}
         cancelText={text.common.cancel}
+        confirmLoading={deleteLink.isPending}
         onConfirm={async () => {
           const target = deleteTarget;
           const targetEl = dissolveTarget;
+          if (!target || deleteLink.isPending) return;
+          try {
+            await deleteLink.mutateAsync(target);
+          } catch (error) {
+            toast.error(error instanceof Error ? error.message : text.shareLinks.deleteConfirmDesc);
+            return;
+          }
           setDeleteTarget(null);
           setDissolveTarget(null);
           await new Promise(r => requestAnimationFrame(r));
           await runDeleteEffect(targetEl);
-          if (target) deleteLink.mutate(target);
+          queryClient.invalidateQueries({ queryKey: ['share-links'] });
+          notifySuccess(text.shareLinks.deletedToast, { burst: false });
         }}
         onCancel={() => {
           setDeleteTarget(null);
@@ -189,7 +196,8 @@ export function ShareLinksPage() {
         description={text.shareLinks.rotateConfirmDesc}
         confirmText={text.shareLinks.rotate}
         cancelText={text.common.cancel}
-        onConfirm={() => rotateTarget && rotate.mutate(rotateTarget)}
+        confirmLoading={rotate.isPending}
+        onConfirm={() => rotateTarget ? rotate.mutateAsync(rotateTarget) : undefined}
         onCancel={() => setRotateTarget(null)}
       />
     </div>

@@ -69,7 +69,9 @@ export function WebhooksTable({
         onHiddenColumnKeysChange={setHiddenColumnKeys}
         hiddenLabel={text.common.noColumnsSelected}
         showAllColumnsLabel={text.common.showAllColumns}
-        emptyLabel={isLoading ? text.common.loading : text.webhooks.empty}
+        emptyLabel={text.webhooks.empty}
+        loading={isLoading}
+        loadingLabel={text.common.loading}
         rows={endpoints.map((endpoint) => ({
         key: endpoint.id,
         cells: [
