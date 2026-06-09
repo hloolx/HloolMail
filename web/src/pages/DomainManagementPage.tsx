@@ -102,7 +102,7 @@ export function DomainManagementPage({ user }: { user: User }) {
         results.push(...batchResults);
       }
       const rejected = results.filter((result) => result.status === 'rejected').length;
-      const failed = results.filter((result) => result.status === 'rejected' || (result.status === 'fulfilled' && !result.value.mx_verified)).length;
+      const failed = results.filter((result) => result.status === 'rejected' || (result.status === 'fulfilled' && !isCheckReady(result.value))).length;
       if (targets.length > 0 && rejected === targets.length) {
         const firstFailure = results.find((result) => result.status === 'rejected');
         if (firstFailure?.status === 'rejected' && firstFailure.reason instanceof Error) {
@@ -418,11 +418,11 @@ export function DomainManagementPage({ user }: { user: User }) {
 }
 
 function isReadyDomain(domain: Domain) {
-  return domain.active && domain.mx_verified && (!domain.wildcard_requested || domain.wildcard_enabled);
+  return domain.active && (domain.mx_verified || domain.wildcard_enabled);
 }
 
 function isWaitingDomain(domain: Domain) {
-  return domain.active && (!domain.mx_verified || (Boolean(domain.wildcard_requested) && !domain.wildcard_enabled));
+  return domain.active && ((!domain.mx_verified && !domain.wildcard_enabled) || (Boolean(domain.wildcard_requested) && !domain.wildcard_enabled));
 }
 
 function canDeleteWaitingDomain(domain: Domain, user: User) {
@@ -464,13 +464,13 @@ function dateValue(value?: string | null) {
 }
 
 function waitingStatusRank(domain: Domain) {
-  if (!domain.mx_verified) return 0;
+  if (!domain.mx_verified && !domain.wildcard_enabled) return 0;
   if (domain.wildcard_requested && !domain.wildcard_enabled) return 1;
   return 2;
 }
 
 function domainHealthBadge(domain: Domain, text: ReturnType<typeof useText>) {
-  if (!domain.active || !domain.mx_verified) return boolBadge(false);
+  if (!domain.active || (!domain.mx_verified && !domain.wildcard_enabled)) return boolBadge(false);
   const expiresAt = domain.domain_expires_at ? new Date(domain.domain_expires_at) : null;
   const expiring = expiresAt && expiresAt.getTime() > Date.now() && expiresAt.getTime() < Date.now() + 30 * 24 * 60 * 60 * 1000;
   if (expiring) {

@@ -16,7 +16,8 @@ Recommended domain-selection flow:
 1. Call `GET /api/domains/available` with `X-API-Key`.
 2. Build choices from `data.public_domains` and `data.private_domains`.
 3. Let the user choose one or more domains when the workflow needs multiple mailboxes.
-4. Pass the selected domain to `POST /api/generate-email`.
+4. Use `root_ready` domains for normal `user@example.com` mailboxes and `wildcard_ready` / `subdomain_mailbox` domains for `user@label.example.com` mailboxes.
+5. Pass the selected parent domain to `POST /api/generate-email`.
 
 Private or specific public domain:
 
@@ -35,6 +36,22 @@ curl -X POST "$BASE_URL/api/generate-email" \
   -H "X-API-Key: $API_KEY" \
   -d '{}'
 ```
+
+Subdomain mailbox:
+
+```bash
+curl -X POST "$BASE_URL/api/generate-email" \
+  -H "Content-Type: application/json" \
+  -H "X-API-Key: $API_KEY" \
+  -d '{"prefix":"verify","domain":"example.com","address_type":"subdomain","subdomain":"qa"}'
+
+curl -X POST "$BASE_URL/api/generate-email" \
+  -H "Content-Type: application/json" \
+  -H "X-API-Key: $API_KEY" \
+  -d '{"prefix":"verify","domain":"example.com","address_type":"subdomain"}'
+```
+
+When `subdomain` is omitted, HLOOL Mail generates a safe label and returns fields such as `data.subdomain`, `data.host`, `data.root_domain`, and `data.wildcard_pattern`.
 
 Create a mailbox and a mailbox share in the same API-key call:
 
@@ -66,7 +83,7 @@ Success:
 
 New mailbox creation returns HTTP `201`. Reusing an existing mailbox owned by the same API-key owner returns HTTP `200` with `data.reuse=true`. `prefix` is optional and is normalized to lowercase letters, digits, `.`, `-`, and `_`; if it normalizes to empty, the API generates a random local part.
 
-When `share` is `true` or an object such as `{ "enabled": true, "expires_at": "2026-06-01T00:00:00Z" }`, `data.share` describes the mailbox share. `data.share.url` is the share page URL, and `data.share.access_url` includes `?key=...` for direct shared mailbox access. Full token/key values are returned once; the server stores only hashes, so old complete links cannot be viewed again.
+When `share` is `true` or an object such as `{ "enabled": true, "expires_at": "2026-06-01T00:00:00Z" }`, `data.share` describes the mailbox share. `data.share.url` is the share page URL, and `data.share.access_url` includes `#key=...` in the URL fragment for direct shared mailbox access. Full token/key values are returned once; the server stores only hashes, so old complete links cannot be viewed again.
 
 ## Read Shared Mailbox
 
@@ -85,7 +102,7 @@ curl "$BASE_URL/api/domains/available" \
   -H "X-API-Key: $API_KEY"
 ```
 
-Use this as the domain-picker source of truth before creating mailboxes. It returns active, MX-verified public domains in `data.public_domains` and API-key-accessible private domains in `data.private_domains`. Legacy `data.domains` only contains public-domain strings and should be used as a fallback for older clients. Public domains may be blocked by some websites.
+Use this as the domain-picker source of truth before creating mailboxes. It returns public domains in `data.public_domains` and API-key-accessible private domains in `data.private_domains`. Each item exposes `root_ready`, `wildcard_ready`, and `capabilities`. Legacy `data.domains` only contains root-ready public-domain strings and should be used as a fallback for older clients. Public domains may be blocked by some websites.
 
 Clients and AI agents should present `public_domains` and `private_domains` as grouped selectable options. Do not ask the user to type a private domain when it already appears in `private_domains`.
 
@@ -97,10 +114,27 @@ Response:
   "data": {
     "domains": ["public.example.com", "mailbox.example.net"],
     "public_domains": [
-      { "id": 1, "domain": "public.example.com", "mode": "public", "message_count": 0 }
+      {
+        "id": 1,
+        "domain": "public.example.com",
+        "mode": "public",
+        "message_count": 0,
+        "root_ready": true,
+        "wildcard_ready": false,
+        "capabilities": ["root_mailbox"]
+      }
     ],
     "private_domains": [
-      { "id": 12, "domain": "example.com", "mode": "private", "message_count": 0 }
+      {
+        "id": 12,
+        "domain": "example.com",
+        "mode": "private",
+        "message_count": 0,
+        "root_ready": true,
+        "wildcard_ready": true,
+        "wildcard_pattern": "*.example.com",
+        "capabilities": ["root_mailbox", "subdomain_mailbox"]
+      }
     ]
   },
   "error": null

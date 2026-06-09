@@ -83,10 +83,12 @@ func (s *Session) resolveRecipientOwner(parts domain.RecipientParts, resolved *m
 	var mailbox models.Mailbox
 	err := s.service.DB.Where("email = ?", parts.Recipient).First(&mailbox).Error
 	if err == nil {
-		mailboxID := mailbox.ID
-		return mailbox.OwnerID, &mailboxID, nil
+		if mailbox.DomainID == resolved.ID {
+			mailboxID := mailbox.ID
+			return mailbox.OwnerID, &mailboxID, nil
+		}
 	}
-	if !errors.Is(err, gorm.ErrRecordNotFound) {
+	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
 		slog.Warn("smtp failed to resolve recipient mailbox", "recipient", parts.Recipient, "error", err)
 		return 0, nil, &gosmtp.SMTPError{Code: 451, Message: "failed to resolve recipient"}
 	}

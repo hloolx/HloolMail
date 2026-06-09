@@ -28,6 +28,54 @@
   width: 100%;
 }
 
+.inbox-address-type {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 0.35rem;
+  width: 100%;
+}
+
+.inbox-address-type-choice {
+  display: inline-flex;
+  min-width: 0;
+  height: 2.25rem;
+  align-items: center;
+  justify-content: center;
+  gap: 0.4rem;
+  border: 1px solid var(--border);
+  border-radius: 0.55rem;
+  background: var(--panel);
+  color: var(--muted);
+  font-size: 0.82rem;
+  font-weight: 650;
+  outline: none;
+  padding: 0 0.55rem;
+  transition: border-color 160ms ease, background 160ms ease, color 160ms ease, box-shadow 160ms ease;
+}
+
+.inbox-address-type-choice span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.inbox-address-type-choice:hover,
+.inbox-address-type-choice:focus-visible {
+  border-color: color-mix(in srgb, var(--focus) 42%, var(--border));
+  color: var(--foreground);
+}
+
+.inbox-address-type-choice:focus-visible {
+  box-shadow: 0 0 0 3px var(--focus-soft);
+}
+
+.inbox-address-type-choice-active {
+  border-color: color-mix(in srgb, var(--focus) 58%, var(--border));
+  background: color-mix(in srgb, var(--focus-soft) 58%, var(--panel));
+  color: var(--foreground);
+}
+
 .inbox-domain-select {
   position: relative;
   width: 100%;
@@ -113,6 +161,12 @@
   border-color: color-mix(in srgb, var(--focus) 30%, var(--border));
   background: color-mix(in srgb, var(--focus) 10%, var(--panel));
   color: color-mix(in srgb, var(--focus) 78%, var(--foreground));
+}
+
+.inbox-domain-pill-available {
+  border-color: color-mix(in srgb, var(--primary) 24%, var(--border));
+  background: color-mix(in srgb, var(--primary) 8%, var(--panel));
+  color: color-mix(in srgb, var(--primary) 78%, var(--foreground));
 }
 
 .inbox-domain-icon {
@@ -424,16 +478,19 @@
   flex: 0 0 auto;
   overflow: hidden;
   place-items: center;
-  border: 1px solid color-mix(in srgb, var(--border) 76%, transparent);
+  border: 1px solid color-mix(in srgb, var(--border) 72%, transparent);
   border-radius: 0.5rem;
-  background: var(--soft);
-  color: var(--foreground);
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--panel) 96%, white), color-mix(in srgb, var(--soft) 72%, var(--panel)));
+  color: color-mix(in srgb, var(--muted) 86%, var(--foreground));
   font-size: 0.7rem;
   font-weight: 820;
   font-variant-numeric: tabular-nums;
   letter-spacing: 0;
   line-height: 1;
-  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--background) 64%, transparent);
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, var(--background) 76%, transparent),
+    0 1px 2px rgba(15, 15, 15, 0.04);
 }
 
 .sender-brand-avatar-sm {
@@ -453,26 +510,33 @@
   font-size: 0.76rem;
 }
 
-.sender-brand-avatar-known {
-  border-color: color-mix(in srgb, var(--sender-avatar-bg) 34%, var(--border));
-  background: var(--sender-avatar-bg);
-  color: var(--sender-avatar-fg);
+.sender-brand-avatar-loaded {
+  background: color-mix(in srgb, var(--panel) 92%, white);
+  border-color: color-mix(in srgb, var(--border) 82%, transparent);
 }
 
+.sender-brand-avatar-icon,
 .sender-brand-avatar-image {
   display: block;
   width: 100%;
   height: 100%;
-  background: #101010;
+}
+
+.sender-brand-avatar-icon {
+  padding: 0.22rem;
+  object-fit: contain;
+}
+
+.sender-brand-avatar-image {
   object-fit: cover;
 }
 
-.sender-brand-avatar-mark,
 .sender-brand-avatar-fallback {
   display: grid;
   width: 100%;
   height: 100%;
   place-items: center;
+  background: color-mix(in srgb, var(--soft) 76%, var(--panel));
 }
 
 .mail-row-avatar,

@@ -244,7 +244,7 @@ HLOOL Mail 是开源项目，可以部署在你自己的域名或内网环境中
 - OpenAPI JSON: `$BASE_URL/api/openapi.json`
 - OpenAPI YAML: `$BASE_URL/api/openapi.yaml`
 
-AI 助手或脚本创建邮箱前，推荐先调用 `GET /api/domains/available`。新客户端应优先读取 `data.public_domains` 和 `data.private_domains`，把公共域名和当前 API Key 可访问的私有域名分组展示给用户；需要处理多个邮箱或多个域名时，可以让用户多选后逐个生成。`data.domains` 只保留为旧客户端公共域名 fallback，不要因为它只含公共域名就要求用户手填私有域名。
+AI 助手或脚本创建邮箱前，推荐先调用 `GET /api/domains/available`。新客户端应优先读取 `data.public_domains` 和 `data.private_domains`，把公共域名和当前 API Key 可访问的私有域名分组展示给用户；需要处理多个邮箱或多个域名时，可以让用户多选后逐个生成。`data.domains` 只保留为旧客户端公共域名 fallback，不要因为它只含公共域名就要求用户手填私有域名。域名条目里的 `root_ready` 表示可生成 `user@example.com`，`wildcard_ready` / `capabilities: ["subdomain_mailbox"]` 表示可生成 `user@label.example.com`。`*.example.com` 只是 DNS 配置和兼容输入写法，系统会按父域 `example.com` 管理，不会把 `*.example.com` 当成真实邮箱后缀。
 
 可跑的 curl 示例：
 
@@ -259,6 +259,16 @@ curl -X POST "$BASE_URL/api/generate-email" \
   -H "Content-Type: application/json" \
   -H "X-API-Key: $API_KEY" \
   -d '{"prefix":"demo","domain":"example.com"}'
+
+curl -X POST "$BASE_URL/api/generate-email" \
+  -H "Content-Type: application/json" \
+  -H "X-API-Key: $API_KEY" \
+  -d '{"prefix":"demo","domain":"example.com","address_type":"subdomain","subdomain":"qa"}'
+
+curl -X POST "$BASE_URL/api/generate-email" \
+  -H "Content-Type: application/json" \
+  -H "X-API-Key: $API_KEY" \
+  -d '{"prefix":"demo","domain":"example.com","address_type":"subdomain"}'
 
 curl "$BASE_URL/api/emails/next?email=demo@example.com" \
   -H "X-API-Key: $API_KEY"

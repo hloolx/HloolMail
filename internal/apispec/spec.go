@@ -210,9 +210,9 @@ var registry = []Operation{
 		Path:        "/api/generate-email",
 		Tags:        []string{TagAutomation},
 		Summary:     "生成邮箱",
-		Description: "为 API Key 调用方创建或复用邮箱。传入已验证域名可使用私有域名；省略 domain 会随机使用公共域名。设置 share=true 或 share.enabled=true 可在同一响应中创建邮箱分享；返回的 data.share.url 是分享页 URL，data.share.access_url 会在 URL fragment 中带上 #key=。",
+		Description: "为 API Key 调用方创建或复用邮箱。默认生成普通邮箱 prefix@domain；设置 address_type=subdomain 可生成泛子域名邮箱 prefix@subdomain.domain，subdomain 留空时自动生成。传入 domain=*.example.com 会按父域 example.com 的泛子域名邮箱处理。设置 share=true 或 share.enabled=true 可在同一响应中创建邮箱分享；返回的 data.share.url 是分享页 URL，data.share.access_url 会在 URL fragment 中带上 #key=。",
 		Auth:        AuthAPIKey,
-		RequestBody: &RequestBody{Description: "可选的邮箱生成参数。", SchemaName: "GenerateEmailRequest", Example: "{\n  \"prefix\": \"verify\",\n  \"domain\": \"example.com\",\n  \"share\": true\n}", Required: false},
+		RequestBody: &RequestBody{Description: "可选的邮箱生成参数。", SchemaName: "GenerateEmailRequest", Example: "{\n  \"prefix\": \"verify\",\n  \"domain\": \"example.com\",\n  \"address_type\": \"root\",\n  \"share\": true\n}", Required: false},
 		Responses: []OperationResponse{
 			{Status: http.StatusCreated, Description: "邮箱已创建", SchemaName: "EnvelopeGenerateEmail"},
 			{Status: http.StatusOK, Description: "复用已有邮箱", SchemaName: "EnvelopeGenerateEmail"},
@@ -221,7 +221,7 @@ var registry = []Operation{
 			Title:        "生成邮箱",
 			Description:  "创建邮箱，可同时生成带访问 key 的分享 URL。",
 			RequestPath:  "/api/generate-email",
-			BodyTemplate: "{\n  \"prefix\": \"verify\",\n  \"domain\": \"\",\n  \"share\": false\n}",
+			BodyTemplate: "{\n  \"prefix\": \"verify\",\n  \"domain\": \"\",\n  \"address_type\": \"root\",\n  \"subdomain\": \"\",\n  \"share\": false\n}",
 		},
 	},
 	{

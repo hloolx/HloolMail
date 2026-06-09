@@ -347,6 +347,97 @@ func TestRcptRejectsMissingMailboxOnPublicDomain(t *testing.T) {
 	}
 }
 
+func TestRcptRejectsWildcardHostInFullAddress(t *testing.T) {
+	session, _ := newSMTPTestSession(t, config.Config{
+		MaxMessageBytes:  4096,
+		MessageRetention: time.Hour,
+	})
+	session.Reset()
+	if err := session.Mail("sender@example.test", nil); err != nil {
+		t.Fatal(err)
+	}
+	err := session.Rcpt("demo@*.example.test", nil)
+	smtpErr, ok := err.(*gosmtp.SMTPError)
+	if !ok {
+		t.Fatalf("error = %T %v, want SMTPError", err, err)
+	}
+	if smtpErr.Code != 550 || smtpErr.Message != "invalid recipient" {
+		t.Fatalf("smtp error = %d %q", smtpErr.Code, smtpErr.Message)
+	}
+}
+
+func TestDataUsesResolvedExactDomainWhenMailboxEmailBelongsToWildcardParent(t *testing.T) {
+	session, db := newSMTPTestSession(t, config.Config{
+		MaxMessageBytes:  4096,
+		MessageRetention: time.Hour,
+	})
+	parentOwner := models.User{Email: "smtp-parent@example.test", PasswordHash: "hash", Role: models.UserRoleUser, Enabled: true}
+	childOwner := models.User{Email: "smtp-child@example.test", PasswordHash: "hash", Role: models.UserRoleUser, Enabled: true}
+	if err := db.Create(&parentOwner).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&childOwner).Error; err != nil {
+		t.Fatal(err)
+	}
+	parentDomain := models.Domain{
+		Domain:            "smtp-wild.test",
+		Mode:              models.DomainModePrivate,
+		OwnerID:           &parentOwner.ID,
+		Active:            true,
+		WildcardEnabled:   true,
+		WildcardRequested: true,
+	}
+	childDomain := models.Domain{
+		Domain:     "shop.smtp-wild.test",
+		Mode:       models.DomainModePrivate,
+		OwnerID:    &childOwner.ID,
+		Active:     true,
+		MXVerified: true,
+	}
+	if err := db.Create(&parentDomain).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&childDomain).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&models.Mailbox{
+		OwnerID:   parentOwner.ID,
+		Email:     "demo@shop.smtp-wild.test",
+		LocalPart: "demo",
+		Host:      "shop.smtp-wild.test",
+		DomainID:  parentDomain.ID,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	session.Reset()
+	if err := session.Mail("sender@example.test", nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := session.Rcpt("demo@shop.smtp-wild.test", nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := session.Data(strings.NewReader("From: Sender <sender@example.test>\r\n" +
+		"To: demo@shop.smtp-wild.test\r\n" +
+		"Subject: Exact child domain\r\n\r\n" +
+		"hello\r\n")); err != nil {
+		t.Fatal(err)
+	}
+	var msg models.Message
+	if err := db.First(&msg, "recipient = ?", "demo@shop.smtp-wild.test").Error; err != nil {
+		t.Fatal(err)
+	}
+	if msg.OwnerID == nil || *msg.OwnerID != childOwner.ID {
+		t.Fatalf("owner snapshot = %v, want exact child owner %d", msg.OwnerID, childOwner.ID)
+	}
+	if msg.MailboxID != nil {
+		t.Fatalf("mailbox snapshot = %v, want nil for exact child private fallback", *msg.MailboxID)
+	}
+	if msg.DomainID == nil || *msg.DomainID != childDomain.ID || msg.RootDomain != childDomain.Domain {
+		t.Fatalf("domain snapshot id=%v root=%q, want child domain %d/%q", msg.DomainID, msg.RootDomain, childDomain.ID, childDomain.Domain)
+	}
+}
+
 func TestDataStoresPrivateCatchAllOwnerSnapshot(t *testing.T) {
 	session, db := newSMTPTestSession(t, config.Config{
 		MaxMessageBytes:  4096,

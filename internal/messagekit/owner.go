@@ -43,16 +43,18 @@ func OwnerForRecipient(db *gorm.DB, recipient string, d *models.Domain) (OwnerIn
 	var mailbox models.Mailbox
 	err := db.Where("email = ?", recipient).First(&mailbox).Error
 	if err == nil {
-		mailboxID := mailbox.ID
-		domainID := mailbox.DomainID
-		return OwnerInfo{
-			OwnerID:   mailbox.OwnerID,
-			Source:    OwnerSourceMailbox,
-			MailboxID: &mailboxID,
-			DomainID:  &domainID,
-		}, true, nil
+		if d == nil || mailbox.DomainID == d.ID {
+			mailboxID := mailbox.ID
+			domainID := mailbox.DomainID
+			return OwnerInfo{
+				OwnerID:   mailbox.OwnerID,
+				Source:    OwnerSourceMailbox,
+				MailboxID: &mailboxID,
+				DomainID:  &domainID,
+			}, true, nil
+		}
 	}
-	if !errors.Is(err, gorm.ErrRecordNotFound) {
+	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
 		return OwnerInfo{}, false, err
 	}
 	if d != nil && d.Mode == models.DomainModePrivate && d.OwnerID != nil {

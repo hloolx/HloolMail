@@ -345,11 +345,9 @@ func hasTableColumns(db *gorm.DB, table string, columns ...string) (bool, error)
 
 func BackfillDomainFirstVerifiedAt(db *gorm.DB) error {
 	return db.Model(&models.Domain{}).
-		Where("active = ? AND mx_verified = ? AND (COALESCE(wildcard_requested, ?) = ? OR COALESCE(wildcard_enabled, ?) = ?) AND first_verified_at IS NULL",
+		Where("active = ? AND (mx_verified = ? OR COALESCE(wildcard_enabled, ?) = ?) AND first_verified_at IS NULL",
 			true,
 			true,
-			false,
-			false,
 			false,
 			true,
 		).

@@ -208,8 +208,7 @@ func (c DNSChecker) persistCheckResult(d models.Domain, result CheckResult) erro
 }
 
 func checkResultReady(d models.Domain, result CheckResult) bool {
-	wildcardRequired := d.WildcardRequested || result.WildcardChecked
-	return result.MXVerified && (!wildcardRequired || result.WildcardEnabled)
+	return result.MXVerified || result.WildcardEnabled
 }
 
 func (c DNSChecker) lookupWithOptions(ctx context.Context, d models.Domain, options CheckOptions) CheckResult {

@@ -328,5 +328,5 @@ export function formatRelativeTime(value?: string, pastLabel = ''): string {
 }
 
 export function isCheckReady(result: { mx_verified?: boolean; wildcard_enabled?: boolean; wildcard_checked?: boolean } | null | undefined) {
-  return Boolean(result?.mx_verified && (!result.wildcard_checked || result.wildcard_enabled));
+  return Boolean(result?.mx_verified || result?.wildcard_enabled);
 }

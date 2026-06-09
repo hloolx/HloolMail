@@ -111,6 +111,74 @@ func TestMessageOwnerForRecipientFallsBackToPrivateDomainOwner(t *testing.T) {
 	}
 }
 
+func TestMessageOwnerForRecipientIgnoresMailboxFromDifferentResolvedDomain(t *testing.T) {
+	db := httpTestDB(t)
+	parentOwner := models.User{Email: "parent-owner@example.com", PasswordHash: "hash", Role: models.UserRoleUser, Enabled: true}
+	childOwner := models.User{Email: "child-owner@example.com", PasswordHash: "hash", Role: models.UserRoleUser, Enabled: true}
+	if err := db.Create(&parentOwner).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&childOwner).Error; err != nil {
+		t.Fatal(err)
+	}
+	parentDomain := models.Domain{
+		Domain:            "wild-owner.test",
+		Mode:              models.DomainModePrivate,
+		OwnerID:           &parentOwner.ID,
+		Active:            true,
+		WildcardEnabled:   true,
+		WildcardRequested: true,
+	}
+	childDomain := models.Domain{
+		Domain:     "shop.wild-owner.test",
+		Mode:       models.DomainModePrivate,
+		OwnerID:    &childOwner.ID,
+		Active:     true,
+		MXVerified: true,
+	}
+	if err := db.Create(&parentDomain).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&childDomain).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&models.Mailbox{
+		OwnerID:   parentOwner.ID,
+		Email:     "demo@shop.wild-owner.test",
+		LocalPart: "demo",
+		Host:      "shop.wild-owner.test",
+		DomainID:  parentDomain.ID,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	h := &Handler{DB: db}
+
+	owner, exists, err := h.messageOwnerForRecipient("demo@shop.wild-owner.test", &childDomain)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !exists {
+		t.Fatal("expected child private-domain fallback owner")
+	}
+	if owner.OwnerID != childOwner.ID || owner.Source != messageOwnerSourcePrivateDomain {
+		t.Fatalf("owner = %+v, want child domain owner %d", owner, childOwner.ID)
+	}
+	allowedParent, err := h.actorOwnsMessageRecipient(&requestActor{User: &parentOwner}, "demo@shop.wild-owner.test", &childDomain)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if allowedParent {
+		t.Fatal("parent wildcard mailbox owner should not access exact child-domain recipient")
+	}
+	allowedChild, err := h.actorOwnsMessageRecipient(&requestActor{User: &childOwner}, "demo@shop.wild-owner.test", &childDomain)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !allowedChild {
+		t.Fatal("child domain owner should access exact child-domain recipient")
+	}
+}
+
 func TestMessageOwnerForRecipientDoesNotFallbackToPublicDomainOwner(t *testing.T) {
 	db := httpTestDB(t)
 	domainOwner := models.User{Email: "public-domain-owner@example.com", PasswordHash: "hash", Role: models.UserRoleUser, Enabled: true}

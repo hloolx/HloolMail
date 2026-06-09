@@ -12,19 +12,40 @@ type MailboxGenerationOptions = {
   onGenerated: () => void;
 };
 
+export type MailboxAddressType = 'root' | 'subdomain';
+
+type GenerateEmailRequest = {
+  prefix: string;
+  domain: string;
+  address_type: MailboxAddressType;
+  subdomain: string;
+};
+
+type GenerateEmailResponse = {
+  email: string;
+  domain_id: number;
+  reuse?: boolean;
+  address_type?: MailboxAddressType;
+  host?: string;
+  root_domain?: string;
+  subdomain?: string;
+};
+
 export function useMailboxGeneration({ apiKey, onGenerated }: MailboxGenerationOptions) {
   const queryClient = useQueryClient();
   const text = useText();
   const setEmail = useAppStore((state) => state.setEmail);
   const [prefix, setPrefix] = useState('');
   const [domainName, setDomainName] = useState('');
-  const generateRequestRef = useRef({ prefix: '', domain: '' });
+  const [addressType, setAddressType] = useState<MailboxAddressType>('root');
+  const [subdomain, setSubdomain] = useState('');
+  const generateRequestRef = useRef<GenerateEmailRequest>({ prefix: '', domain: '', address_type: 'root', subdomain: '' });
   const generateButtonRef = useRef<HTMLButtonElement | null>(null);
 
   const generate = useMutation({
-    mutationFn: () => postJSON<{ email: string; domain_id: number; reuse?: boolean }>('/api/generate-email', generateRequestRef.current, { apiKey }),
+    mutationFn: () => postJSON<GenerateEmailResponse>('/api/generate-email', generateRequestRef.current, { apiKey }),
     onMutate: () => {
-      generateRequestRef.current = { prefix, domain: domainName };
+      generateRequestRef.current = { prefix, domain: domainName, address_type: addressType, subdomain: addressType === 'subdomain' ? subdomain : '' };
     },
     retry: (failureCount, error) => {
       if (!isConflictError(error) || failureCount >= MAX_GENERATE_EMAIL_CONFLICT_RETRIES) return false;
@@ -47,9 +68,13 @@ export function useMailboxGeneration({ apiKey, onGenerated }: MailboxGenerationO
   return {
     prefix,
     domainName,
+    addressType,
+    subdomain,
     generate,
     generateButtonRef,
     setPrefix,
-    setDomainName
+    setDomainName,
+    setAddressType,
+    setSubdomain
   };
 }

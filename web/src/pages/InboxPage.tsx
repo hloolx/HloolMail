@@ -188,11 +188,15 @@ export function InboxPage() {
           language={language}
           prefix={generation.prefix}
           domainName={generation.domainName}
+          addressType={generation.addressType}
+          subdomain={generation.subdomain}
           availabilityGroups={availabilityGroups}
           isGenerating={generation.generate.isPending}
           generateButtonRef={generation.generateButtonRef}
           onPrefixChange={generation.setPrefix}
           onDomainChange={generation.setDomainName}
+          onAddressTypeChange={generation.setAddressType}
+          onSubdomainChange={generation.setSubdomain}
           onGenerate={() => generation.generate.mutate()}
         />
 

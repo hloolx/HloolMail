@@ -227,7 +227,11 @@ func (d Domain) IsRootMailboxReady() bool {
 }
 
 func (d Domain) IsWildcardReady() bool {
-	return d.Active && d.MXVerified && d.WildcardEnabled
+	return d.Active && d.WildcardEnabled
+}
+
+func (d Domain) HasMailboxCapability() bool {
+	return d.Active && (d.MXVerified || d.WildcardEnabled)
 }
 
 func (d Domain) IsReady() bool {
@@ -235,7 +239,7 @@ func (d Domain) IsReady() bool {
 }
 
 func (d Domain) IsWaitingVerification() bool {
-	return d.Active && (!d.MXVerified || (d.WildcardRequested && !d.WildcardEnabled))
+	return d.Active && !d.HasMailboxCapability()
 }
 
 type APIKey struct {

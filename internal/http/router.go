@@ -89,6 +89,7 @@ func NewRouter(h *Handler) *gin.Engine {
 	api.GET("/oauth/providers", h.perIPRateLimit(1, 10), h.listOAuthProviders)
 	api.GET("/oauth/:provider/login", h.perIPRateLimit(1.0/3, 5), h.oauthRedirect)
 	api.GET("/oauth/:provider/callback", h.perIPRateLimit(1, 10), h.oauthCallback)
+	api.GET("/brand-icon", h.perIPRateLimit(2, 30), h.brandIcon)
 	api.GET("/docs.md", h.perIPRateLimit(0.5, 2), h.apiDocsMarkdown)
 	api.GET("/skill.md", h.perIPRateLimit(0.5, 2), h.apiSkillMarkdown)
 	api.GET("/openapi.json", h.perIPRateLimit(0.5, 2), h.openAPIJSON)

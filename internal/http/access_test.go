@@ -1283,6 +1283,428 @@ func TestGenerateEmailUsesRootReadyForExplicitDomain(t *testing.T) {
 	}
 }
 
+func TestGenerateEmailCreatesSubdomainMailbox(t *testing.T) {
+	db := httpTestDB(t)
+	hash, err := auth.HashSecret("password123")
+	if err != nil {
+		t.Fatal(err)
+	}
+	owner := models.User{
+		Email:        "wild-owner@example.com",
+		PasswordHash: hash,
+		Role:         models.UserRoleUser,
+		Enabled:      true,
+		DailyLimit:   1000,
+	}
+	if err := db.Create(&owner).Error; err != nil {
+		t.Fatal(err)
+	}
+	domain := models.Domain{
+		Domain:            "wild-parent.test",
+		Mode:              models.DomainModePrivate,
+		OwnerID:           &owner.ID,
+		Active:            true,
+		MXVerified:        false,
+		WildcardEnabled:   true,
+		WildcardRequested: true,
+	}
+	if err := db.Create(&domain).Error; err != nil {
+		t.Fatal(err)
+	}
+	router := testRouter(t, db)
+	service := auth.APIKeyService{DB: db}
+	_, plain, err := service.CreateFor(&owner.ID, "owner-key", 20, 0, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	created := perform(router, http.MethodPost, "/api/generate-email", map[string]any{
+		"prefix":       "verify",
+		"domain":       "wild-parent.test",
+		"address_type": "subdomain",
+		"subdomain":    "qa",
+	}, map[string]string{"X-API-Key": plain})
+	if created.Code != http.StatusCreated {
+		t.Fatalf("generate subdomain mailbox = %d: %s", created.Code, created.Body.String())
+	}
+	var body struct {
+		Data struct {
+			Email           string        `json:"email"`
+			Host            string        `json:"host"`
+			RootDomain      string        `json:"root_domain"`
+			AddressType     string        `json:"address_type"`
+			Subdomain       string        `json:"subdomain"`
+			WildcardPattern string        `json:"wildcard_pattern"`
+			Domain          models.Domain `json:"domain"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(created.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if body.Data.Email != "verify@qa.wild-parent.test" ||
+		body.Data.Host != "qa.wild-parent.test" ||
+		body.Data.RootDomain != "wild-parent.test" ||
+		body.Data.AddressType != "subdomain" ||
+		body.Data.Subdomain != "qa" ||
+		body.Data.WildcardPattern != "*.wild-parent.test" ||
+		body.Data.Domain.Domain != "wild-parent.test" {
+		t.Fatalf("subdomain generate response = %+v", body.Data)
+	}
+	var mailbox models.Mailbox
+	if err := db.First(&mailbox, "email = ?", body.Data.Email).Error; err != nil {
+		t.Fatal(err)
+	}
+	if mailbox.DomainID != domain.ID || mailbox.Host != "qa.wild-parent.test" {
+		t.Fatalf("mailbox = %+v, want parent domain id %d and subdomain host", mailbox, domain.ID)
+	}
+
+	rootBlocked := perform(router, http.MethodPost, "/api/generate-email", map[string]any{
+		"prefix": "root",
+		"domain": "wild-parent.test",
+	}, map[string]string{"X-API-Key": plain})
+	if rootBlocked.Code != http.StatusBadRequest {
+		t.Fatalf("root mailbox on wildcard-only domain = %d: %s", rootBlocked.Code, rootBlocked.Body.String())
+	}
+}
+
+func TestGenerateEmailWildcardDomainInputAndRandomParent(t *testing.T) {
+	db := httpTestDB(t)
+	hash, err := auth.HashSecret("password123")
+	if err != nil {
+		t.Fatal(err)
+	}
+	owner := models.User{Email: "wild-random@example.com", PasswordHash: hash, Role: models.UserRoleUser, Enabled: true, DailyLimit: 1000}
+	if err := db.Create(&owner).Error; err != nil {
+		t.Fatal(err)
+	}
+	domain := models.Domain{
+		Domain:            "wild-random.test",
+		Mode:              models.DomainModePrivate,
+		OwnerID:           &owner.ID,
+		Active:            true,
+		WildcardEnabled:   true,
+		WildcardRequested: true,
+	}
+	if err := db.Create(&domain).Error; err != nil {
+		t.Fatal(err)
+	}
+	router := testRouter(t, db)
+	service := auth.APIKeyService{DB: db}
+	_, plain, err := service.CreateFor(&owner.ID, "owner-key", 20, 0, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	starInput := perform(router, http.MethodPost, "/api/generate-email", map[string]any{
+		"prefix":    "check",
+		"domain":    "*.wild-random.test",
+		"subdomain": "mx",
+	}, map[string]string{"X-API-Key": plain})
+	if starInput.Code != http.StatusCreated {
+		t.Fatalf("generate with wildcard domain input = %d: %s", starInput.Code, starInput.Body.String())
+	}
+	var starBody struct {
+		Data struct {
+			Email       string `json:"email"`
+			RootDomain  string `json:"root_domain"`
+			AddressType string `json:"address_type"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(starInput.Body.Bytes(), &starBody); err != nil {
+		t.Fatal(err)
+	}
+	if starBody.Data.Email != "check@mx.wild-random.test" || starBody.Data.RootDomain != "wild-random.test" || starBody.Data.AddressType != "subdomain" {
+		t.Fatalf("wildcard input response = %+v", starBody.Data)
+	}
+
+	rootStar := perform(router, http.MethodPost, "/api/generate-email", map[string]any{
+		"prefix":       "root",
+		"domain":       "*.wild-random.test",
+		"address_type": "root",
+	}, map[string]string{"X-API-Key": plain})
+	if rootStar.Code != http.StatusBadRequest {
+		t.Fatalf("root address_type with wildcard domain input = %d: %s", rootStar.Code, rootStar.Body.String())
+	}
+
+	autoSubdomain := perform(router, http.MethodPost, "/api/generate-email", map[string]any{
+		"prefix":       "auto-label",
+		"domain":       "wild-random.test",
+		"address_type": "subdomain",
+	}, map[string]string{"X-API-Key": plain})
+	if autoSubdomain.Code != http.StatusCreated {
+		t.Fatalf("generate automatic subdomain label = %d: %s", autoSubdomain.Code, autoSubdomain.Body.String())
+	}
+	var autoBody struct {
+		Data struct {
+			Email     string `json:"email"`
+			Host      string `json:"host"`
+			Subdomain string `json:"subdomain"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(autoSubdomain.Body.Bytes(), &autoBody); err != nil {
+		t.Fatal(err)
+	}
+	if autoBody.Data.Subdomain == "" ||
+		strings.Contains(autoBody.Data.Host, "*") ||
+		autoBody.Data.Host != autoBody.Data.Subdomain+".wild-random.test" ||
+		autoBody.Data.Email != "auto-label@"+autoBody.Data.Host {
+		t.Fatalf("automatic subdomain response = %+v", autoBody.Data)
+	}
+
+	randomParent := perform(router, http.MethodPost, "/api/generate-email", map[string]any{
+		"prefix":       "auto",
+		"address_type": "subdomain",
+		"subdomain":    "run",
+	}, map[string]string{"X-API-Key": plain})
+	if randomParent.Code != http.StatusCreated {
+		t.Fatalf("generate random wildcard parent = %d: %s", randomParent.Code, randomParent.Body.String())
+	}
+	if !strings.Contains(randomParent.Body.String(), "auto@run.wild-random.test") {
+		t.Fatalf("random wildcard parent body = %s", randomParent.Body.String())
+	}
+}
+
+func TestGenerateEmailSubdomainRejectsExactDomainConflict(t *testing.T) {
+	db := httpTestDB(t)
+	hash, err := auth.HashSecret("password123")
+	if err != nil {
+		t.Fatal(err)
+	}
+	parentOwner := models.User{Email: "parent@example.com", PasswordHash: hash, Role: models.UserRoleUser, Enabled: true, DailyLimit: 1000}
+	childOwner := models.User{Email: "child@example.com", PasswordHash: hash, Role: models.UserRoleUser, Enabled: true, DailyLimit: 1000}
+	if err := db.Create(&parentOwner).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&childOwner).Error; err != nil {
+		t.Fatal(err)
+	}
+	parent := models.Domain{
+		Domain:            "conflict-parent.test",
+		Mode:              models.DomainModePrivate,
+		OwnerID:           &parentOwner.ID,
+		Active:            true,
+		WildcardEnabled:   true,
+		WildcardRequested: true,
+	}
+	child := models.Domain{
+		Domain:     "shop.conflict-parent.test",
+		Mode:       models.DomainModePrivate,
+		OwnerID:    &childOwner.ID,
+		Active:     true,
+		MXVerified: true,
+	}
+	inactiveChild := models.Domain{
+		Domain:  "draft.conflict-parent.test",
+		Mode:    models.DomainModePrivate,
+		OwnerID: &childOwner.ID,
+		Active:  false,
+	}
+	if err := db.Create(&parent).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&child).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&inactiveChild).Error; err != nil {
+		t.Fatal(err)
+	}
+	router := testRouter(t, db)
+	service := auth.APIKeyService{DB: db}
+	_, plain, err := service.CreateFor(&parentOwner.ID, "parent-key", 20, 0, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	response := perform(router, http.MethodPost, "/api/generate-email", map[string]any{
+		"prefix":       "verify",
+		"domain":       "conflict-parent.test",
+		"address_type": "subdomain",
+		"subdomain":    "shop",
+	}, map[string]string{"X-API-Key": plain})
+	if response.Code != http.StatusConflict {
+		t.Fatalf("subdomain exact-domain conflict = %d: %s", response.Code, response.Body.String())
+	}
+
+	inactiveResponse := perform(router, http.MethodPost, "/api/generate-email", map[string]any{
+		"prefix":       "verify",
+		"domain":       "conflict-parent.test",
+		"address_type": "subdomain",
+		"subdomain":    "draft",
+	}, map[string]string{"X-API-Key": plain})
+	if inactiveResponse.Code != http.StatusConflict {
+		t.Fatalf("subdomain inactive exact-domain conflict = %d: %s", inactiveResponse.Code, inactiveResponse.Body.String())
+	}
+}
+
+func TestYYDSWildcardAccountUsesWildcardOnlyParent(t *testing.T) {
+	db := httpTestDB(t)
+	if err := db.Create(&models.APIInterfaceSettings{ID: 1, YYDSCompatibilityEnabled: true}).Error; err != nil {
+		t.Fatal(err)
+	}
+	hash, err := auth.HashSecret("password123")
+	if err != nil {
+		t.Fatal(err)
+	}
+	owner := models.User{
+		Email:        "yyds-wild@example.com",
+		PasswordHash: hash,
+		Role:         models.UserRoleUser,
+		Enabled:      true,
+		DailyLimit:   1000,
+	}
+	if err := db.Create(&owner).Error; err != nil {
+		t.Fatal(err)
+	}
+	domain := models.Domain{
+		Domain:            "yyds-wild.test",
+		Mode:              models.DomainModePrivate,
+		OwnerID:           &owner.ID,
+		Active:            true,
+		WildcardEnabled:   true,
+		WildcardRequested: true,
+	}
+	if err := db.Create(&domain).Error; err != nil {
+		t.Fatal(err)
+	}
+	router := testRouter(t, db)
+	_, plain, err := (auth.APIKeyService{DB: db}).CreateFor(&owner.ID, "owner-key", 20, 0, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	domainsResponse := perform(router, http.MethodGet, "/yyds/v1/domains", nil, map[string]string{"X-API-Key": plain})
+	if domainsResponse.Code != http.StatusOK {
+		t.Fatalf("yyds domains = %d: %s", domainsResponse.Code, domainsResponse.Body.String())
+	}
+	var domainsBody struct {
+		Data yydsDomainsResponse `json:"data"`
+	}
+	if err := json.Unmarshal(domainsResponse.Body.Bytes(), &domainsBody); err != nil {
+		t.Fatal(err)
+	}
+	if len(domainsBody.Data.PrivateDomains) != 1 ||
+		domainsBody.Data.PrivateDomains[0].Domain != "yyds-wild.test" ||
+		domainsBody.Data.PrivateDomains[0].RootReady ||
+		!domainsBody.Data.PrivateDomains[0].WildcardReady {
+		t.Fatalf("yyds wildcard-only domain listing = %+v", domainsBody.Data.PrivateDomains)
+	}
+
+	starInput := perform(router, http.MethodPost, "/yyds/v1/accounts/wildcard", map[string]any{
+		"localPart": "verify",
+		"domain":    "*.yyds-wild.test",
+		"subdomain": "qa",
+	}, map[string]string{"X-API-Key": plain})
+	if starInput.Code != http.StatusCreated {
+		t.Fatalf("yyds wildcard account with star domain = %d: %s", starInput.Code, starInput.Body.String())
+	}
+	var starBody struct {
+		Data yydsAccountDTO `json:"data"`
+	}
+	if err := json.Unmarshal(starInput.Body.Bytes(), &starBody); err != nil {
+		t.Fatal(err)
+	}
+	if starBody.Data.Address != "verify@qa.yyds-wild.test" ||
+		starBody.Data.Domain != "qa.yyds-wild.test" ||
+		starBody.Data.RootDomain != "yyds-wild.test" ||
+		starBody.Data.Subdomain != "qa" ||
+		starBody.Data.WildcardPattern != "*.yyds-wild.test" ||
+		starBody.Data.Mode != "wildcard" {
+		t.Fatalf("yyds wildcard account response = %+v", starBody.Data)
+	}
+
+	wildcardAddress := perform(router, http.MethodPost, "/yyds/v1/accounts/wildcard", map[string]any{
+		"address": "verify@*.yyds-wild.test",
+	}, map[string]string{"X-API-Key": plain})
+	if wildcardAddress.Code != http.StatusBadRequest {
+		t.Fatalf("yyds wildcard full-address host should be rejected = %d: %s", wildcardAddress.Code, wildcardAddress.Body.String())
+	}
+
+	autoSubdomain := perform(router, http.MethodPost, "/yyds/v1/accounts/wildcard", map[string]any{
+		"localPart": "auto-label",
+		"domain":    "yyds-wild.test",
+	}, map[string]string{"X-API-Key": plain})
+	if autoSubdomain.Code != http.StatusCreated {
+		t.Fatalf("yyds automatic subdomain label = %d: %s", autoSubdomain.Code, autoSubdomain.Body.String())
+	}
+	var autoBody struct {
+		Data yydsAccountDTO `json:"data"`
+	}
+	if err := json.Unmarshal(autoSubdomain.Body.Bytes(), &autoBody); err != nil {
+		t.Fatal(err)
+	}
+	if autoBody.Data.Subdomain == "" ||
+		strings.Contains(autoBody.Data.Domain, "*") ||
+		autoBody.Data.Domain != autoBody.Data.Subdomain+".yyds-wild.test" ||
+		autoBody.Data.Address != "auto-label@"+autoBody.Data.Domain {
+		t.Fatalf("yyds automatic subdomain response = %+v", autoBody.Data)
+	}
+
+	randomParent := perform(router, http.MethodPost, "/yyds/v1/accounts/wildcard", map[string]any{
+		"localPart": "auto",
+		"subdomain": "run",
+	}, map[string]string{"X-API-Key": plain})
+	if randomParent.Code != http.StatusCreated {
+		t.Fatalf("yyds wildcard account random parent = %d: %s", randomParent.Code, randomParent.Body.String())
+	}
+	if !strings.Contains(randomParent.Body.String(), "auto@run.yyds-wild.test") {
+		t.Fatalf("yyds wildcard random parent body = %s", randomParent.Body.String())
+	}
+}
+
+func TestYYDSWildcardAccountRejectsExactDomainConflict(t *testing.T) {
+	db := httpTestDB(t)
+	if err := db.Create(&models.APIInterfaceSettings{ID: 1, YYDSCompatibilityEnabled: true}).Error; err != nil {
+		t.Fatal(err)
+	}
+	hash, err := auth.HashSecret("password123")
+	if err != nil {
+		t.Fatal(err)
+	}
+	parentOwner := models.User{Email: "yyds-parent@example.com", PasswordHash: hash, Role: models.UserRoleUser, Enabled: true, DailyLimit: 1000}
+	childOwner := models.User{Email: "yyds-child@example.com", PasswordHash: hash, Role: models.UserRoleUser, Enabled: true, DailyLimit: 1000}
+	if err := db.Create(&parentOwner).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&childOwner).Error; err != nil {
+		t.Fatal(err)
+	}
+	parent := models.Domain{
+		Domain:            "yyds-conflict.test",
+		Mode:              models.DomainModePrivate,
+		OwnerID:           &parentOwner.ID,
+		Active:            true,
+		WildcardEnabled:   true,
+		WildcardRequested: true,
+	}
+	child := models.Domain{
+		Domain:     "shop.yyds-conflict.test",
+		Mode:       models.DomainModePrivate,
+		OwnerID:    &childOwner.ID,
+		Active:     true,
+		MXVerified: true,
+	}
+	if err := db.Create(&parent).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&child).Error; err != nil {
+		t.Fatal(err)
+	}
+	router := testRouter(t, db)
+	_, plain, err := (auth.APIKeyService{DB: db}).CreateFor(&parentOwner.ID, "parent-key", 20, 0, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	response := perform(router, http.MethodPost, "/yyds/v1/accounts/wildcard", map[string]any{
+		"localPart": "verify",
+		"domain":    "yyds-conflict.test",
+		"subdomain": "shop",
+	}, map[string]string{"X-API-Key": plain})
+	if response.Code != http.StatusConflict {
+		t.Fatalf("yyds exact-domain conflict = %d: %s", response.Code, response.Body.String())
+	}
+}
+
 func TestGenerateEmailWithoutDomainKeepsPublicOnlyDefault(t *testing.T) {
 	db := httpTestDB(t)
 	hash, err := auth.HashSecret("password123")
@@ -2286,9 +2708,11 @@ func TestAvailableDomainsRequiresActorAndSeparatesModes(t *testing.T) {
 	}
 	domains := []models.Domain{
 		{Domain: "public-ready.test", Mode: models.DomainModePublic, OwnerID: &other.ID, Active: true, MXVerified: true},
+		{Domain: "public-wildcard-only.test", Mode: models.DomainModePublic, OwnerID: &other.ID, Active: true, WildcardEnabled: true, WildcardRequested: true},
 		{Domain: "public-pending.test", Mode: models.DomainModePublic, OwnerID: &other.ID, Active: true},
 		{Domain: "public-wildcard-pending.test", Mode: models.DomainModePublic, OwnerID: &other.ID, Active: true, MXVerified: true, WildcardRequested: true},
 		{Domain: "owner-ready.test", Mode: models.DomainModePrivate, OwnerID: &owner.ID, Active: true, MXVerified: true},
+		{Domain: "owner-wildcard-only.test", Mode: models.DomainModePrivate, OwnerID: &owner.ID, Active: true, WildcardEnabled: true, WildcardRequested: true},
 		{Domain: "owner-pending.test", Mode: models.DomainModePrivate, OwnerID: &owner.ID, Active: true},
 		{Domain: "owner-inactive.test", Mode: models.DomainModePrivate, OwnerID: &owner.ID, Active: false, MXVerified: true},
 		{Domain: "other-ready.test", Mode: models.DomainModePrivate, OwnerID: &other.ID, Active: true, MXVerified: true},
@@ -2326,15 +2750,24 @@ func TestAvailableDomainsRequiresActorAndSeparatesModes(t *testing.T) {
 		t.Fatalf("available domains with api key = %d: %s", response.Code, response.Body.String())
 	}
 	legacyPublicNames := decodeAPIKeyAvailableDomainNames(t, response.Body.Bytes())
-	if !legacyPublicNames["public-ready.test"] || !legacyPublicNames["public-wildcard-pending.test"] || legacyPublicNames["public-pending.test"] {
+	if !legacyPublicNames["public-ready.test"] || !legacyPublicNames["public-wildcard-pending.test"] || legacyPublicNames["public-wildcard-only.test"] || legacyPublicNames["public-pending.test"] {
 		t.Fatalf("api key legacy domain list was not filtered to root-ready public domains: %v", legacyPublicNames)
 	}
 	apiPublicNames, apiPrivateNames := decodeAvailableDomainNames(t, response.Body.Bytes())
-	if !apiPublicNames["public-ready.test"] || !apiPublicNames["public-wildcard-pending.test"] || apiPublicNames["public-pending.test"] {
+	if !apiPublicNames["public-ready.test"] || !apiPublicNames["public-wildcard-pending.test"] || !apiPublicNames["public-wildcard-only.test"] || apiPublicNames["public-pending.test"] {
 		t.Fatalf("api key structured public domains mismatch: %v", apiPublicNames)
 	}
-	if !apiPrivateNames["owner-ready.test"] || apiPrivateNames["owner-pending.test"] || apiPrivateNames["owner-inactive.test"] || apiPrivateNames["other-ready.test"] {
+	if !apiPrivateNames["owner-ready.test"] || !apiPrivateNames["owner-wildcard-only.test"] || apiPrivateNames["owner-pending.test"] || apiPrivateNames["owner-inactive.test"] || apiPrivateNames["other-ready.test"] {
 		t.Fatalf("api key private domains mismatch: %v", apiPrivateNames)
+	}
+	apiPublicDTOs, apiPrivateDTOs := decodeAvailableDomainDTOs(t, response.Body.Bytes())
+	wildcardPublic := apiPublicDTOs["public-wildcard-only.test"]
+	if wildcardPublic.RootReady || !wildcardPublic.WildcardReady || wildcardPublic.WildcardPattern != "*.public-wildcard-only.test" || !hasCapability(wildcardPublic.Capabilities, "subdomain_mailbox") {
+		t.Fatalf("public wildcard-only capabilities mismatch: %+v", wildcardPublic)
+	}
+	wildcardPrivate := apiPrivateDTOs["owner-wildcard-only.test"]
+	if wildcardPrivate.RootReady || !wildcardPrivate.WildcardReady || wildcardPrivate.WildcardPattern != "*.owner-wildcard-only.test" || !hasCapability(wildcardPrivate.Capabilities, "subdomain_mailbox") {
+		t.Fatalf("private wildcard-only capabilities mismatch: %+v", wildcardPrivate)
 	}
 	publicDetail := perform(router, http.MethodGet, "/api/domains/"+strconv.Itoa(int(domains[0].ID)), nil, headers)
 	if publicDetail.Code != http.StatusUnauthorized {
@@ -4174,6 +4607,37 @@ func decodeAvailableDomainNames(t *testing.T, body []byte) (map[string]bool, map
 		privateNames[d.Domain] = true
 	}
 	return publicNames, privateNames
+}
+
+func decodeAvailableDomainDTOs(t *testing.T, body []byte) (map[string]availableDomainDTO, map[string]availableDomainDTO) {
+	t.Helper()
+	var payload struct {
+		Data struct {
+			PublicDomains  []availableDomainDTO `json:"public_domains"`
+			PrivateDomains []availableDomainDTO `json:"private_domains"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(body, &payload); err != nil {
+		t.Fatal(err)
+	}
+	publicDomains := make(map[string]availableDomainDTO, len(payload.Data.PublicDomains))
+	for _, d := range payload.Data.PublicDomains {
+		publicDomains[d.Domain] = d
+	}
+	privateDomains := make(map[string]availableDomainDTO, len(payload.Data.PrivateDomains))
+	for _, d := range payload.Data.PrivateDomains {
+		privateDomains[d.Domain] = d
+	}
+	return publicDomains, privateDomains
+}
+
+func hasCapability(capabilities []string, capability string) bool {
+	for _, value := range capabilities {
+		if value == capability {
+			return true
+		}
+	}
+	return false
 }
 
 func decodeHasPublicDomain(t *testing.T, body []byte) bool {

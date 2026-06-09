@@ -98,8 +98,7 @@ func runMXAutoRetryAt(ctx context.Context, checker domain.DNSChecker, nowFunc fu
 }
 
 func mxRetryResultReady(d models.Domain, result domain.CheckResult) bool {
-	wildcardRequired := d.WildcardRequested || result.WildcardChecked
-	return result.MXVerified && (!wildcardRequired || result.WildcardEnabled)
+	return result.MXVerified || result.WildcardEnabled
 }
 
 func createMXRetryExpiredNotification(db *gorm.DB, d models.Domain, message string) {

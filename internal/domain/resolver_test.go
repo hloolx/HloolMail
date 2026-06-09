@@ -66,6 +66,26 @@ func TestResolveDomainWildcardStopsAtPublicSuffix(t *testing.T) {
 	}
 }
 
+func TestResolveDomainWildcardStopsAtRegisteredChildBoundary(t *testing.T) {
+	db := domainTestDB(t)
+	resolver := Resolver{DB: db}
+	domains := []models.Domain{
+		{Domain: "example.test", Mode: models.DomainModePublic, Active: true, WildcardEnabled: true},
+		{Domain: "child.example.test", Mode: models.DomainModePrivate, Active: false},
+		{Domain: "plain.example.test", Mode: models.DomainModePrivate, Active: true, MXVerified: true},
+	}
+	if err := db.Create(&domains).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := resolver.ResolveDomain("user@child.example.test"); !errors.Is(err, ErrDomainNotFound) {
+		t.Fatalf("inactive exact child should not fall back to parent wildcard: %v", err)
+	}
+	if _, err := resolver.ResolveDomain("user@deep.plain.example.test"); !errors.Is(err, ErrDomainNotFound) {
+		t.Fatalf("registered child without wildcard should stop parent fallback: %v", err)
+	}
+}
+
 func TestNormalizeRecipient(t *testing.T) {
 	parts, err := NormalizeRecipient("Display <Demo@Example.Test>")
 	if err != nil {
@@ -73,6 +93,9 @@ func TestNormalizeRecipient(t *testing.T) {
 	}
 	if parts.Recipient != "demo@example.test" || parts.Local != "demo" || parts.Host != "example.test" {
 		t.Fatalf("unexpected parts: %#v", parts)
+	}
+	if _, err := NormalizeRecipient("demo@*.example.test"); err == nil {
+		t.Fatal("expected wildcard host in full email address to be rejected")
 	}
 }
 

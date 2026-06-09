@@ -63,7 +63,7 @@ const GENERATED_FRONTEND_PROJECTION: OpenAPIFrontendOperation[] = [
   { method: 'GET', path: '/api/emails', auth: 'apiKey', requestPath: '/api/emails', queryTemplate: 'email=verify@example.com&page=1&per_page=20', title: '邮件列表', description: '列出邮箱邮件，不会自动标记已读。' },
   { method: 'DELETE', path: '/api/emails/clear', auth: 'apiKey', requestPath: '/api/emails/clear', queryTemplate: 'email=verify@example.com', dangerous: true, title: '清空收件箱', description: '删除一个邮箱中的全部邮件。' },
   { method: 'GET', path: '/api/emails/next', auth: 'apiKey', requestPath: '/api/emails/next', queryTemplate: 'email=verify@example.com', title: '下一封未读邮件', description: '轮询最新未读邮件，并自动标记为已读。' },
-  { method: 'POST', path: '/api/generate-email', auth: 'apiKey', requestPath: '/api/generate-email', bodyTemplate: '{\n  "prefix": "verify",\n  "domain": "",\n  "share": false\n}', title: '生成邮箱', description: '创建邮箱，可同时生成带访问 key 的一次性分享 URL。' },
+  { method: 'POST', path: '/api/generate-email', auth: 'apiKey', requestPath: '/api/generate-email', bodyTemplate: '{\n  "prefix": "verify",\n  "domain": "",\n  "address_type": "root",\n  "subdomain": "",\n  "share": false\n}', title: '生成邮箱', description: '创建普通邮箱或泛子域邮箱，可同时生成带访问 key 的一次性分享 URL。' },
   { method: 'GET', path: '/api/health', auth: 'public', requestPath: '/api/health', title: '健康状态', description: '检查 API 服务是否可访问。' },
   { method: 'DELETE', path: '/api/mailboxes/:id', auth: 'apiKey', requestPath: '/api/mailboxes/45', dangerous: true, title: '删除邮箱', description: '删除一个邮箱记录及其已存储邮件。' },
   { method: 'GET', path: '/api/mailboxes', auth: 'apiKey', requestPath: '/api/mailboxes', queryTemplate: 'page=1&per_page=20', title: '邮箱列表', description: '列出 API Key 拥有者创建的邮箱。' },

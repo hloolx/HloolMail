@@ -261,7 +261,7 @@ func (j *DomainHealthJob) checkDomains(ctx context.Context, domains []models.Dom
 func (j *DomainHealthJob) checkOne(ctx context.Context, d models.Domain, runID uint, options domain.CheckOptions) domainCheckOutcome {
 	start := time.Now()
 	result, err := j.Checker.CheckDomain(ctx, d, options)
-	passed := err == nil && result.MXVerified && (!result.WildcardChecked || result.WildcardEnabled)
+	passed := err == nil && (result.MXVerified || result.WildcardEnabled)
 	status := DomainHealthStatusUnhealthy
 	if passed {
 		status = DomainHealthStatusHealthy
@@ -323,7 +323,7 @@ func (j *DomainHealthJob) applyHealthResult(d models.Domain, result domain.Check
 		slog.Warn("failed to update unhealthy domain state", "domain", d.Domain, "error", err)
 		return
 	}
-	wasUsable := d.MXVerified && (!d.WildcardRequested || d.WildcardEnabled)
+	wasUsable := d.HasMailboxCapability()
 	if wasUsable && failureCount >= settings.FailureThreshold {
 		current := strings.Join(result.MXRecords, ", ")
 		if current == "" {

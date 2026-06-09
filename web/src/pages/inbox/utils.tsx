@@ -30,14 +30,41 @@ export function domainAvailabilityGroups(data?: DomainAvailability) {
   if (!data) return { publicDomains: [] as PublicDomainItem[], privateDomains: [] as PublicDomainItem[] };
   if (data.public_domains || data.private_domains) {
     return {
-      publicDomains: data.public_domains || [],
-      privateDomains: data.private_domains || []
+      publicDomains: normalizeDomainItems(data.public_domains || []),
+      privateDomains: normalizeDomainItems(data.private_domains || [])
     };
   }
   return {
-    publicDomains: (data.domains || []).map((domain) => ({ domain, mode: 'public' as const })),
+    publicDomains: normalizeDomainItems((data.domains || []).map((domain) => ({ domain, mode: 'public' as const }))),
     privateDomains: [] as PublicDomainItem[]
   };
+}
+
+function normalizeDomainItems(domains: PublicDomainItem[]) {
+  const seen = new Set<string>();
+  const out: PublicDomainItem[] = [];
+  domains.forEach((item) => {
+    const original = item.domain.trim().toLowerCase();
+    const wildcardInput = original.startsWith('*.') || original.startsWith('*');
+    const domain = original.replace(/^\*\./, '').replace(/^\*/, '').replace(/\.+$/, '');
+    if (!domain || seen.has(domain)) return;
+    seen.add(domain);
+    out.push({
+      ...item,
+      domain,
+      root_ready: wildcardInput && item.root_ready === undefined ? false : item.root_ready,
+      wildcard_ready: wildcardInput && item.wildcard_ready === undefined ? true : item.wildcard_ready,
+      wildcard_pattern: item.wildcard_pattern || (wildcardInput ? `*.${domain}` : undefined),
+      capabilities: normalizedCapabilities(item.capabilities, wildcardInput)
+    });
+  });
+  return out;
+}
+
+function normalizedCapabilities(capabilities: string[] | undefined, wildcardInput: boolean) {
+  const set = new Set(capabilities || []);
+  if (wildcardInput) set.add('subdomain_mailbox');
+  return set.size ? Array.from(set) : undefined;
 }
 
 export function renderDomainOptions(domains: PublicDomainItem[], label: string, language: Language) {

@@ -41,7 +41,7 @@ func NormalizeRecipient(recipient string) (RecipientParts, error) {
 	}
 	local := strings.TrimSpace(value[:at])
 	host := strings.Trim(strings.TrimSpace(value[at+1:]), ".")
-	if local == "" || host == "" || strings.ContainsAny(host, " /\\<>") {
+	if local == "" || host == "" || strings.ContainsAny(host, " /\\<>*") {
 		return RecipientParts{}, fmt.Errorf("invalid recipient %q", recipient)
 	}
 	return RecipientParts{Recipient: local + "@" + host, Local: local, Host: host}, nil
@@ -61,20 +61,23 @@ func (r Resolver) ResolveDomain(recipient string) (*models.Domain, error) {
 		return nil, err
 	}
 	var exact models.Domain
-	if err := r.DB.Where("domain = ? AND active = ? AND mx_verified = ?", parts.Host, true, true).First(&exact).Error; err == nil {
-		return &exact, nil
+	if err := r.DB.Where("domain = ?", parts.Host).First(&exact).Error; err == nil {
+		if exact.IsRootMailboxReady() {
+			return &exact, nil
+		}
+		return nil, ErrDomainNotFound
 	} else if !errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, err
 	}
 
 	for _, candidate := range wildcardCandidates(parts.Host) {
 		var d models.Domain
-		err := r.DB.Where(
-			"domain = ? AND active = ? AND mx_verified = ? AND wildcard_enabled = ?",
-			candidate, true, true, true,
-		).First(&d).Error
+		err := r.DB.Where("domain = ?", candidate).First(&d).Error
 		if err == nil {
-			return &d, nil
+			if d.IsWildcardReady() {
+				return &d, nil
+			}
+			return nil, ErrDomainNotFound
 		}
 		if !errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, err

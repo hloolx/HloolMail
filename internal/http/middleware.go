@@ -54,7 +54,7 @@ func (h *Handler) optionalAPIKey() gin.HandlerFunc {
 		// These paths are intentionally outside API-key automation. Ignore any
 		// X-API-Key header so public docs/share reads and Web Console session
 		// routes do not consume API-key quota or create APIUsageLog rows.
-		if isPublicDocsPath(c.Request.URL.Path) || isPublicSharedPath(c.Request.URL.Path) || isYYDSCompatibilityPath(c.Request.URL.Path) || isSessionOnlyWebPath(c.Request.URL.Path) || isSessionOnlyManagementPath(c.Request.URL.Path) {
+		if isPublicDocsPath(c.Request.URL.Path) || isPublicBrandIconPath(c.Request.URL.Path) || isPublicSharedPath(c.Request.URL.Path) || isYYDSCompatibilityPath(c.Request.URL.Path) || isSessionOnlyWebPath(c.Request.URL.Path) || isSessionOnlyManagementPath(c.Request.URL.Path) {
 			c.Next()
 			return
 		}
@@ -75,6 +75,10 @@ func (h *Handler) optionalAPIKey() gin.HandlerFunc {
 		}
 		c.Next()
 	}
+}
+
+func isPublicBrandIconPath(path string) bool {
+	return path == "/api/brand-icon"
 }
 
 func isPublicDocsPath(path string) bool {

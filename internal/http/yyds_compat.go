@@ -34,24 +34,28 @@ type yydsAccountRequest struct {
 }
 
 type yydsAccountDTO struct {
-	ID           string    `json:"id"`
-	Address      string    `json:"address"`
-	Mode         string    `json:"mode"`
-	Domain       string    `json:"domain"`
-	Subdomain    string    `json:"subdomain"`
-	Token        string    `json:"token"`
-	InboxType    string    `json:"inboxType"`
-	Source       string    `json:"source"`
-	ExpiresAt    time.Time `json:"expiresAt"`
-	IsActive     bool      `json:"isActive"`
-	MessageCount int64     `json:"messageCount,omitempty"`
-	CreatedAt    time.Time `json:"createdAt"`
+	ID              string    `json:"id"`
+	Address         string    `json:"address"`
+	Mode            string    `json:"mode"`
+	Domain          string    `json:"domain"`
+	RootDomain      string    `json:"rootDomain,omitempty"`
+	Subdomain       string    `json:"subdomain"`
+	WildcardPattern string    `json:"wildcardPattern,omitempty"`
+	Token           string    `json:"token"`
+	InboxType       string    `json:"inboxType"`
+	Source          string    `json:"source"`
+	ExpiresAt       time.Time `json:"expiresAt"`
+	IsActive        bool      `json:"isActive"`
+	MessageCount    int64     `json:"messageCount,omitempty"`
+	CreatedAt       time.Time `json:"createdAt"`
 }
 
 type yydsDomainDTO struct {
 	ID              uint   `json:"id"`
 	Domain          string `json:"domain"`
 	Mode            string `json:"mode"`
+	RootReady       bool   `json:"rootReady"`
+	WildcardReady   bool   `json:"wildcardReady"`
 	WildcardEnabled bool   `json:"wildcardEnabled"`
 }
 
@@ -148,7 +152,7 @@ func (h *Handler) yydsListDomains(c *gin.Context) {
 		return
 	}
 	var publicDomains []models.Domain
-	if err := publicReadyDomainQuery(h.DB.Order("domain asc")).Find(&publicDomains).Error; err != nil {
+	if err := publicMailboxCapableDomainQuery(h.DB.Order("domain asc")).Find(&publicDomains).Error; err != nil {
 		fail(c, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -159,13 +163,13 @@ func (h *Handler) yydsListDomains(c *gin.Context) {
 	}
 	privateDomains := []models.Domain{}
 	if ownerID, ok := actor.ownerID(); ok {
-		if err := privateReadyDomainQuery(h.DB.Order("domain asc")).Where("owner_id = ?", ownerID).Find(&privateDomains).Error; err != nil {
+		if err := privateMailboxCapableDomainQuery(h.DB.Order("domain asc")).Where("owner_id = ?", ownerID).Find(&privateDomains).Error; err != nil {
 			fail(c, http.StatusInternalServerError, err.Error())
 			return
 		}
 	}
 	ok(c, yydsDomainsResponse{
-		Domains:        domainNames(publicDomains),
+		Domains:        domainNames(rootReadyDomains(publicDomains)),
 		PublicDomains:  yydsDomainDTOs(publicDomains),
 		PrivateDomains: yydsDomainDTOs(privateDomains),
 	})
@@ -226,7 +230,7 @@ func (h *Handler) yydsCreateAccountWithMode(c *gin.Context, wildcard bool) {
 				fail(c, http.StatusBadRequest, err.Error())
 				return
 			}
-			mailbox, _, err := h.createMailboxWithAccounting(ownerID, d, email, local, host, actor, nil)
+			mailbox, _, err := h.createMailboxWithAccounting(ownerID, d, email, local, host, wildcard || subdomain != "", actor, nil)
 			if err != nil {
 				if isUniqueConstraintError(err) && attempt+1 < maxRetries {
 					local = ""
@@ -249,6 +253,10 @@ func (h *Handler) yydsCreateAccountWithMode(c *gin.Context, wildcard bool) {
 			return
 		}
 		if existing.OwnerID == ownerID {
+			if existing.DomainID != d.ID {
+				fail(c, http.StatusConflict, "email address already belongs to another resolved domain")
+				return
+			}
 			var count int64
 			h.DB.Model(&models.Message{}).Where("mailbox_id = ?", existing.ID).Count(&count)
 			h.audit("mailbox.reuse", actor.name(), email, "yyds_compat=true")
@@ -451,6 +459,7 @@ func (h *Handler) yydsAccountTarget(input yydsAccountRequest, actor *requestActo
 	if input.Subdomain != "" && subdomain == "" {
 		return nil, "", "", "", fmt.Errorf("valid subdomain required")
 	}
+	wantsWildcard := wildcard || subdomain != "" || domainWantsWildcard(input.Domain)
 	local := sanitizeLocal(firstNonEmptyString(input.LocalPart, input.Address))
 	host := ""
 	if input.Address != "" && strings.Contains(input.Address, "@") {
@@ -470,15 +479,20 @@ func (h *Handler) yydsAccountTarget(input yydsAccountRequest, actor *requestActo
 			d = resolved
 			host = parts.Host
 			subdomain = yydsSubdomainForHost(parts.Host, d.Domain)
+			wantsWildcard = wantsWildcard || subdomain != ""
 		}
 	}
 	if d == nil {
-		d, err = h.selectDomainForActor(input.Domain, actor)
+		if wantsWildcard {
+			d, err = h.selectWildcardDomainForActor(input.Domain, actor)
+		} else {
+			d, err = h.selectDomainForActor(input.Domain, actor)
+		}
 		if err != nil {
 			return nil, "", "", "", err
 		}
 	}
-	if wildcard && subdomain == "" {
+	if wantsWildcard && subdomain == "" {
 		subdomain = randomLocal()
 	}
 	if host == "" {
@@ -489,6 +503,9 @@ func (h *Handler) yydsAccountTarget(input yydsAccountRequest, actor *requestActo
 			return nil, "", "", "", httpStatusError{Status: http.StatusBadRequest, Message: "domain wildcard MX is not enabled"}
 		}
 		host = subdomain + "." + d.Domain
+		if err := h.ensureSubdomainHostAvailable(host, d); err != nil {
+			return nil, "", "", "", err
+		}
 	}
 	if strings.Contains(host, "@") || host == "" {
 		return nil, "", "", "", fmt.Errorf("valid domain required")
@@ -501,13 +518,15 @@ func (h *Handler) ensureYydsDomainStillReady(d *models.Domain, host string, wild
 	if err := h.DB.First(&fresh, "id = ?", d.ID).Error; err != nil {
 		return err
 	}
-	if !fresh.IsRootMailboxReady() {
-		return httpStatusError{Status: http.StatusBadRequest, Message: "domain is not active or MX verified"}
-	}
 	if wildcard || !strings.EqualFold(host, fresh.Domain) {
 		if !fresh.IsWildcardReady() {
 			return httpStatusError{Status: http.StatusBadRequest, Message: "domain wildcard MX is not enabled"}
 		}
+		*d = fresh
+		return nil
+	}
+	if !fresh.IsRootMailboxReady() {
+		return httpStatusError{Status: http.StatusBadRequest, Message: "domain is not active or MX verified"}
 	}
 	*d = fresh
 	return nil
@@ -573,22 +592,26 @@ func (h *Handler) yydsMessageByID(c *gin.Context, id string) (models.Message, bo
 
 func (h *Handler) yydsAccountDTO(mailbox models.Mailbox, d *models.Domain, subdomain string, messageCount int64) yydsAccountDTO {
 	mode := "fixed"
+	wildcardPattern := ""
 	if subdomain != "" || !strings.EqualFold(mailbox.Host, d.Domain) {
 		mode = "wildcard"
+		wildcardPattern = "*." + d.Domain
 	}
 	return yydsAccountDTO{
-		ID:           strconv.FormatUint(uint64(mailbox.ID), 10),
-		Address:      mailbox.Email,
-		Mode:         mode,
-		Domain:       mailbox.Host,
-		Subdomain:    subdomain,
-		Token:        "",
-		InboxType:    "temp",
-		Source:       "api",
-		ExpiresAt:    h.yydsMailboxExpiresAt(mailbox),
-		IsActive:     true,
-		MessageCount: messageCount,
-		CreatedAt:    mailbox.CreatedAt,
+		ID:              strconv.FormatUint(uint64(mailbox.ID), 10),
+		Address:         mailbox.Email,
+		Mode:            mode,
+		Domain:          mailbox.Host,
+		RootDomain:      d.Domain,
+		Subdomain:       subdomain,
+		WildcardPattern: wildcardPattern,
+		Token:           "",
+		InboxType:       "temp",
+		Source:          "api",
+		ExpiresAt:       h.yydsMailboxExpiresAt(mailbox),
+		IsActive:        true,
+		MessageCount:    messageCount,
+		CreatedAt:       mailbox.CreatedAt,
 	}
 }
 
@@ -663,7 +686,7 @@ func (h *Handler) yydsMessageSource(msg models.Message) string {
 }
 
 func (h *Handler) canUseDomainForActor(d *models.Domain, actor *requestActor) bool {
-	if d == nil || !d.Active || !d.MXVerified {
+	if d == nil || !d.HasMailboxCapability() {
 		return false
 	}
 	if d.Mode != models.DomainModePrivate {
@@ -680,6 +703,8 @@ func yydsDomainDTOs(domains []models.Domain) []yydsDomainDTO {
 			ID:              d.ID,
 			Domain:          d.Domain,
 			Mode:            d.Mode,
+			RootReady:       d.IsRootMailboxReady(),
+			WildcardReady:   d.IsWildcardReady(),
 			WildcardEnabled: d.WildcardEnabled,
 		})
 	}

@@ -25,6 +25,8 @@ import (
 )
 
 const rootReadyDomainSQL = "mode = ? AND active = ? AND mx_verified = ?"
+const wildcardReadyDomainSQL = "mode = ? AND active = ? AND wildcard_enabled = ?"
+const mailboxCapableDomainSQL = "mode = ? AND active = ? AND (mx_verified = ? OR wildcard_enabled = ?)"
 
 func rootReadyDomainArgs(mode string) []interface{} {
 	return []interface{}{mode, true, true}
@@ -42,14 +44,38 @@ func privateReadyDomainQuery(query *gorm.DB) *gorm.DB {
 	return query.Where(rootReadyDomainSQL, rootReadyDomainArgs(models.DomainModePrivate)...)
 }
 
+func wildcardReadyDomainArgs(mode string) []interface{} {
+	return []interface{}{mode, true, true}
+}
+
+func publicWildcardReadyDomainQuery(query *gorm.DB) *gorm.DB {
+	return query.Where(wildcardReadyDomainSQL, wildcardReadyDomainArgs(models.DomainModePublic)...)
+}
+
+func privateWildcardReadyDomainQuery(query *gorm.DB) *gorm.DB {
+	return query.Where(wildcardReadyDomainSQL, wildcardReadyDomainArgs(models.DomainModePrivate)...)
+}
+
+func mailboxCapableDomainArgs(mode string) []interface{} {
+	return []interface{}{mode, true, true, true}
+}
+
+func publicMailboxCapableDomainQuery(query *gorm.DB) *gorm.DB {
+	return query.Where(mailboxCapableDomainSQL, mailboxCapableDomainArgs(models.DomainModePublic)...)
+}
+
 func ownerRootReadyPublicDomainQuery(query *gorm.DB, ownerID uint) *gorm.DB {
-	args := append([]interface{}{ownerID}, publicReadyDomainArgs()...)
-	return query.Where("owner_id = ? AND "+rootReadyDomainSQL, args...)
+	args := append([]interface{}{ownerID}, mailboxCapableDomainArgs(models.DomainModePublic)...)
+	return query.Where("owner_id = ? AND "+mailboxCapableDomainSQL, args...)
+}
+
+func privateMailboxCapableDomainQuery(query *gorm.DB) *gorm.DB {
+	return query.Where(mailboxCapableDomainSQL, mailboxCapableDomainArgs(models.DomainModePrivate)...)
 }
 
 func visibleDomainsForOwner(query *gorm.DB, ownerID uint) *gorm.DB {
-	args := append([]interface{}{ownerID}, publicReadyDomainArgs()...)
-	return query.Where("owner_id = ? OR ("+rootReadyDomainSQL+")", args...)
+	args := append([]interface{}{ownerID}, mailboxCapableDomainArgs(models.DomainModePublic)...)
+	return query.Where("owner_id = ? OR ("+mailboxCapableDomainSQL+")", args...)
 }
 
 type requestActor struct {
@@ -172,7 +198,7 @@ func (h *Handler) stats(c *gin.Context) {
 	var messages, domains, apiKeys, mailboxes, publicDomains, apiUsageToday int64
 	scope.Count(&messages)
 	domainScope.Count(&domains)
-	publicReadyDomainQuery(domainScope.Session(&gorm.Session{})).Count(&publicDomains)
+	publicMailboxCapableDomainQuery(domainScope.Session(&gorm.Session{})).Count(&publicDomains)
 	h.scopeAPIKeys(actor).Count(&apiKeys)
 	scope.Session(&gorm.Session{}).Distinct("recipient").Count(&mailboxes)
 	h.scopeAPIUsage(actor).Where("created_at >= ?", startOfDay(time.Now())).Count(&apiUsageToday)
@@ -536,9 +562,11 @@ func (h *Handler) adminMessageCountsByDay(earliest time.Time, days int) []int64 
 }
 
 type generateEmailRequest struct {
-	Prefix string          `json:"prefix"`
-	Domain string          `json:"domain"`
-	Share  json.RawMessage `json:"share"`
+	Prefix      string          `json:"prefix"`
+	Domain      string          `json:"domain"`
+	AddressType string          `json:"address_type"`
+	Subdomain   string          `json:"subdomain"`
+	Share       json.RawMessage `json:"share"`
 }
 
 type generateEmailShareOptions struct {
@@ -555,6 +583,19 @@ type generateEmailShareDTO struct {
 	URL          string     `json:"url"`
 	AccessURL    string     `json:"access_url"`
 	ExpiresAt    *time.Time `json:"expires_at,omitempty"`
+}
+
+const (
+	generateEmailAddressTypeRoot      = "root"
+	generateEmailAddressTypeSubdomain = "subdomain"
+)
+
+type generateEmailTarget struct {
+	Domain          *models.Domain
+	Host            string
+	Subdomain       string
+	AddressType     string
+	RequireWildcard bool
 }
 
 type domainPatchInput struct {
@@ -601,11 +642,17 @@ func (h *Handler) generateEmail(c *gin.Context) {
 		fail(c, http.StatusBadRequest, err.Error())
 		return
 	}
-	d, err := h.selectDomainForActor(input.Domain, actor)
+	target, err := h.generateEmailTarget(input, actor)
 	if err != nil {
+		var httpErr httpStatusError
+		if errors.As(err, &httpErr) {
+			fail(c, httpErr.Status, httpErr.Message)
+			return
+		}
 		fail(c, http.StatusBadRequest, err.Error())
 		return
 	}
+	d := target.Domain
 	ownerID, err := h.mailboxOwnerID(actor)
 	if err != nil {
 		fail(c, http.StatusForbidden, err.Error())
@@ -621,8 +668,8 @@ func (h *Handler) generateEmail(c *gin.Context) {
 		if local == "" {
 			local = randomLocal()
 		}
-		email := local + "@" + d.Domain
-		host := d.Domain
+		email := local + "@" + target.Host
+		host := target.Host
 		var existing models.Mailbox
 		err := h.DB.Where("email = ?", email).First(&existing).Error
 		if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -631,7 +678,7 @@ func (h *Handler) generateEmail(c *gin.Context) {
 				fail(c, http.StatusInternalServerError, err.Error())
 				return
 			}
-			mailbox, link, err := h.createMailboxWithAccounting(ownerID, d, email, local, host, actor, shareDraft)
+			mailbox, link, err := h.createMailboxWithAccounting(ownerID, d, email, local, host, target.RequireWildcard, actor, shareDraft)
 			if err != nil {
 				if isUniqueConstraintError(err) {
 					attempt++
@@ -658,7 +705,7 @@ func (h *Handler) generateEmail(c *gin.Context) {
 			fail(c, http.StatusInternalServerError, err.Error())
 			return
 		}
-		if existing.OwnerID == ownerID {
+		if existing.OwnerID == ownerID && existing.DomainID == d.ID {
 			var link *models.ShareLink
 			var token string
 			var accessKey string
@@ -683,6 +730,133 @@ func (h *Handler) generateEmail(c *gin.Context) {
 		}
 		local = ""
 	}
+}
+
+func (h *Handler) generateEmailTarget(input generateEmailRequest, actor *requestActor) (generateEmailTarget, error) {
+	addressType := strings.ToLower(strings.TrimSpace(input.AddressType))
+	hasSubdomain := strings.TrimSpace(input.Subdomain) != ""
+	wantsSubdomain := domainWantsWildcard(input.Domain)
+	switch addressType {
+	case "":
+		wantsSubdomain = wantsSubdomain || hasSubdomain
+	case generateEmailAddressTypeRoot:
+		if wantsSubdomain {
+			return generateEmailTarget{}, fmt.Errorf("wildcard domain input requires address_type=subdomain")
+		}
+		if hasSubdomain {
+			return generateEmailTarget{}, fmt.Errorf("subdomain requires address_type=subdomain")
+		}
+	case generateEmailAddressTypeSubdomain, "wildcard":
+		wantsSubdomain = true
+	default:
+		return generateEmailTarget{}, fmt.Errorf("address_type must be root or subdomain")
+	}
+
+	if !wantsSubdomain {
+		d, err := h.selectDomainForActor(input.Domain, actor)
+		if err != nil {
+			return generateEmailTarget{}, err
+		}
+		return generateEmailTarget{
+			Domain:      d,
+			Host:        d.Domain,
+			AddressType: generateEmailAddressTypeRoot,
+		}, nil
+	}
+
+	d, err := h.selectWildcardDomainForActor(input.Domain, actor)
+	if err != nil {
+		return generateEmailTarget{}, err
+	}
+	subdomain := sanitizeSubdomainLabel(input.Subdomain)
+	if strings.TrimSpace(input.Subdomain) != "" && subdomain == "" {
+		return generateEmailTarget{}, fmt.Errorf("valid subdomain label required")
+	}
+	if subdomain == "" {
+		subdomain = randomLocal()
+	}
+	host := subdomain + "." + d.Domain
+	if err := h.ensureSubdomainHostAvailable(host, d); err != nil {
+		return generateEmailTarget{}, err
+	}
+	return generateEmailTarget{
+		Domain:          d,
+		Host:            host,
+		Subdomain:       subdomain,
+		AddressType:     generateEmailAddressTypeSubdomain,
+		RequireWildcard: true,
+	}, nil
+}
+
+func sanitizeSubdomainLabel(value string) string {
+	value = strings.ToLower(strings.TrimSpace(value))
+	value = strings.Trim(value, ".-")
+	if value == "" || strings.Contains(value, ".") {
+		return ""
+	}
+	var builder strings.Builder
+	for _, r := range strings.Trim(value, "-") {
+		switch {
+		case r >= 'a' && r <= 'z':
+			builder.WriteRune(r)
+		case r >= '0' && r <= '9':
+			builder.WriteRune(r)
+		case r == '-':
+			builder.WriteRune(r)
+		}
+	}
+	label := strings.Trim(builder.String(), "-")
+	if len(label) > 63 {
+		return ""
+	}
+	return label
+}
+
+func (h *Handler) ensureSubdomainHostAvailable(host string, parent *models.Domain) error {
+	return ensureSubdomainHostAvailable(h.DB, host, parent)
+}
+
+func ensureSubdomainHostAvailable(db *gorm.DB, host string, parent *models.Domain) error {
+	host = domaindb.NormalizeDomain(host)
+	if host == "" || parent == nil || strings.EqualFold(host, parent.Domain) {
+		return nil
+	}
+	for _, candidate := range registeredSubdomainBoundaryCandidates(host, parent.Domain) {
+		var existing models.Domain
+		err := db.Where("domain = ?", candidate).First(&existing).Error
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			continue
+		}
+		if err != nil {
+			return err
+		}
+		if existing.ID != parent.ID {
+			return httpStatusError{Status: http.StatusConflict, Message: "subdomain is already registered as a domain; choose another subdomain"}
+		}
+	}
+	return nil
+}
+
+func registeredSubdomainBoundaryCandidates(host, parent string) []string {
+	host = domaindb.NormalizeDomain(host)
+	parent = domaindb.NormalizeDomain(parent)
+	if host == "" || parent == "" || strings.EqualFold(host, parent) || !strings.HasSuffix(host, "."+parent) {
+		return nil
+	}
+	out := []string{host}
+	current := host
+	for strings.HasSuffix(current, "."+parent) {
+		dot := strings.Index(current, ".")
+		if dot < 0 {
+			break
+		}
+		current = current[dot+1:]
+		if current == parent {
+			break
+		}
+		out = append(out, current)
+	}
+	return out
 }
 
 func parseGenerateEmailShareOptions(raw json.RawMessage) (generateEmailShareOptions, error) {
@@ -754,7 +928,24 @@ func (h *Handler) generateEmailResponse(c *gin.Context, mailbox models.Mailbox, 
 }
 
 func (h *Handler) generateEmailResponseWithShare(c *gin.Context, mailbox models.Mailbox, domain *models.Domain, reuse bool, link *models.ShareLink, token, accessKey string) gin.H {
-	out := gin.H{"email": mailbox.Email, "domain_id": domain.ID, "domain": domain}
+	subdomain := yydsSubdomainForHost(mailbox.Host, domain.Domain)
+	addressType := generateEmailAddressTypeRoot
+	if subdomain != "" {
+		addressType = generateEmailAddressTypeSubdomain
+	}
+	out := gin.H{
+		"email":        mailbox.Email,
+		"domain_id":    domain.ID,
+		"domain":       domain,
+		"local_part":   mailbox.LocalPart,
+		"host":         mailbox.Host,
+		"root_domain":  domain.Domain,
+		"address_type": addressType,
+		"subdomain":    subdomain,
+	}
+	if subdomain != "" {
+		out["wildcard_pattern"] = "*." + domain.Domain
+	}
 	if reuse {
 		out["reuse"] = true
 	}
@@ -1249,7 +1440,7 @@ func (h *Handler) availableDomains(c *gin.Context) {
 		return
 	}
 	var publicDomains []models.Domain
-	if err := publicReadyDomainQuery(h.DB.Order("domain asc")).Find(&publicDomains).Error; err != nil {
+	if err := publicMailboxCapableDomainQuery(h.DB.Order("domain asc")).Find(&publicDomains).Error; err != nil {
 		fail(c, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -1258,24 +1449,25 @@ func (h *Handler) availableDomains(c *gin.Context) {
 		fail(c, http.StatusInternalServerError, err.Error())
 		return
 	}
+	legacyPublicDomains := rootReadyDomains(publicDomains)
 	ownerID, hasOwner := actor.ownerID()
 	if !hasOwner {
 		ok(c, availableDomainsResponse{
-			Domains:                 domainNames(publicDomains),
+			Domains:                 domainNames(legacyPublicDomains),
 			PublicDomains:           availableDomainDTOsWithCountsOrEmpty(h.DB, publicDomains),
 			PrivateDomains:          []availableDomainDTO{},
 			PublicUnavailableReason: publicUnavailableReason,
 		})
 		return
 	}
-	privateQuery := privateReadyDomainQuery(h.DB.Order("domain asc")).Where("owner_id = ?", ownerID)
+	privateQuery := privateMailboxCapableDomainQuery(h.DB.Order("domain asc")).Where("owner_id = ?", ownerID)
 	var privateDomains []models.Domain
 	if err := privateQuery.Find(&privateDomains).Error; err != nil {
 		fail(c, http.StatusInternalServerError, err.Error())
 		return
 	}
 	ok(c, availableDomainsResponse{
-		Domains:                 domainNames(publicDomains),
+		Domains:                 domainNames(legacyPublicDomains),
 		PublicDomains:           availableDomainDTOsWithCountsOrEmpty(h.DB, publicDomains),
 		PrivateDomains:          availableDomainDTOsWithCountsOrEmpty(h.DB, privateDomains),
 		PublicUnavailableReason: publicUnavailableReason,
@@ -1351,7 +1543,7 @@ func (h *Handler) setDomainMXAutoRetry(c *gin.Context) {
 	}
 	now := time.Now()
 	if input.Enabled {
-		if d.HasCompleteVerification() {
+		if d.HasMailboxCapability() {
 			fail(c, http.StatusBadRequest, "domain is already verified")
 			return
 		}
@@ -1750,6 +1942,57 @@ func (h *Handler) selectDomainForActor(input string, actor *requestActor) (*mode
 	return &domains[index], nil
 }
 
+func (h *Handler) selectWildcardDomainForActor(input string, actor *requestActor) (*models.Domain, error) {
+	domainName := domaindb.NormalizeDomain(input)
+	if domainName != "" {
+		var d models.Domain
+		err := h.DB.Where("domain = ?", domainName).First(&d).Error
+		if err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return nil, fmt.Errorf("domain does not exist or current API key cannot use it")
+			}
+			return nil, err
+		}
+		if !d.Active {
+			return nil, fmt.Errorf("domain is disabled")
+		}
+		if !d.WildcardEnabled {
+			return nil, fmt.Errorf("domain wildcard MX is not enabled")
+		}
+		if d.Mode == models.DomainModePrivate {
+			if ownerID, ok := actor.ownerID(); ok && d.OwnerID != nil && *d.OwnerID == ownerID {
+				return &d, nil
+			}
+			return nil, fmt.Errorf("private domain can only be used by the domain owner")
+		}
+		return &d, nil
+	}
+
+	var candidates []models.Domain
+	if ownerID, ok := actor.ownerID(); ok {
+		var privateDomains []models.Domain
+		if err := privateWildcardReadyDomainQuery(h.DB.Order("domain asc")).Where("owner_id = ?", ownerID).Find(&privateDomains).Error; err != nil {
+			return nil, err
+		}
+		candidates = append(candidates, privateDomains...)
+	}
+
+	var publicDomains []models.Domain
+	if err := publicWildcardReadyDomainQuery(h.DB.Order("domain asc")).Find(&publicDomains).Error; err != nil {
+		return nil, err
+	}
+	filteredPublicDomains, _, err := h.filterAvailablePublicDomains(publicDomains, actor)
+	if err != nil {
+		return nil, err
+	}
+	candidates = append(candidates, filteredPublicDomains...)
+	if len(candidates) == 0 {
+		return nil, fmt.Errorf("no wildcard-enabled parent domain is available; pass a domain with wildcard MX enabled or add one in the web console")
+	}
+	index := randomIndex(len(candidates))
+	return &candidates[index], nil
+}
+
 func (h *Handler) mailboxOwnerID(actor *requestActor) (uint, error) {
 	if ownerID, ok := actor.ownerID(); ok {
 		return ownerID, nil
@@ -1840,7 +2083,7 @@ func (h *Handler) upsertDomain(rawDomain, mode string, wildcard bool, ownerID *u
 }
 
 func applyDomainVerificationLifecycle(d *models.Domain, now time.Time, allowPendingDelete bool) {
-	if d.HasCompleteVerification() {
+	if d.HasMailboxCapability() {
 		if d.FirstVerifiedAt == nil {
 			d.FirstVerifiedAt = &now
 		}
@@ -1862,10 +2105,15 @@ func domainWantsWildcard(rawDomain string) bool {
 }
 
 type availableDomainDTO struct {
-	ID           uint   `json:"id"`
-	Domain       string `json:"domain"`
-	Mode         string `json:"mode"`
-	MessageCount int64  `json:"message_count"`
+	ID                uint     `json:"id"`
+	Domain            string   `json:"domain"`
+	Mode              string   `json:"mode"`
+	MessageCount      int64    `json:"message_count"`
+	RootReady         bool     `json:"root_ready"`
+	WildcardReady     bool     `json:"wildcard_ready"`
+	WildcardRequested bool     `json:"wildcard_requested"`
+	WildcardPattern   string   `json:"wildcard_pattern,omitempty"`
+	Capabilities      []string `json:"capabilities"`
 }
 
 type webDomainDTO struct {
@@ -1900,6 +2148,19 @@ func domainNames(domains []models.Domain) []string {
 		names = append(names, d.Domain)
 	}
 	return names
+}
+
+func rootReadyDomains(domains []models.Domain) []models.Domain {
+	if len(domains) == 0 {
+		return []models.Domain{}
+	}
+	out := make([]models.Domain, 0, len(domains))
+	for _, d := range domains {
+		if d.IsRootMailboxReady() {
+			out = append(out, d)
+		}
+	}
+	return out
 }
 
 func messageCountsByDomain(db *gorm.DB, domains []models.Domain) map[string]int64 {
@@ -1955,11 +2216,27 @@ func availableDomainDTOsWithCountsOrEmpty(db *gorm.DB, domains []models.Domain) 
 	countMap := messageCountsByDomain(db, domains)
 	out := make([]availableDomainDTO, 0, len(domains))
 	for _, d := range domains {
+		capabilities := make([]string, 0, 2)
+		if d.IsRootMailboxReady() {
+			capabilities = append(capabilities, "root_mailbox")
+		}
+		if d.IsWildcardReady() {
+			capabilities = append(capabilities, "subdomain_mailbox")
+		}
+		wildcardPattern := ""
+		if d.WildcardRequested || d.WildcardEnabled {
+			wildcardPattern = "*." + d.Domain
+		}
 		out = append(out, availableDomainDTO{
-			ID:           d.ID,
-			Domain:       d.Domain,
-			Mode:         d.Mode,
-			MessageCount: countMap[d.Domain],
+			ID:                d.ID,
+			Domain:            d.Domain,
+			Mode:              d.Mode,
+			MessageCount:      countMap[d.Domain],
+			RootReady:         d.IsRootMailboxReady(),
+			WildcardReady:     d.IsWildcardReady(),
+			WildcardRequested: d.WildcardRequested,
+			WildcardPattern:   wildcardPattern,
+			Capabilities:      capabilities,
 		})
 	}
 	return out
@@ -2300,7 +2577,7 @@ func (e httpStatusError) Error() string {
 	return e.Message
 }
 
-func (h *Handler) createMailboxWithAccounting(ownerID uint, d *models.Domain, email, local, host string, actor *requestActor, share *pendingMailboxShare) (models.Mailbox, *models.ShareLink, error) {
+func (h *Handler) createMailboxWithAccounting(ownerID uint, d *models.Domain, email, local, host string, requireWildcard bool, actor *requestActor, share *pendingMailboxShare) (models.Mailbox, *models.ShareLink, error) {
 	var mailbox models.Mailbox
 	var link *models.ShareLink
 	err := h.DB.Transaction(func(tx *gorm.DB) error {
@@ -2308,8 +2585,15 @@ func (h *Handler) createMailboxWithAccounting(ownerID uint, d *models.Domain, em
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&freshDomain, "id = ?", d.ID).Error; err != nil {
 			return err
 		}
-		if !freshDomain.IsRootMailboxReady() {
-			return httpStatusError{Status: http.StatusBadRequest, Message: "域名未激活或 MX 未验证"}
+		if requireWildcard {
+			if !freshDomain.IsWildcardReady() {
+				return httpStatusError{Status: http.StatusBadRequest, Message: "domain wildcard MX is not enabled"}
+			}
+			if err := ensureSubdomainHostAvailable(tx, host, &freshDomain); err != nil {
+				return err
+			}
+		} else if !freshDomain.IsRootMailboxReady() {
+			return httpStatusError{Status: http.StatusBadRequest, Message: "domain is not active or MX verified"}
 		}
 		if freshDomain.Mode == models.DomainModePrivate {
 			if freshDomain.OwnerID == nil || *freshDomain.OwnerID != ownerID {
@@ -2377,7 +2661,7 @@ func (h *Handler) applyMailboxAccounting(tx *gorm.DB, userID uint, d models.Doma
 
 func (h *Handler) enforcePublicMailboxRules(tx *gorm.DB, userID uint, d models.Domain, settings *models.SystemQuotaSettings) error {
 	if settings.RequirePublicDomainForQuota {
-		hasPublicDomain, err := hasRootReadyPublicDomain(tx, userID)
+		hasPublicDomain, err := hasMailboxCapablePublicDomain(tx, userID)
 		if err != nil {
 			return err
 		}
@@ -2430,12 +2714,16 @@ func incrementUserPublicMailboxCount(tx *gorm.DB, userID uint, settings *models.
 	return nil
 }
 
-func hasRootReadyPublicDomain(tx *gorm.DB, userID uint) (bool, error) {
+func hasMailboxCapablePublicDomain(tx *gorm.DB, userID uint) (bool, error) {
 	var count int64
 	if err := ownerRootReadyPublicDomainQuery(tx.Model(&models.Domain{}), userID).Count(&count).Error; err != nil {
 		return false, err
 	}
 	return count > 0, nil
+}
+
+func hasRootReadyPublicDomain(tx *gorm.DB, userID uint) (bool, error) {
+	return hasMailboxCapablePublicDomain(tx, userID)
 }
 
 func (h *Handler) filterAvailablePublicDomains(domains []models.Domain, actor *requestActor) ([]models.Domain, string, error) {
@@ -2446,14 +2734,14 @@ func (h *Handler) filterAvailablePublicDomains(domains []models.Domain, actor *r
 	if actor != nil && !actor.isAdmin() && settings.RequirePublicDomainForQuota {
 		ownerID, ok := actor.ownerID()
 		if !ok {
-			return []models.Domain{}, "public mailbox creation requires an owned active MX-verified public domain", nil
+			return []models.Domain{}, "public mailbox creation requires an owned active public domain with MX or wildcard MX verified", nil
 		}
-		hasPublicDomain, err := hasRootReadyPublicDomain(h.DB, ownerID)
+		hasPublicDomain, err := hasMailboxCapablePublicDomain(h.DB, ownerID)
 		if err != nil {
 			return nil, "", err
 		}
 		if !hasPublicDomain {
-			return []models.Domain{}, "public mailbox creation requires an owned active MX-verified public domain", nil
+			return []models.Domain{}, "public mailbox creation requires an owned active public domain with MX or wildcard MX verified", nil
 		}
 	}
 	if settings.PublicDomainMailboxLimit <= 0 {

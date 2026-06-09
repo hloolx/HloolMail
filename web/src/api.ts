@@ -56,6 +56,11 @@ export type PublicDomainItem = {
   domain: string;
   mode: 'public' | 'private';
   message_count?: number;
+  root_ready?: boolean;
+  wildcard_ready?: boolean;
+  wildcard_requested?: boolean;
+  wildcard_pattern?: string;
+  capabilities?: string[];
 };
 
 export type DomainAvailability = {
