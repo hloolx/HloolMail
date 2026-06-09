@@ -464,7 +464,7 @@ func IncrementMessageDailyStat(tx *gorm.DB, at time.Time, amount int64) error {
 	return tx.Clauses(clause.OnConflict{
 		Columns: []clause.Column{{Name: "day"}},
 		DoUpdates: clause.Assignments(map[string]interface{}{
-			"message_count": gorm.Expr("message_count + ?", amount),
+			"message_count": messageDailyStatIncrementExpr(amount),
 			"updated_at":    now,
 		}),
 	}).Create(&models.MessageDailyStat{
@@ -509,7 +509,7 @@ func BackfillMessageDailyStats(db *gorm.DB) error {
 		if err := db.Clauses(clause.OnConflict{
 			Columns: []clause.Column{{Name: "day"}},
 			DoUpdates: clause.Assignments(map[string]interface{}{
-				"message_count": gorm.Expr("CASE WHEN message_count < ? THEN ? ELSE message_count END", count, count),
+				"message_count": messageDailyStatMaxExpr(count),
 				"updated_at":    now,
 			}),
 		}).Create(&models.MessageDailyStat{
@@ -522,6 +522,19 @@ func BackfillMessageDailyStats(db *gorm.DB) error {
 		}
 	}
 	return nil
+}
+
+func messageDailyStatCountColumn() clause.Column {
+	return clause.Column{Table: clause.CurrentTable, Name: "message_count"}
+}
+
+func messageDailyStatIncrementExpr(amount int64) clause.Expr {
+	return gorm.Expr("? + ?", messageDailyStatCountColumn(), amount)
+}
+
+func messageDailyStatMaxExpr(count int64) clause.Expr {
+	column := messageDailyStatCountColumn()
+	return gorm.Expr("CASE WHEN ? < ? THEN ? ELSE ? END", column, count, count, column)
 }
 
 func EnsureLoginSettings(db *gorm.DB) (*models.LoginSettings, error) {

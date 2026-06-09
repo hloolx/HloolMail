@@ -10,7 +10,9 @@ import (
 	"gptmail/internal/config"
 	"gptmail/internal/models"
 
+	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 func TestOpenSQLiteConfiguresPragmas(t *testing.T) {
@@ -236,6 +238,53 @@ func TestIncrementMessageDailyStatAccumulates(t *testing.T) {
 	}
 	if stat.MessageCount != 3 {
 		t.Fatalf("message daily stat = %d, want 3", stat.MessageCount)
+	}
+}
+
+func TestMessageDailyStatUpsertQualifiesCountColumnForPostgres(t *testing.T) {
+	database, err := gorm.Open(postgres.New(postgres.Config{
+		DSN: "postgres://user:pass@127.0.0.1:5432/hloolmail?sslmode=disable",
+	}), &gorm.Config{DryRun: true, DisableAutomaticPing: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	now := time.Date(2026, 6, 9, 12, 0, 0, 0, time.UTC)
+	incrementSQL := database.ToSQL(func(tx *gorm.DB) *gorm.DB {
+		return tx.Clauses(clause.OnConflict{
+			Columns: []clause.Column{{Name: "day"}},
+			DoUpdates: clause.Assignments(map[string]interface{}{
+				"message_count": messageDailyStatIncrementExpr(2),
+				"updated_at":    now,
+			}),
+		}).Create(&models.MessageDailyStat{
+			Day:          "2026-06-09",
+			MessageCount: 2,
+			CreatedAt:    now,
+			UpdatedAt:    now,
+		})
+	})
+	if !strings.Contains(incrementSQL, `"message_count"="message_daily_stats"."message_count" + `) {
+		t.Fatalf("increment upsert SQL did not qualify message_count: %s", incrementSQL)
+	}
+
+	backfillSQL := database.ToSQL(func(tx *gorm.DB) *gorm.DB {
+		return tx.Clauses(clause.OnConflict{
+			Columns: []clause.Column{{Name: "day"}},
+			DoUpdates: clause.Assignments(map[string]interface{}{
+				"message_count": messageDailyStatMaxExpr(69),
+				"updated_at":    now,
+			}),
+		}).Create(&models.MessageDailyStat{
+			Day:          "2026-06-09",
+			MessageCount: 69,
+			CreatedAt:    now,
+			UpdatedAt:    now,
+		})
+	})
+	if !strings.Contains(backfillSQL, `CASE WHEN "message_daily_stats"."message_count" < `) ||
+		!strings.Contains(backfillSQL, `ELSE "message_daily_stats"."message_count" END`) {
+		t.Fatalf("backfill upsert SQL did not qualify message_count: %s", backfillSQL)
 	}
 }
 
