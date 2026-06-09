@@ -1,4 +1,4 @@
-import { FormEvent, useMemo, useRef, useState } from 'react';
+import { FormEvent, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Check, Copy, ListChecks, Loader2, RefreshCw, Share2, Trash2, X } from 'lucide-react';
 import { toast } from 'sonner';
@@ -12,6 +12,8 @@ import { useCopyState } from '../hooks/useCopyState';
 import { useTableUrlState } from '../hooks/useTableUrlState';
 import { ConfirmModal, DataTable, DataTableToolbar, DataTableViewOptions, DialogShell, EmptyState, IconButton, PaginationControls } from '../components/shared';
 import type { DataTableColumn } from '../components/shared';
+import { MailboxList } from './inbox/MailboxList';
+import { MAILBOX_PAGE_SIZE } from './inbox/utils';
 
 const SHARE_PAGE_SIZE_OPTIONS = [10, 20, 50, 100];
 
@@ -206,18 +208,31 @@ export function ShareLinksPage() {
 
 function CreateShareLinkDialog({ onClose, onCreated }: { onClose: () => void; onCreated: (link: ShareLinkDTO) => void }) {
   const text = useText();
-  const [mailboxInput, setMailboxInput] = useState('');
+  const [selectedMailbox, setSelectedMailbox] = useState<MailboxInfo | null>(null);
+  const [manualMailboxID, setManualMailboxID] = useState('');
+  const [mailboxSearch, setMailboxSearch] = useState('');
+  const mailboxQuery = useDeferredValue(mailboxSearch.trim());
+  const [mailboxPage, setMailboxPage] = useState(1);
   const [expiresAt, setExpiresAt] = useState('');
-  const mailboxInputRef = useRef<HTMLInputElement | null>(null);
+  const mailboxSearchRef = useRef<HTMLInputElement | null>(null);
   const mailboxes = useQuery({
-    queryKey: ['mailboxes', 'share-links-create'],
-    queryFn: () => api<PaginatedResponse<MailboxInfo>>('/api/mailboxes?page=1&per_page=50&scope=own'),
+    queryKey: ['mailboxes', 'share-links-create', mailboxQuery, mailboxPage],
+    queryFn: () => {
+      const params = new URLSearchParams({
+        scope: 'own',
+        page: String(mailboxPage),
+        per_page: String(MAILBOX_PAGE_SIZE)
+      });
+      if (mailboxQuery) params.set('q', mailboxQuery);
+      return api<PaginatedResponse<MailboxInfo>>(`/api/mailboxes?${params.toString()}`);
+    },
     retry: false
   });
-  const mailboxOptions = mailboxes.data?.items || [];
   const create = useMutation({
     mutationFn: async () => {
-      const mailboxID = await resolveMailboxID(mailboxInput, mailboxOptions);
+      const manualID = manualMailboxID.trim() ? parseMailboxID(manualMailboxID) : 0;
+      if (manualMailboxID.trim() && !manualID) throw new Error(text.shareLinks.mailboxIDInvalid);
+      const mailboxID = manualID || selectedMailbox?.id || 0;
       if (!mailboxID) throw new Error(text.shareLinks.mailboxRequired);
       return postJSON<ShareLinkDTO>('/api/share-links', {
         resource_type: 'mailbox',
@@ -237,15 +252,29 @@ function CreateShareLinkDialog({ onClose, onCreated }: { onClose: () => void; on
     create.mutate();
   };
 
+  useEffect(() => {
+    setMailboxPage(1);
+  }, [mailboxQuery]);
+
+  useEffect(() => {
+    if (mailboxes.data && mailboxes.data.page !== mailboxPage) {
+      setMailboxPage(mailboxes.data.page);
+    }
+  }, [mailboxes.data, mailboxPage]);
+
+  const mailboxItems = mailboxes.data?.items || [];
+  const hasManualMailboxID = Boolean(manualMailboxID.trim());
+  const canCreate = Boolean(selectedMailbox || hasManualMailboxID);
+
   return (
     <DialogShell
       as="form"
-      className="modal-panel automation-dialog"
+      className="modal-panel automation-dialog share-link-create-dialog"
       titleId="share-link-create-title"
       descriptionId="share-link-create-desc"
       onClose={onClose}
       onSubmit={submit}
-      initialFocusRef={mailboxInputRef}
+      initialFocusRef={mailboxSearchRef}
     >
         <div className="modal-header">
           <div>
@@ -257,23 +286,48 @@ function CreateShareLinkDialog({ onClose, onCreated }: { onClose: () => void; on
           </IconButton>
         </div>
         <div className="automation-form">
-          <label className="api-key-field">
-            {text.shareLinks.mailboxIdOrEmail}
-            <input
-              ref={mailboxInputRef}
-              className="input"
-              list="share-mailbox-options"
-              value={mailboxInput}
-              onChange={(event) => setMailboxInput(event.target.value)}
-              placeholder={text.shareLinks.mailboxIdOrEmailPlaceholder}
-              required
+          <div className="share-mailbox-picker">
+            <MailboxList
+              text={text}
+              items={mailboxItems}
+              selectedEmail={!hasManualMailboxID ? selectedMailbox?.email || '' : ''}
+              search={mailboxSearch}
+              searchInputRef={mailboxSearchRef}
+              total={mailboxes.data?.total ?? mailboxItems.length}
+              page={mailboxes.data?.page || mailboxPage}
+              totalPages={mailboxes.data?.total_pages || 1}
+              isLoading={mailboxes.isLoading}
+              error={mailboxes.error}
+              showWhenEmpty
+              emptyLabel={text.shareLinks.mailboxPickerEmpty}
+              searchEmptyLabel={text.shareLinks.mailboxPickerSearchEmpty}
+              onRetry={() => mailboxes.refetch()}
+              onSearchChange={setMailboxSearch}
+              onPageChange={setMailboxPage}
+              onSelectMailbox={(mailbox) => {
+                setSelectedMailbox(mailbox);
+                setManualMailboxID('');
+              }}
             />
-            <datalist id="share-mailbox-options">
-              {mailboxOptions.flatMap((mailbox) => [
-                <option key={`${mailbox.id}-email`} value={mailbox.email}>{`#${mailbox.id}`}</option>,
-                <option key={`${mailbox.id}-id`} value={String(mailbox.id)}>{mailbox.email}</option>
-              ])}
-            </datalist>
+            {selectedMailbox && !hasManualMailboxID && (
+              <div className="share-mailbox-selected">
+                <span>{text.shareLinks.selectedMailbox}</span>
+                <code>{selectedMailbox.email}</code>
+              </div>
+            )}
+          </div>
+          <label className="api-key-field share-mailbox-manual">
+            {text.shareLinks.manualMailboxId}
+            <input
+              className="input"
+              inputMode="numeric"
+              value={manualMailboxID}
+              onChange={(event) => {
+                setManualMailboxID(event.target.value);
+                if (event.target.value.trim()) setSelectedMailbox(null);
+              }}
+              placeholder={text.shareLinks.manualMailboxIdPlaceholder}
+            />
           </label>
           <label className="api-key-field">
             {text.shareLinks.expiresAt}
@@ -282,7 +336,7 @@ function CreateShareLinkDialog({ onClose, onCreated }: { onClose: () => void; on
         </div>
         <div className="modal-footer">
           <button type="button" className="btn-secondary" onClick={onClose}>{text.common.cancel}</button>
-          <button className="btn-primary" disabled={create.isPending || !mailboxInput.trim()}>
+          <button className="btn-primary" disabled={create.isPending || !canCreate}>
             <Share2 size={16} />
             {text.common.create}
           </button>
@@ -420,26 +474,11 @@ function toRFC3339(value: string) {
   return date.toISOString();
 }
 
-async function resolveMailboxID(value: string, mailboxes: MailboxInfo[]) {
+function parseMailboxID(value: string) {
   const trimmed = value.trim();
   if (/^\d+$/.test(trimmed)) {
     const parsed = Number(trimmed);
     return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : 0;
   }
-  const localMatch = findMailboxByEmail(trimmed, mailboxes);
-  if (localMatch) return localMatch.id;
-  if (!trimmed.includes('@')) return 0;
-
-  const params = new URLSearchParams({
-    q: trimmed,
-    page: '1',
-    per_page: '50',
-    scope: 'own'
-  });
-  const result = await api<PaginatedResponse<MailboxInfo>>(`/api/mailboxes?${params.toString()}`);
-  return findMailboxByEmail(trimmed, result.items || [])?.id || 0;
-}
-
-function findMailboxByEmail(email: string, mailboxes: MailboxInfo[]) {
-  return mailboxes.find((mailbox) => mailbox.email.toLowerCase() === email.toLowerCase());
+  return 0;
 }

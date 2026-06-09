@@ -37,10 +37,69 @@
   width: min(100%, 36rem);
 }
 
+.share-link-create-dialog {
+  width: min(100%, 42rem);
+}
+
 .automation-form {
   display: grid;
   gap: 0.85rem;
   padding: 1rem;
+}
+
+.share-mailbox-picker {
+  display: grid;
+  min-height: 0;
+  gap: 0.65rem;
+}
+
+.share-mailbox-picker .inbox-list-section {
+  flex: 0 1 auto;
+  min-height: 0;
+}
+
+.share-mailbox-picker .inbox-scroll-list {
+  display: grid;
+  max-height: min(18rem, 36vh);
+  align-content: start;
+  gap: 0.28rem;
+}
+
+.share-mailbox-picker .pagination {
+  margin-top: 0.65rem;
+}
+
+.share-mailbox-selected {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 0.55rem;
+  border: 1px solid color-mix(in srgb, var(--focus) 24%, var(--border));
+  border-radius: 0.55rem;
+  background: color-mix(in srgb, var(--focus-soft) 42%, var(--panel));
+  padding: 0.55rem 0.65rem;
+}
+
+.share-mailbox-selected span {
+  color: var(--muted);
+  font-size: 0.74rem;
+  font-weight: 720;
+  white-space: nowrap;
+}
+
+.share-mailbox-selected code {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--foreground);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.76rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.share-mailbox-manual {
+  border-top: 1px solid color-mix(in srgb, var(--border) 72%, transparent);
+  padding-top: 0.85rem;
 }
 
 .automation-check-row {
@@ -212,6 +271,14 @@
   .one-time-secret-card,
   .shared-password-form {
     grid-template-columns: minmax(0, 1fr);
+  }
+
+  .share-mailbox-selected {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .share-mailbox-picker .inbox-scroll-list {
+    max-height: 12.5rem;
   }
 
   .one-time-secret-card .ui-button-secondary,

@@ -161,8 +161,8 @@ export function InboxPage() {
     });
   };
 
-  const selectMailbox = (mailboxEmail: string) => {
-    setEmail(mailboxEmail);
+  const selectMailbox = (mailbox: MailboxInfo) => {
+    setEmail(mailbox.email);
     setSelectedID('');
     setMobileStep('messages');
   };
