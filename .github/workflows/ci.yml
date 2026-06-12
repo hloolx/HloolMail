@@ -32,7 +32,7 @@ jobs:
           cache: true
 
       - name: Lint Go
-        uses: golangci/golangci-lint-action@v6
+        uses: golangci/golangci-lint-action@v7
         with:
           version: v2.12.2
           args: --new-from-rev=origin/main
