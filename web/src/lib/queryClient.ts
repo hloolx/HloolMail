@@ -3,9 +3,11 @@ import { toast } from 'sonner';
 import { ApiError, clearPendingGetRequests } from '../api';
 import { clearStoredRequestHistory } from '../hooks/useRequestHistory';
 import { useAppStore } from '../store';
+import type { MeResponse } from '../types';
 
 const SESSION_EXPIRED_MESSAGE = 'Session expired. Please sign in again.';
 const DEFAULT_ERROR_MESSAGE = 'Request failed. Please try again.';
+const AUTH_PROBE_QUERY_KEY = ['me'] as const;
 const USER_QUERY_ROOTS = new Set([
   'admin-announcements',
   'admin-api-interface-settings',
@@ -112,13 +114,15 @@ export function expireUserSession(queryClient: QueryClient) {
 export function clearUserSession(queryClient: QueryClient) {
   clearPendingGetRequests();
   useAppStore.getState().logout();
-  clearUserQueryCache(queryClient);
+  clearUserQueryCache(queryClient, { keepAuthProbe: true });
+  setAnonymousAuthProbe(queryClient);
   clearStoredRequestHistory();
 }
 
-export function clearUserQueryCache(queryClient: QueryClient) {
+export function clearUserQueryCache(queryClient: QueryClient, options: { keepAuthProbe?: boolean } = {}) {
   queryClient.removeQueries({
     predicate: (query) => {
+      if (options.keepAuthProbe && isAuthProbeQueryKey(query.queryKey)) return false;
       const [root] = query.queryKey;
       return typeof root === 'string' && USER_QUERY_ROOTS.has(root);
     }
@@ -139,6 +143,14 @@ function handleAuthProbeUnauthorized(error: unknown, queryClient: QueryClient, q
   if (!(error instanceof ApiError) || error.status !== 401 || queryKey[0] !== 'me') return false;
   clearUserSession(queryClient);
   return true;
+}
+
+function setAnonymousAuthProbe(queryClient: QueryClient) {
+  queryClient.setQueryData<MeResponse>(AUTH_PROBE_QUERY_KEY, { installed: true, user: null });
+}
+
+function isAuthProbeQueryKey(queryKey: readonly unknown[]) {
+  return queryKey.length === AUTH_PROBE_QUERY_KEY.length && queryKey[0] === AUTH_PROBE_QUERY_KEY[0];
 }
 
 function readErrorMessage(error: unknown) {
