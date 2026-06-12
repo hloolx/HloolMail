@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"gptmail/internal/config"
+	"gptmail/internal/ratelimit"
 
 	"github.com/gin-gonic/gin"
 )
@@ -17,7 +18,7 @@ func TestEnsureRateLimiterConcurrentInitializesOnce(t *testing.T) {
 
 	const workers = 64
 	start := make(chan struct{})
-	results := make(chan *rateLimiter, workers)
+	results := make(chan *ratelimit.Limiter, workers)
 
 	var wg sync.WaitGroup
 	wg.Add(workers)
@@ -42,6 +43,55 @@ func TestEnsureRateLimiterConcurrentInitializesOnce(t *testing.T) {
 			t.Fatal("expected all callers to receive the same rate limiter")
 		}
 	}
+}
+
+func TestRequestIDMiddlewareSetsResponseHeader(t *testing.T) {
+	gin.SetMode(gin.ReleaseMode)
+	handler := &Handler{}
+	router := gin.New()
+	router.Use(handler.requestID())
+	router.GET("/", func(c *gin.Context) {
+		c.String(http.StatusOK, requestID(c))
+	})
+
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/", nil)
+	request.Header.Set(requestIDHeader, "edge-request-id")
+	router.ServeHTTP(recorder, request)
+
+	if got := recorder.Header().Get(requestIDHeader); got != "edge-request-id" {
+		t.Fatalf("response request id = %q, want edge-request-id", got)
+	}
+	if got := recorder.Body.String(); got != "edge-request-id" {
+		t.Fatalf("context request id = %q, want edge-request-id", got)
+	}
+
+	recorder = httptest.NewRecorder()
+	router.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/", nil))
+	if got := recorder.Header().Get(requestIDHeader); got == "" {
+		t.Fatal("expected generated response request id")
+	}
+}
+
+func TestMetricsRouteRequiresEnable(t *testing.T) {
+	disabled := NewRouter(&Handler{Config: config.Config{FrontendDist: t.TempDir()}})
+	if routeRegistered(disabled, http.MethodGet, "/metrics") {
+		t.Fatal("metrics route should be disabled by default")
+	}
+
+	enabled := NewRouter(&Handler{Config: config.Config{FrontendDist: t.TempDir(), MetricsEnabled: true}})
+	if !routeRegistered(enabled, http.MethodGet, "/metrics") {
+		t.Fatal("metrics route should be registered when enabled")
+	}
+}
+
+func routeRegistered(router *gin.Engine, method, path string) bool {
+	for _, route := range router.Routes() {
+		if route.Method == method && route.Path == path {
+			return true
+		}
+	}
+	return false
 }
 
 func TestSecurityHeadersAllowTurnstile(t *testing.T) {

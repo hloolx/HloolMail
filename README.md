@@ -63,6 +63,8 @@ DEV_MODE=false
 
 本地测试可以保留 `SMTP_PORT=2525`。真实接收互联网邮件时，外部邮件服务器通常连接 TCP 25；如果服务器和云厂商允许，把 `.env` 里的 `SMTP_PORT` 改成 `25`，或在负载均衡/端口转发层把公网 25 转到容器的 2525。
 
+需要 Prometheus 指标时，将 `METRICS_ENABLED=true` 后重启应用，服务会暴露 `/metrics`。默认关闭，避免在公网部署时意外公开运行指标。
+
 使用已经发布的 GHCR 镜像：
 
 ```bash
@@ -86,7 +88,7 @@ HLOOLMAIL_DATABASE_URL=postgres://user:password@db.example.com:5432/hloolmail?ss
 然后只启动应用服务：
 
 ```bash
-docker compose up -d app
+docker compose up -d --no-deps app
 ```
 
 ## Release 二进制

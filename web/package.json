@@ -1,12 +1,16 @@
 {
   "name": "gptmail-console",
   "private": true,
-  "version": "0.7.2",
+  "version": "0.8.0",
   "type": "module",
   "scripts": {
     "dev": "vite --host 0.0.0.0",
     "build": "tsc --noEmit -p tsconfig.json && vite build",
     "lint": "eslint .",
+    "test": "vitest run --environment jsdom",
+    "gen:api:snapshot": "node scripts/generate-openapi-snapshot.cjs",
+    "gen:api": "npm run gen:api:snapshot && openapi-typescript ../openapi-snapshot.json -o src/types/generated.ts",
+    "check:api": "npm run gen:api && git diff --exit-code -- ../openapi-snapshot.json src/types/generated.ts",
     "format": "prettier --check .",
     "format:write": "prettier --write .",
     "preview": "vite preview --host 0.0.0.0"
@@ -32,10 +36,13 @@
     "eslint": "^10.4.0",
     "eslint-plugin-react-hooks": "^7.1.1",
     "eslint-plugin-react-refresh": "^0.5.2",
+    "jsdom": "^29.1.1",
+    "openapi-typescript": "^7.13.0",
     "prettier": "^3.8.3",
     "tailwindcss": "^4.1.17",
     "typescript": "^5.7.2",
     "typescript-eslint": "^8.59.4",
-    "vite": "^6.0.3"
+    "vite": "^6.0.3",
+    "vitest": "^4.1.8"
   }
 }

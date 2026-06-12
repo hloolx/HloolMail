@@ -19,6 +19,9 @@ import (
 	"gptmail/internal/frontend"
 	"gptmail/internal/jobs"
 	"gptmail/internal/mailer"
+	"gptmail/internal/ratelimit"
+
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
 type noDirFS struct {
@@ -51,7 +54,7 @@ type Handler struct {
 	Sessions     auth.SessionService
 	Hub          *events.Hub
 	DomainHealth *jobs.DomainHealthJob
-	RateLimiter  *rateLimiter
+	RateLimiter  *ratelimit.Limiter
 	AuditLogger  *AuditLogger
 	Mailer       mailer.Sender
 	EmailWorker  *emaildelivery.Worker
@@ -66,7 +69,11 @@ func NewRouter(h *Handler) *gin.Engine {
 		gin.SetMode(gin.ReleaseMode)
 	}
 	router := gin.New()
-	router.Use(gin.Recovery(), h.securityHeaders(), h.cors(), h.loadSession(), h.optionalAPIKey(), h.requireSameOriginSessionWrite())
+	router.Use(h.requestID(), h.httpMetrics(), gin.Recovery(), h.securityHeaders(), h.cors(), h.loadSession(), h.optionalAPIKey(), h.requireSameOriginSessionWrite())
+
+	if h.Config.MetricsEnabled {
+		router.GET("/metrics", h.perIPRateLimit(0.5, 2), gin.WrapH(promhttp.Handler()))
+	}
 
 	router.GET("/robots.txt", h.perIPRateLimit(1, 10), h.robotsTXT)
 	router.GET("/sitemap.xml", h.perIPRateLimit(1, 10), h.sitemapXML)

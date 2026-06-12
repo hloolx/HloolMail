@@ -14,7 +14,6 @@ import (
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
-	"gorm.io/gorm/logger"
 )
 
 func Open(cfg config.Config) (*gorm.DB, error) {
@@ -23,10 +22,17 @@ func Open(cfg config.Config) (*gorm.DB, error) {
 		driver = "postgres"
 	}
 
-	gormConfig := &gorm.Config{Logger: logger.Default.LogMode(logger.Warn)}
+	gormConfig := &gorm.Config{Logger: newGormLogger()}
 	switch driver {
 	case "postgres", "postgresql":
-		return gorm.Open(postgres.Open(cfg.DatabaseURL), gormConfig)
+		db, err := gorm.Open(postgres.Open(cfg.DatabaseURL), gormConfig)
+		if err != nil {
+			return nil, err
+		}
+		if err := configurePostgresPool(db, cfg); err != nil {
+			return nil, err
+		}
+		return db, nil
 	case "sqlite", "sqlite3", "":
 		return openSQLite(cfg.DatabaseURL, gormConfig)
 	default:
@@ -108,6 +114,29 @@ func configureSQLitePool(db *gorm.DB) error {
 	return nil
 }
 
+func configurePostgresPool(db *gorm.DB, cfg config.Config) error {
+	sqlDB, err := db.DB()
+	if err != nil {
+		return err
+	}
+	maxOpen := cfg.DBMaxOpenConns
+	if maxOpen <= 0 {
+		maxOpen = 25
+	}
+	maxIdle := cfg.DBMaxIdleConns
+	if maxIdle < 0 {
+		maxIdle = 0
+	}
+	if maxIdle > maxOpen {
+		maxIdle = maxOpen
+	}
+	sqlDB.SetMaxOpenConns(maxOpen)
+	sqlDB.SetMaxIdleConns(maxIdle)
+	sqlDB.SetConnMaxLifetime(time.Hour)
+	sqlDB.SetConnMaxIdleTime(10 * time.Minute)
+	return nil
+}
+
 func configureSQLite(db *gorm.DB) error {
 	pragmas := []string{
 		"PRAGMA journal_mode=WAL",
@@ -123,6 +152,9 @@ func configureSQLite(db *gorm.DB) error {
 }
 
 func AutoMigrate(db *gorm.DB) error {
+	if err := RunMigrations(db); err != nil {
+		return err
+	}
 	hadPendingRegistrationTable := db.Migrator().HasTable(&models.PendingRegistration{})
 	if err := db.AutoMigrate(
 		&models.User{},

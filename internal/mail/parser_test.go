@@ -173,6 +173,122 @@ func TestParseWithOptionsRejectsTooManyMIMEParts(t *testing.T) {
 	}
 }
 
+func TestParseMIMEBoundaryCases(t *testing.T) {
+	tests := []struct {
+		name             string
+		raw              string
+		wantText         string
+		wantHTML         string
+		wantAttachments  int
+		wantErrSubstring string
+	}{
+		{
+			name: "nested alternative in mixed message",
+			raw: "From: Sender <sender@test.local>\r\n" +
+				"To: demo@example.test\r\n" +
+				"Subject: Nested boundaries\r\n" +
+				"MIME-Version: 1.0\r\n" +
+				"Content-Type: multipart/mixed; boundary=mix\r\n\r\n" +
+				"ignored preamble\r\n" +
+				"--mix\r\n" +
+				"Content-Type: multipart/alternative; boundary=alt\r\n\r\n" +
+				"--alt\r\n" +
+				"Content-Type: text/plain; charset=utf-8\r\n" +
+				"Content-Transfer-Encoding: quoted-printable\r\n\r\n" +
+				"Plain body=0A--mix is only text here\r\n" +
+				"--alt\r\n" +
+				"Content-Type: text/html; charset=utf-8\r\n" +
+				"Content-Transfer-Encoding: base64\r\n\r\n" +
+				"PHA+SFRNTCBib2R5PC9wPg==\r\n" +
+				"--alt--\r\n" +
+				"--mix\r\n" +
+				"Content-Type: application/octet-stream; name=file.bin\r\n" +
+				"Content-Disposition: attachment; filename=file.bin\r\n\r\n" +
+				"binary-data\r\n" +
+				"--mix--\r\n" +
+				"ignored epilogue\r\n",
+			wantText:        "Plain body\n--mix is only text here",
+			wantHTML:        "<p>HTML body</p>",
+			wantAttachments: 1,
+		},
+		{
+			name: "quoted boundary with punctuation",
+			raw: "From: Sender <sender@test.local>\r\n" +
+				"To: demo@example.test\r\n" +
+				"Subject: Quoted boundary\r\n" +
+				"MIME-Version: 1.0\r\n" +
+				"Content-Type: multipart/alternative; boundary=\"=_weird.boundary+123\"\r\n\r\n" +
+				"--=_weird.boundary+123\r\n" +
+				"Content-Type: text/plain; charset=utf-8\r\n\r\n" +
+				"quoted boundary text\r\n" +
+				"--=_weird.boundary+123\r\n" +
+				"Content-Type: text/html; charset=utf-8\r\n\r\n" +
+				"<p>quoted boundary html</p>\r\n" +
+				"--=_weird.boundary+123--\r\n",
+			wantText: "quoted boundary text",
+			wantHTML: "<p>quoted boundary html</p>",
+		},
+		{
+			name: "lookalike boundary remains in text body",
+			raw: "From: Sender <sender@test.local>\r\n" +
+				"To: demo@example.test\r\n" +
+				"Subject: Boundary-like text\r\n" +
+				"MIME-Version: 1.0\r\n" +
+				"Content-Type: multipart/mixed; boundary=real-boundary\r\n\r\n" +
+				"--real-boundary\r\n" +
+				"Content-Type: text/plain; charset=utf-8\r\n\r\n" +
+				"first line\r\n--fake-boundary\r\ninline --real-boundary marker is text\r\nlast line\r\n" +
+				"--real-boundary--\r\n",
+			wantText: "first line\r\n--fake-boundary\r\ninline --real-boundary marker is text\r\nlast line",
+		},
+		{
+			name: "multipart without boundary is ignored",
+			raw: "From: Sender <sender@test.local>\r\n" +
+				"To: demo@example.test\r\n" +
+				"Subject: Missing boundary\r\n" +
+				"MIME-Version: 1.0\r\n" +
+				"Content-Type: multipart/mixed\r\n\r\n" +
+				"this body cannot be split without a boundary\r\n",
+		},
+		{
+			name: "truncated multipart reports parse error",
+			raw: "From: Sender <sender@test.local>\r\n" +
+				"To: demo@example.test\r\n" +
+				"Subject: Truncated boundary\r\n" +
+				"MIME-Version: 1.0\r\n" +
+				"Content-Type: multipart/mixed; boundary=outer\r\n\r\n" +
+				"--outer\r\n" +
+				"Content-Type: text/plain; charset=utf-8\r\n\r\n" +
+				"body without a closing boundary",
+			wantErrSubstring: "unexpected EOF",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			parsed, err := Parse([]byte(tt.raw))
+			if tt.wantErrSubstring != "" {
+				if err == nil || !strings.Contains(err.Error(), tt.wantErrSubstring) {
+					t.Fatalf("error = %v, want substring %q", err, tt.wantErrSubstring)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if strings.TrimSpace(parsed.Text) != tt.wantText {
+				t.Fatalf("text = %q, want %q", parsed.Text, tt.wantText)
+			}
+			if strings.TrimSpace(parsed.HTML) != tt.wantHTML {
+				t.Fatalf("html = %q, want %q", parsed.HTML, tt.wantHTML)
+			}
+			if len(parsed.Attachments) != tt.wantAttachments {
+				t.Fatalf("attachments = %d, want %d", len(parsed.Attachments), tt.wantAttachments)
+			}
+		})
+	}
+}
+
 func TestParseWithOptionsRejectsOversizedTextBody(t *testing.T) {
 	raw := []byte("From: Sender <sender@test.local>\r\n" +
 		"To: demo@example.test\r\n" +

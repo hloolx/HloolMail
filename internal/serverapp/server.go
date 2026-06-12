@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -21,6 +22,7 @@ import (
 	httpapi "gptmail/internal/http"
 	"gptmail/internal/jobs"
 	"gptmail/internal/models"
+	"gptmail/internal/ratelimit"
 	smtpserver "gptmail/internal/smtp"
 	"gptmail/internal/webhook"
 )
@@ -33,6 +35,12 @@ func RunWithSignals() error {
 
 func Run(ctx context.Context) error {
 	cfg := config.Load()
+	if validationErrs := cfg.Validate(); len(validationErrs) > 0 {
+		return fmt.Errorf("invalid configuration: %w", errors.Join(validationErrs...))
+	}
+	if strings.Contains(cfg.DatabaseURL, "local-dev-only-change-me") {
+		slog.Warn("DATABASE_URL contains the compose example password; set POSTGRES_PASSWORD or HLOOLMAIL_DATABASE_URL before production use")
+	}
 	database, err := db.Open(cfg)
 	if err != nil {
 		return fmt.Errorf("database open failed: %w", err)
@@ -78,7 +86,7 @@ func Run(ctx context.Context) error {
 		Sessions:     auth.NewSessionService(cfg.SessionSecret, database),
 		Hub:          hub,
 		DomainHealth: healthJob,
-		RateLimiter:  httpapi.NewRateLimiter(),
+		RateLimiter:  ratelimit.New(),
 		AuditLogger:  auditLogger,
 	}
 	server := &http.Server{

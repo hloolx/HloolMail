@@ -3,6 +3,9 @@ package config
 import (
 	"bufio"
 	"fmt"
+	"log/slog"
+	"net"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -35,6 +38,8 @@ type Config struct {
 	MXStrict                           bool
 	DatabaseDriver                     string
 	DatabaseURL                        string
+	DBMaxOpenConns                     int
+	DBMaxIdleConns                     int
 	MaxMessageBytes                    int64
 	MaxAttachmentBytes                 int64
 	MessageRetention                   time.Duration
@@ -51,6 +56,7 @@ type Config struct {
 	AuditLogRetentionDays              int
 	AuditActivityRetentionDays         int
 	WebhooksEnabled                    bool
+	MetricsEnabled                     bool
 	DisablePendingDomainDataProtection bool
 	GitHubOAuth                        OAuthProviderConfig
 	LinuxDoOAuth                       OAuthProviderConfig
@@ -82,6 +88,8 @@ func Load() Config {
 		MXStrict:                           getBool("MX_STRICT", false),
 		DatabaseDriver:                     strings.ToLower(getEnv("DATABASE_DRIVER", "sqlite")),
 		DatabaseURL:                        getEnv("DATABASE_URL", DefaultSQLiteDatabaseURL),
+		DBMaxOpenConns:                     getInt("DB_MAX_OPEN_CONNS", 25),
+		DBMaxIdleConns:                     getInt("DB_MAX_IDLE_CONNS", 5),
 		MaxMessageBytes:                    maxMessageBytes,
 		MaxAttachmentBytes:                 getInt64("MAX_ATTACHMENT_BYTES", maxMessageBytes),
 		MessageRetention:                   time.Duration(retentionHours) * time.Hour,
@@ -98,9 +106,114 @@ func Load() Config {
 		AuditLogRetentionDays:              getInt("AUDIT_LOG_RETENTION_DAYS", 180),
 		AuditActivityRetentionDays:         getInt("AUDIT_ACTIVITY_RETENTION_DAYS", 30),
 		WebhooksEnabled:                    getBool("WEBHOOKS_ENABLED", true),
+		MetricsEnabled:                     getBool("METRICS_ENABLED", false),
 		DisablePendingDomainDataProtection: getBool("DISABLE_PENDING_DOMAIN_DATA_PROTECTION", false),
 		GitHubOAuth:                        gitHubOAuth,
 		LinuxDoOAuth:                       linuxDoOAuth,
+	}
+}
+
+func (c Config) Validate() []error {
+	var errs []error
+	if err := validateListenAddr("HTTP_ADDR", c.HTTPAddr); err != nil {
+		errs = append(errs, err)
+	}
+	if err := validateListenAddr("SMTP_ADDR", c.SMTPAddr); err != nil {
+		errs = append(errs, err)
+	}
+	if err := validateAbsoluteURL("PUBLIC_BASE_URL", c.PublicBaseURL); err != nil {
+		errs = append(errs, err)
+	}
+	if strings.TrimSpace(c.AllowedOrigin) != "" {
+		if err := validateAbsoluteURL("ALLOWED_ORIGIN", c.AllowedOrigin); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	driver := strings.ToLower(strings.TrimSpace(c.DatabaseDriver))
+	if strings.HasPrefix(strings.TrimSpace(c.DatabaseURL), "postgres://") || strings.HasPrefix(strings.TrimSpace(c.DatabaseURL), "postgresql://") {
+		driver = "postgres"
+	}
+	switch driver {
+	case "sqlite", "sqlite3", "postgres", "postgresql", "":
+	default:
+		errs = append(errs, fmt.Errorf("DATABASE_DRIVER unsupported: %q", c.DatabaseDriver))
+	}
+	if strings.TrimSpace(c.DatabaseURL) == "" {
+		errs = append(errs, fmt.Errorf("DATABASE_URL must not be empty"))
+	}
+	if c.DBMaxOpenConns < 1 {
+		errs = append(errs, fmt.Errorf("DB_MAX_OPEN_CONNS must be at least 1"))
+	}
+	if c.DBMaxIdleConns < 0 {
+		errs = append(errs, fmt.Errorf("DB_MAX_IDLE_CONNS must not be negative"))
+	}
+	if isPostgresDriver(driver) && c.DBMaxIdleConns > c.DBMaxOpenConns {
+		errs = append(errs, fmt.Errorf("DB_MAX_IDLE_CONNS must be less than or equal to DB_MAX_OPEN_CONNS"))
+	}
+	if c.MaxMessageBytes <= 0 {
+		errs = append(errs, fmt.Errorf("MAX_MESSAGE_BYTES must be greater than 0"))
+	}
+	if c.MaxAttachmentBytes < 0 {
+		errs = append(errs, fmt.Errorf("MAX_ATTACHMENT_BYTES must not be negative"))
+	}
+	if c.MaxAttachmentBytes > c.MaxMessageBytes {
+		errs = append(errs, fmt.Errorf("MAX_ATTACHMENT_BYTES must be less than or equal to MAX_MESSAGE_BYTES"))
+	}
+	if c.MessageRetention <= 0 {
+		errs = append(errs, fmt.Errorf("MESSAGE_RETENTION_HOURS must be greater than 0"))
+	}
+	if c.APIKeyDefaultDailyCap < 0 {
+		errs = append(errs, fmt.Errorf("API_KEY_DEFAULT_DAILY_LIMIT must not be negative"))
+	}
+	if c.AuditLogRetentionDays <= 0 {
+		errs = append(errs, fmt.Errorf("AUDIT_LOG_RETENTION_DAYS must be greater than 0"))
+	}
+	if c.AuditActivityRetentionDays <= 0 {
+		errs = append(errs, fmt.Errorf("AUDIT_ACTIVITY_RETENTION_DAYS must be greater than 0"))
+	}
+	return errs
+}
+
+func isPostgresDriver(driver string) bool {
+	switch strings.ToLower(strings.TrimSpace(driver)) {
+	case "postgres", "postgresql":
+		return true
+	default:
+		return false
+	}
+}
+
+func validateListenAddr(name, value string) error {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return fmt.Errorf("%s must not be empty", name)
+	}
+	if _, port, err := net.SplitHostPort(value); err == nil {
+		if _, err := strconv.Atoi(port); err != nil {
+			return fmt.Errorf("%s has invalid port %q", name, port)
+		}
+		return nil
+	}
+	if _, err := strconv.Atoi(value); err == nil {
+		return fmt.Errorf("%s must include a host separator, for example :%s", name, value)
+	}
+	return fmt.Errorf("%s must be a valid host:port listen address", name)
+}
+
+func validateAbsoluteURL(name, value string) error {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return nil
+	}
+	parsed, err := url.Parse(value)
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+		return fmt.Errorf("%s must be an absolute URL", name)
+	}
+	switch strings.ToLower(parsed.Scheme) {
+	case "http", "https":
+		return nil
+	default:
+		return fmt.Errorf("%s must use http or https scheme", name)
 	}
 }
 
@@ -204,6 +317,7 @@ func getInt(key string, fallback int) int {
 	}
 	parsed, err := strconv.Atoi(value)
 	if err != nil {
+		slog.Warn("invalid integer configuration, using fallback", "key", key, "value", value, "fallback", fallback, "error", err)
 		return fallback
 	}
 	return parsed
@@ -216,6 +330,7 @@ func getInt64(key string, fallback int64) int64 {
 	}
 	parsed, err := strconv.ParseInt(value, 10, 64)
 	if err != nil {
+		slog.Warn("invalid integer configuration, using fallback", "key", key, "value", value, "fallback", fallback, "error", err)
 		return fallback
 	}
 	return parsed

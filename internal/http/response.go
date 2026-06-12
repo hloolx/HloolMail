@@ -1,7 +1,7 @@
 package httpapi
 
 import (
-	"log"
+	"log/slog"
 	"net/http"
 
 	"gptmail/internal/auth"
@@ -82,7 +82,7 @@ func logInternalHTTPError(c *gin.Context, status int, message string) {
 			path = c.Request.URL.RequestURI()
 		}
 	}
-	log.Printf("http 5xx response redacted: status=%d method=%s path=%s error=%s", status, method, path, message)
+	slog.Error("http 5xx response redacted", "status", status, "method", method, "path", path, "error", message, "request_id", requestID(c))
 }
 
 func usage(c *gin.Context) map[string]string {

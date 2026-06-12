@@ -6,7 +6,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"log"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"strings"
@@ -15,8 +15,11 @@ import (
 	"gptmail/internal/auth"
 	"gptmail/internal/config"
 	"gptmail/internal/models"
+	"gptmail/internal/observability"
+	"gptmail/internal/ratelimit"
 
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 	"golang.org/x/time/rate"
 	"gorm.io/gorm"
 )
@@ -24,6 +27,37 @@ import (
 const userContext = "user"
 const apiKeyUserContext = "api_key_user"
 const noIndexRobotsTag = "noindex, nofollow, noarchive"
+const requestIDContext = "request_id"
+const requestIDHeader = "X-Request-ID"
+
+func (h *Handler) requestID() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		id := strings.TrimSpace(c.GetHeader(requestIDHeader))
+		if id == "" || len(id) > 128 {
+			id = uuid.NewString()
+		}
+		c.Set(requestIDContext, id)
+		c.Header(requestIDHeader, id)
+		c.Next()
+	}
+}
+
+func (h *Handler) httpMetrics() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		start := time.Now()
+		c.Next()
+		observability.ObserveHTTPRequest(c.Request.Method, rateLimitRoute(c), c.Writer.Status(), time.Since(start))
+	}
+}
+
+func requestID(c *gin.Context) string {
+	if c == nil {
+		return ""
+	}
+	value, _ := c.Get(requestIDContext)
+	id, _ := value.(string)
+	return id
+}
 
 func (h *Handler) loadSession() gin.HandlerFunc {
 	return func(c *gin.Context) {
@@ -34,8 +68,8 @@ func (h *Handler) loadSession() gin.HandlerFunc {
 		}
 		claims, err := h.Sessions.Verify(cookie)
 		if err != nil {
-			log.Println("session verify failed:", err)
-			c.SetCookie("gptmail_session", "", -1, "/", "", false, true)
+			slog.Warn("session verify failed", "error", err)
+			clearSessionCookie(c)
 			c.Next()
 			return
 		}
@@ -43,7 +77,7 @@ func (h *Handler) loadSession() gin.HandlerFunc {
 		if err := h.DB.First(&user, "id = ? AND enabled = ?", claims.UserID, true).Error; err == nil {
 			c.Set(userContext, &user)
 		} else {
-			c.SetCookie("gptmail_session", "", -1, "/", "", false, true)
+			clearSessionCookie(c)
 		}
 		c.Next()
 	}
@@ -164,19 +198,20 @@ func (h *Handler) allowAPIKeyAuthAttempt(c *gin.Context) bool {
 	limiter := h.ensureRateLimiter()
 	route := rateLimitRoute(c)
 	ip := c.ClientIP()
-	if !limiter.allow("api-key-auth:global:"+route, rate.Limit(50), 200) {
+	if !limiter.Allow("api-key-auth:global:"+route, rate.Limit(50), 200) {
 		return false
 	}
-	return limiter.allow("api-key-auth:ip:"+ip+":"+route, rate.Limit(5), 20)
+	return limiter.Allow("api-key-auth:ip:"+ip+":"+route, rate.Limit(5), 20)
 }
 
 func (h *Handler) logAPIKeyAuthFailure(c *gin.Context, plain string, err error) {
-	log.Printf(
-		"api key auth failed: fingerprint=%s ip=%s path=%s reason=%s",
-		apiKeyAttemptFingerprint(plain),
-		c.ClientIP(),
-		c.Request.URL.Path,
-		err.Error(),
+	slog.Warn(
+		"api key auth failed",
+		"fingerprint", apiKeyAttemptFingerprint(plain),
+		"ip", c.ClientIP(),
+		"path", c.Request.URL.Path,
+		"reason", err.Error(),
+		"request_id", requestID(c),
 	)
 }
 
@@ -428,7 +463,7 @@ func (h *Handler) perAPIRateLimit(limit rate.Limit, burst int) gin.HandlerFunc {
 			c.Next()
 			return
 		}
-		if !h.ensureRateLimiter().allow("api:"+identifier+":"+rateLimitRoute(c), limit, burst) {
+		if !h.ensureRateLimiter().Allow("api:"+identifier+":"+rateLimitRoute(c), limit, burst) {
 			fail(c, http.StatusTooManyRequests, "rate limit exceeded")
 			c.Abort()
 			return
@@ -440,7 +475,7 @@ func (h *Handler) perAPIRateLimit(limit rate.Limit, burst int) gin.HandlerFunc {
 func (h *Handler) perIPRateLimit(limit rate.Limit, burst int) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		identifier := "ip:" + c.ClientIP()
-		if !h.ensureRateLimiter().allow(identifier+":"+rateLimitRoute(c), limit, burst) {
+		if !h.ensureRateLimiter().Allow(identifier+":"+rateLimitRoute(c), limit, burst) {
 			fail(c, http.StatusTooManyRequests, "rate limit exceeded")
 			c.Abort()
 			return
@@ -449,10 +484,10 @@ func (h *Handler) perIPRateLimit(limit rate.Limit, burst int) gin.HandlerFunc {
 	}
 }
 
-func (h *Handler) ensureRateLimiter() *rateLimiter {
+func (h *Handler) ensureRateLimiter() *ratelimit.Limiter {
 	h.rateLimiterOnce.Do(func() {
 		if h.RateLimiter == nil {
-			h.RateLimiter = NewRateLimiter()
+			h.RateLimiter = ratelimit.New()
 		}
 	})
 	return h.RateLimiter
@@ -586,10 +621,11 @@ func (h *Handler) consumeUserQuota(c *gin.Context) bool {
 	method := c.Request.Method
 	ip := c.ClientIP()
 	userAgent := c.Request.UserAgent()
+	reqID := requestID(c)
 	go func() {
 		defer func() {
 			if recovered := recover(); recovered != nil {
-				log.Printf("api usage log panic: user_id=%d path=%s method=%s panic=%v", userID, path, method, recovered)
+				slog.Error("api usage log panic", "user_id", userID, "path", path, "method", method, "panic", recovered, "request_id", reqID)
 			}
 		}()
 		if err := h.DB.Create(&models.APIUsageLog{
@@ -599,7 +635,7 @@ func (h *Handler) consumeUserQuota(c *gin.Context) bool {
 			IP:        ip,
 			UserAgent: userAgent,
 		}).Error; err != nil {
-			log.Printf("api usage log failed: user_id=%d path=%s method=%s error=%v", userID, path, method, err)
+			slog.Warn("api usage log failed", "user_id", userID, "path", path, "method", method, "error", err, "request_id", reqID)
 		}
 	}()
 	return true

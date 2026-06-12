@@ -637,6 +637,19 @@ func Operations() []Operation {
 	return out
 }
 
+func RegisteredRoutes() []RegisteredRoute {
+	ops := Operations()
+	out := make([]RegisteredRoute, 0, len(ops))
+	for _, op := range ops {
+		out = append(out, RegisteredRoute{
+			ID:     op.ID,
+			Method: op.Method,
+			Path:   op.Path,
+		})
+	}
+	return out
+}
+
 func AutomationOperations() []Operation {
 	return filterOperations(func(op Operation) bool { return op.IsAutomation() })
 }

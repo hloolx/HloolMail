@@ -36,4 +36,6 @@ ENV HTTP_ADDR=:3000 \
     DATABASE_DRIVER=sqlite \
     DATABASE_URL=/app/storage/hlool-mail.db
 EXPOSE 3000 2525
+HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
+  CMD wget -q -O /dev/null http://127.0.0.1:3000/api/health || exit 1
 CMD ["hloolmail"]

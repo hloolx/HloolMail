@@ -61,6 +61,12 @@ type Operation struct {
 	Frontend    *FrontendHints
 }
 
+type RegisteredRoute struct {
+	ID     string
+	Method string
+	Path   string
+}
+
 func (op Operation) DisplayPath() string {
 	path := op.Path
 	for {

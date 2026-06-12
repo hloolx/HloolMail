@@ -23,10 +23,13 @@ services:
       MX_STRICT: "${MX_STRICT:-false}"
       DATABASE_DRIVER: "postgres"
       DATABASE_URL: "${HLOOLMAIL_DATABASE_URL:-postgres://${POSTGRES_USER:-hloolmail}:${POSTGRES_PASSWORD:-local-dev-only-change-me}@postgres:5432/${POSTGRES_DB:-hloolmail}?sslmode=disable}"
+      DB_MAX_OPEN_CONNS: "${DB_MAX_OPEN_CONNS:-25}"
+      DB_MAX_IDLE_CONNS: "${DB_MAX_IDLE_CONNS:-5}"
       FRONTEND_DIST: "${HLOOLMAIL_FRONTEND_DIST:-}"
       MESSAGE_RETENTION_HOURS: "${MESSAGE_RETENTION_HOURS:-24}"
       AUDIT_LOG_RETENTION_DAYS: "${AUDIT_LOG_RETENTION_DAYS:-180}"
       AUDIT_ACTIVITY_RETENTION_DAYS: "${AUDIT_ACTIVITY_RETENTION_DAYS:-30}"
+      METRICS_ENABLED: "${METRICS_ENABLED:-false}"
       WEBHOOKS_ENABLED: "${WEBHOOKS_ENABLED:-true}"
       DISABLE_PENDING_DOMAIN_DATA_PROTECTION: "${DISABLE_PENDING_DOMAIN_DATA_PROTECTION:-false}"
       MAX_MESSAGE_BYTES: "${MAX_MESSAGE_BYTES:-10485760}"
@@ -48,6 +51,15 @@ services:
       CONFIG_ENV_PATH: "/app/storage/.env"
     volumes:
       - app-storage:/app/storage
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:3000/api/health"]
+      interval: 30s
+      timeout: 5s
+      start_period: 15s
+      retries: 3
     restart: unless-stopped
 
   postgres:

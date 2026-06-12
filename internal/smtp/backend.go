@@ -15,6 +15,7 @@ import (
 	"gptmail/internal/events"
 	mailparser "gptmail/internal/mail"
 	"gptmail/internal/models"
+	"gptmail/internal/observability"
 	"gptmail/internal/webhook"
 
 	gosmtp "github.com/emersion/go-smtp"
@@ -60,10 +61,12 @@ func (s *Session) Mail(from string, _ *gosmtp.MailOptions) error {
 func (s *Session) Rcpt(to string, _ *gosmtp.RcptOptions) error {
 	parts, err := domain.NormalizeRecipient(to)
 	if err != nil {
+		observability.ObserveSMTPMessageRejected("invalid_recipient")
 		return &gosmtp.SMTPError{Code: 550, Message: "invalid recipient"}
 	}
 	resolved, err := s.service.Resolver.ResolveDomain(parts.Recipient)
 	if err != nil {
+		observability.ObserveSMTPMessageRejected("unknown_domain")
 		return &gosmtp.SMTPError{Code: 550, Message: "unknown recipient domain"}
 	}
 	ownerID, mailboxID, err := s.resolveRecipientOwner(parts, resolved)
@@ -90,12 +93,15 @@ func (s *Session) resolveRecipientOwner(parts domain.RecipientParts, resolved *m
 	}
 	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
 		slog.Warn("smtp failed to resolve recipient mailbox", "recipient", parts.Recipient, "error", err)
+		observability.ObserveSMTPMessageRejected("recipient_lookup_error")
 		return 0, nil, &gosmtp.SMTPError{Code: 451, Message: "failed to resolve recipient"}
 	}
 	if resolved.Mode == models.DomainModePublic {
+		observability.ObserveSMTPMessageRejected("mailbox_not_found")
 		return 0, nil, &gosmtp.SMTPError{Code: 550, Message: "mailbox not found"}
 	}
 	if resolved.OwnerID == nil {
+		observability.ObserveSMTPMessageRejected("recipient_owner_missing")
 		return 0, nil, &gosmtp.SMTPError{Code: 550, Message: "recipient owner not found"}
 	}
 	return *resolved.OwnerID, nil, nil
@@ -103,14 +109,17 @@ func (s *Session) resolveRecipientOwner(parts domain.RecipientParts, resolved *m
 
 func (s *Session) Data(r io.Reader) error {
 	if len(s.recipients) == 0 {
+		observability.ObserveSMTPMessageRejected("no_valid_recipients")
 		return &gosmtp.SMTPError{Code: 554, Message: "no valid recipients"}
 	}
 	raw, err := readLimited(r, s.service.Config.MaxMessageBytes)
 	if err != nil {
 		if errors.Is(err, errMessageTooLarge) {
+			observability.ObserveSMTPMessageRejected("message_too_large")
 			return &gosmtp.SMTPError{Code: 552, Message: "message exceeds size limit"}
 		}
 		slog.Warn("smtp failed to read message", "error", err)
+		observability.ObserveSMTPMessageRejected("read_error")
 		return &gosmtp.SMTPError{Code: 451, Message: "failed to read message"}
 	}
 	parsed, err := mailparser.ParseWithOptions(raw, mailparser.ParseOptions{
@@ -119,9 +128,11 @@ func (s *Session) Data(r io.Reader) error {
 	})
 	if err != nil {
 		if errors.Is(err, mailparser.ErrAttachmentTooLarge) {
+			observability.ObserveSMTPMessageRejected("attachment_too_large")
 			return &gosmtp.SMTPError{Code: 552, Message: "attachment exceeds size limit"}
 		}
 		slog.Warn("smtp failed to parse message", "error", err)
+		observability.ObserveSMTPMessageRejected("parse_error")
 		return &gosmtp.SMTPError{Code: 554, Message: "failed to parse message"}
 	}
 	now := time.Now()
@@ -160,8 +171,10 @@ func (s *Session) Data(r io.Reader) error {
 			return webhook.EnqueueMessage(tx, s.service.Config, msg)
 		}); err != nil {
 			slog.Warn("smtp failed to store message", "recipient", msg.Recipient, "message_id", msg.ID, "error", err)
+			observability.ObserveSMTPMessageRejected("store_error")
 			return &gosmtp.SMTPError{Code: 451, Message: "failed to store message"}
 		}
+		observability.ObserveSMTPMessageReceived()
 		if s.service.Hub != nil {
 			s.service.Hub.Publish(recipient.Parts.Recipient, events.MessageEvent{
 				ID:        msg.ID,

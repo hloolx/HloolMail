@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"testing/fstest"
 	"time"
 
 	"gptmail/internal/config"
@@ -114,6 +115,78 @@ func TestSQLiteDSNWithPragmasPreservesExistingQuery(t *testing.T) {
 		if !strings.Contains(dsn, want) {
 			t.Fatalf("dsn = %q, missing %s", dsn, want)
 		}
+	}
+}
+
+func TestConfigurePostgresPoolAppliesConfiguredLimits(t *testing.T) {
+	sqliteDB, err := Open(config.Config{
+		DatabaseDriver: "sqlite",
+		DatabaseURL:    filepath.Join(t.TempDir(), "pool.db"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer closeGormDB(t, sqliteDB)
+
+	if err := configurePostgresPool(sqliteDB, config.Config{DBMaxOpenConns: 17, DBMaxIdleConns: 3}); err != nil {
+		t.Fatal(err)
+	}
+	sqlDB, err := sqliteDB.DB()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := sqlDB.Stats().MaxOpenConnections; got != 17 {
+		t.Fatalf("MaxOpenConnections = %d, want 17", got)
+	}
+}
+
+func TestRunMigrationsRecordsEmbeddedBaseline(t *testing.T) {
+	database := openSQLiteTestDB(t)
+
+	if err := RunMigrations(database); err != nil {
+		t.Fatal(err)
+	}
+	if err := RunMigrations(database); err != nil {
+		t.Fatal(err)
+	}
+
+	var row struct {
+		Version uint64
+		Name    string
+		Count   int64
+	}
+	if err := database.Raw("SELECT version, name, COUNT(*) AS count FROM schema_migrations WHERE version = 1 GROUP BY version, name").Scan(&row).Error; err != nil {
+		t.Fatal(err)
+	}
+	if row.Version != 1 || row.Name != "baseline" || row.Count != 1 {
+		t.Fatalf("baseline migration row = %+v, want version=1 name=baseline count=1", row)
+	}
+}
+
+func TestRunMigrationsAppliesPendingSQLInVersionOrder(t *testing.T) {
+	database := openSQLiteTestDB(t)
+	migrationFS := fstest.MapFS{
+		"sqlite/000002_insert_marker.up.sql": {
+			Data: []byte("INSERT INTO migration_marker (value) VALUES ('created-before-automigrate')"),
+		},
+		"sqlite/000001_create_marker.up.sql": {
+			Data: []byte("CREATE TABLE migration_marker (value TEXT NOT NULL)"),
+		},
+	}
+
+	if err := runMigrations(database, migrationFS); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := readMigrationMarker(t, database); got != "created-before-automigrate" {
+		t.Fatalf("migration marker = %q, want created-before-automigrate", got)
+	}
+	var versions []uint64
+	if err := database.Raw("SELECT version FROM schema_migrations ORDER BY version").Scan(&versions).Error; err != nil {
+		t.Fatal(err)
+	}
+	if len(versions) != 2 || versions[0] != 1 || versions[1] != 2 {
+		t.Fatalf("versions = %+v, want [1 2]", versions)
 	}
 }
 
@@ -871,6 +944,15 @@ func readSQLiteMarker(t *testing.T, database *gorm.DB) string {
 	t.Helper()
 	var got string
 	if err := database.Raw("SELECT value FROM marker LIMIT 1").Scan(&got).Error; err != nil {
+		t.Fatal(err)
+	}
+	return got
+}
+
+func readMigrationMarker(t *testing.T, database *gorm.DB) string {
+	t.Helper()
+	var got string
+	if err := database.Raw("SELECT value FROM migration_marker LIMIT 1").Scan(&got).Error; err != nil {
 		t.Fatal(err)
 	}
 	return got

@@ -2,7 +2,9 @@ package config
 
 import (
 	"os"
+	"strings"
 	"testing"
+	"time"
 )
 
 func TestLoadDoesNotFallbackSessionSecretToInboxSecret(t *testing.T) {
@@ -148,6 +150,32 @@ func TestLoadDefaultsSQLiteDatabaseURLToHloolMail(t *testing.T) {
 	}
 }
 
+func TestLoadReadsDatabasePoolLimits(t *testing.T) {
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	temp := t.TempDir()
+	if err := os.Chdir(temp); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := os.Chdir(wd); err != nil {
+			t.Fatalf("restore working directory: %v", err)
+		}
+	})
+	t.Setenv("DB_MAX_OPEN_CONNS", "31")
+	t.Setenv("DB_MAX_IDLE_CONNS", "7")
+
+	cfg := Load()
+	if cfg.DBMaxOpenConns != 31 {
+		t.Fatalf("DBMaxOpenConns = %d, want 31", cfg.DBMaxOpenConns)
+	}
+	if cfg.DBMaxIdleConns != 7 {
+		t.Fatalf("DBMaxIdleConns = %d, want 7", cfg.DBMaxIdleConns)
+	}
+}
+
 func TestLoadCanEnableAPIKeyQueryParam(t *testing.T) {
 	wd, err := os.Getwd()
 	if err != nil {
@@ -271,6 +299,34 @@ func TestLoadEnablesWebhooksByDefault(t *testing.T) {
 	}
 }
 
+func TestLoadDisablesMetricsByDefaultAndCanEnable(t *testing.T) {
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	temp := t.TempDir()
+	if err := os.Chdir(temp); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := os.Chdir(wd); err != nil {
+			t.Fatalf("restore working directory: %v", err)
+		}
+	})
+
+	t.Setenv("METRICS_ENABLED", "")
+	cfg := Load()
+	if cfg.MetricsEnabled {
+		t.Fatal("expected metrics endpoint to be disabled by default")
+	}
+
+	t.Setenv("METRICS_ENABLED", "true")
+	cfg = Load()
+	if !cfg.MetricsEnabled {
+		t.Fatal("expected METRICS_ENABLED=true to enable metrics endpoint")
+	}
+}
+
 func TestLoadReadsOAuthProviderEnv(t *testing.T) {
 	wd, err := os.Getwd()
 	if err != nil {
@@ -350,5 +406,94 @@ func TestValidateSessionSecretAllowsInstallAndDevMode(t *testing.T) {
 	devInstalled := Config{DevMode: true, SessionSecret: InsecureDefaultSecret}
 	if err := devInstalled.ValidateSessionSecret(true); err != nil {
 		t.Fatalf("expected dev mode to be allowed: %v", err)
+	}
+}
+
+func TestValidateAcceptsLoadedDefaults(t *testing.T) {
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	temp := t.TempDir()
+	if err := os.Chdir(temp); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := os.Chdir(wd); err != nil {
+			t.Fatalf("restore working directory: %v", err)
+		}
+	})
+
+	cfg := Load()
+	if errs := cfg.Validate(); len(errs) != 0 {
+		t.Fatalf("Validate() returned errors for defaults: %v", errs)
+	}
+}
+
+func TestValidateReportsConfigurationErrors(t *testing.T) {
+	cfg := Config{
+		HTTPAddr:                   "3000",
+		SMTPAddr:                   ":smtp",
+		PublicBaseURL:              "localhost:3000",
+		AllowedOrigin:              "ftp://example.com",
+		DatabaseDriver:             "oracle",
+		DatabaseURL:                "",
+		DBMaxOpenConns:             0,
+		DBMaxIdleConns:             -1,
+		MaxMessageBytes:            0,
+		MaxAttachmentBytes:         1,
+		MessageRetention:           -time.Hour,
+		APIKeyDefaultDailyCap:      -1,
+		AuditLogRetentionDays:      0,
+		AuditActivityRetentionDays: -1,
+	}
+
+	errs := cfg.Validate()
+	joined := make([]string, 0, len(errs))
+	for _, err := range errs {
+		joined = append(joined, err.Error())
+	}
+	got := strings.Join(joined, "\n")
+	for _, want := range []string{
+		"HTTP_ADDR",
+		"SMTP_ADDR",
+		"PUBLIC_BASE_URL",
+		"ALLOWED_ORIGIN",
+		"DATABASE_DRIVER",
+		"DATABASE_URL",
+		"DB_MAX_OPEN_CONNS",
+		"DB_MAX_IDLE_CONNS",
+		"MAX_MESSAGE_BYTES",
+		"MAX_ATTACHMENT_BYTES",
+		"MESSAGE_RETENTION_HOURS",
+		"API_KEY_DEFAULT_DAILY_LIMIT",
+		"AUDIT_LOG_RETENTION_DAYS",
+		"AUDIT_ACTIVITY_RETENTION_DAYS",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("Validate() errors missing %s in:\n%s", want, got)
+		}
+	}
+}
+
+func TestValidatePostgresPoolRejectsIdleAboveOpen(t *testing.T) {
+	cfg := Config{
+		HTTPAddr:                   ":3000",
+		SMTPAddr:                   ":2525",
+		PublicBaseURL:              "http://localhost:3000",
+		DatabaseDriver:             "postgres",
+		DatabaseURL:                "postgres://user:pass@localhost:5432/hloolmail?sslmode=disable",
+		DBMaxOpenConns:             2,
+		DBMaxIdleConns:             3,
+		MaxMessageBytes:            1024,
+		MaxAttachmentBytes:         1024,
+		MessageRetention:           time.Hour,
+		APIKeyDefaultDailyCap:      1,
+		AuditLogRetentionDays:      1,
+		AuditActivityRetentionDays: 1,
+	}
+	errs := cfg.Validate()
+	if len(errs) != 1 || !strings.Contains(errs[0].Error(), "DB_MAX_IDLE_CONNS") {
+		t.Fatalf("Validate() errors = %v, want DB_MAX_IDLE_CONNS error", errs)
 	}
 }

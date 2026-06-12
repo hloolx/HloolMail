@@ -18,6 +18,7 @@ import (
 
 	"gptmail/internal/config"
 	"gptmail/internal/models"
+	"gptmail/internal/observability"
 
 	"github.com/google/uuid"
 	"gorm.io/gorm"
@@ -82,16 +83,33 @@ func (w *Worker) Run(ctx context.Context) {
 }
 
 func (w *Worker) RunOnce(ctx context.Context) error {
+	w.observeQueueDepth(ctx)
 	deliveries, err := w.claimDueDeliveries(ctx)
 	if err != nil {
 		return err
 	}
+	defer w.observeQueueDepth(ctx)
 	for i := range deliveries {
 		if err := w.deliver(ctx, &deliveries[i]); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+func (w *Worker) observeQueueDepth(ctx context.Context) {
+	var count int64
+	now := w.now()
+	err := w.DB.WithContext(ctx).
+		Model(&models.WebhookDelivery{}).
+		Where("status IN ? AND (next_attempt_at IS NULL OR next_attempt_at <= ?)",
+			[]string{models.WebhookDeliveryStatusPending, models.WebhookDeliveryStatusRetry},
+			now,
+		).
+		Count(&count).Error
+	if err == nil {
+		observability.SetWebhookQueueDepth(count)
+	}
 }
 
 func (w *Worker) claimDueDeliveries(ctx context.Context) ([]models.WebhookDelivery, error) {
@@ -253,7 +271,8 @@ func (w *Worker) deliveryStillClaimed(ctx context.Context, delivery *models.Webh
 }
 
 func (w *Worker) finishSuccess(ctx context.Context, delivery *models.WebhookDelivery, now time.Time, status int, body string) error {
-	return w.DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+	applied := false
+	err := w.DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		result := tx.Model(&models.WebhookDelivery{}).
 			Where("id = ? AND status = ?", delivery.ID, models.WebhookDeliveryStatusDelivering).
 			Updates(map[string]any{
@@ -271,11 +290,16 @@ func (w *Worker) finishSuccess(ctx context.Context, delivery *models.WebhookDeli
 		if result.RowsAffected == 0 {
 			return nil
 		}
+		applied = true
 		return tx.Model(&models.WebhookEndpoint{}).Where("id = ?", delivery.EndpointID).Updates(map[string]any{
 			"last_success_at": now,
 			"failure_count":   0,
 		}).Error
 	})
+	if err == nil && applied {
+		observability.ObserveWebhookDelivery("success")
+	}
+	return err
 }
 
 func (w *Worker) finishFailure(ctx context.Context, delivery *models.WebhookDelivery, now time.Time, message string, status *int, body string, retryable bool) error {
@@ -288,7 +312,8 @@ func (w *Worker) finishFailure(ctx context.Context, delivery *models.WebhookDeli
 		next := now.Add(nextRetryDelay(attempt, w.jitter()))
 		nextAttemptAt = &next
 	}
-	return w.DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+	applied := false
+	err := w.DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		updates := map[string]any{
 			"status":          nextStatus,
 			"attempt_count":   attempt,
@@ -309,11 +334,20 @@ func (w *Worker) finishFailure(ctx context.Context, delivery *models.WebhookDeli
 		if result.RowsAffected == 0 {
 			return nil
 		}
+		applied = true
 		return tx.Model(&models.WebhookEndpoint{}).Where("id = ?", delivery.EndpointID).Updates(map[string]any{
 			"last_failure_at": now,
 			"failure_count":   gorm.Expr("failure_count + ?", 1),
 		}).Error
 	})
+	if err == nil && applied {
+		if final {
+			observability.ObserveWebhookDelivery("failed")
+		} else {
+			observability.ObserveWebhookDelivery("retry")
+		}
+	}
+	return err
 }
 
 func Sign(secret, timestamp, deliveryID string, rawPayload []byte) string {

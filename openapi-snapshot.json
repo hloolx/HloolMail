@@ -1,0 +1,6289 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "HLOOL Mail API",
+    "version": "0.8.0",
+    "description": "由内部 apispec 注册表生成的机器可读 API 元数据。"
+  },
+  "servers": [
+    {
+      "url": "http://localhost:3000",
+      "description": "已配置的公开基础 URL"
+    }
+  ],
+  "tags": [
+    {
+      "name": "API Key 自动化",
+      "description": "供 Agent 和脚本使用的稳定 API Key 自动化接口。"
+    },
+    {
+      "name": "公开元数据",
+      "description": "公开元数据和文档端点；API Key 请求头不会计入配额。"
+    },
+    {
+      "name": "公开分享 API",
+      "description": "使用不可猜测分享 token 和可选邮箱访问 key 的公开分享端点。"
+    },
+    {
+      "name": "网页登录会话 API",
+      "description": "需要 gptmail_session Cookie/会话的 Web Console 端点，不属于 API Key 自动化接口。"
+    }
+  ],
+  "paths": {
+    "/api/docs.md": {
+      "get": {
+        "tags": [
+          "公开元数据"
+        ],
+        "summary": "Markdown API 指南",
+        "description": "返回由 API 注册表生成、适合 AI 阅读的 Markdown 指南。",
+        "operationId": "apiDocsMarkdown",
+        "responses": {
+          "200": {
+            "description": "Markdown 文档",
+            "content": {
+              "text/markdown": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "请求参数错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "未认证",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "无权限",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "未找到",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "410": {
+            "description": "资源已失效",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "请求过于频繁",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "服务器内部错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "x-hlool-auth": "public"
+      }
+    },
+    "/api/domains/available": {
+      "get": {
+        "tags": [
+          "API Key 自动化"
+        ],
+        "summary": "可用域名",
+        "description": "列出可选择的公共域名以及 API Key 拥有者可访问的私有域名。客户端和 AI 助手应把该端点作为生成邮箱前的域名选择入口，优先使用 data.public_domains 与 data.private_domains；data.domains 仅为旧客户端公共域名兼容字段。",
+        "operationId": "availableDomains",
+        "security": [
+          {
+            "apiKeyAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EnvelopeAvailableDomains"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "请求参数错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "未认证",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "无权限",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "未找到",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "410": {
+            "description": "资源已失效",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "请求过于频繁",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "服务器内部错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "x-hlool-auth": "X-API-Key"
+      }
+    },
+    "/api/email/{id}": {
+      "delete": {
+        "tags": [
+          "API Key 自动化"
+        ],
+        "summary": "删除邮件",
+        "description": "删除 API Key 调用方有权限访问的一封邮件。",
+        "operationId": "deleteEmail",
+        "security": [
+          {
+            "apiKeyAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "邮件 ID。",
+            "schema": {
+              "type": "string"
+            },
+            "example": "msg-uuid"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EnvelopeDeleteMessage"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "请求参数错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "未认证",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "无权限",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "未找到",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "410": {
+            "description": "资源已失效",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "请求过于频繁",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "服务器内部错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "x-hlool-auth": "X-API-Key"
+      },
+      "get": {
+        "tags": [
+          "API Key 自动化"
+        ],
+        "summary": "读取邮件",
+        "description": "按 ID 读取一封邮件，包含文本正文、可用时的安全 HTML、邮件头和附件元数据。",
+        "operationId": "getEmail",
+        "security": [
+          {
+            "apiKeyAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "邮件 ID。",
+            "schema": {
+              "type": "string"
+            },
+            "example": "msg-uuid"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EnvelopeMessageDetail"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "请求参数错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "未认证",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "无权限",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "未找到",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "410": {
+            "description": "资源已失效",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "请求过于频繁",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "服务器内部错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "x-hlool-auth": "X-API-Key"
+      }
+    },
+    "/api/email/{id}/read": {
+      "patch": {
+        "tags": [
+          "API Key 自动化"
+        ],
+        "summary": "标记邮件已读",
+        "description": "将一封邮件标记为已读。",
+        "operationId": "markEmailRead",
+        "security": [
+          {
+            "apiKeyAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "邮件 ID。",
+            "schema": {
+              "type": "string"
+            },
+            "example": "msg-uuid"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EnvelopeMarkRead"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "请求参数错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "未认证",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "无权限",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "未找到",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "410": {
+            "description": "资源已失效",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "请求过于频繁",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "服务器内部错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "x-hlool-auth": "X-API-Key"
+      }
+    },
+    "/api/emails": {
+      "get": {
+        "tags": [
+          "API Key 自动化"
+        ],
+        "summary": "邮件列表",
+        "description": "列出某个邮箱的邮件，不改变已读状态。使用 page 和 per_page 获取分页元数据。",
+        "operationId": "listEmails",
+        "security": [
+          {
+            "apiKeyAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "email",
+            "in": "query",
+            "required": true,
+            "description": "邮箱地址。",
+            "schema": {
+              "format": "email",
+              "type": "string"
+            },
+            "example": "verify@example.com"
+          },
+          {
+            "name": "page",
+            "in": "query",
+            "description": "分页页码。",
+            "schema": {
+              "format": "int32",
+              "type": "integer"
+            },
+            "example": 1
+          },
+          {
+            "name": "per_page",
+            "in": "query",
+            "description": "每页数量。",
+            "schema": {
+              "format": "int32",
+              "type": "integer"
+            },
+            "example": 20
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "兼容旧数组响应的数量限制。",
+            "schema": {
+              "format": "int32",
+              "type": "integer"
+            },
+            "example": 50
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EnvelopeMessagePage"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "请求参数错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "未认证",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "无权限",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "未找到",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "410": {
+            "description": "资源已失效",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "请求过于频繁",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "服务器内部错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "x-hlool-auth": "X-API-Key"
+      }
+    },
+    "/api/emails/clear": {
+      "delete": {
+        "tags": [
+          "API Key 自动化"
+        ],
+        "summary": "清空邮箱邮件",
+        "description": "删除某个邮箱中已存储的全部邮件。",
+        "operationId": "clearEmails",
+        "security": [
+          {
+            "apiKeyAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "email",
+            "in": "query",
+            "required": true,
+            "description": "邮箱地址。",
+            "schema": {
+              "format": "email",
+              "type": "string"
+            },
+            "example": "verify@example.com"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EnvelopeClearEmails"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "请求参数错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "未认证",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "无权限",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "未找到",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "410": {
+            "description": "资源已失效",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "请求过于频繁",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "服务器内部错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "x-hlool-auth": "X-API-Key"
+      }
+    },
+    "/api/emails/next": {
+      "get": {
+        "tags": [
+          "API Key 自动化"
+        ],
+        "summary": "下一封未读邮件",
+        "description": "返回邮箱中最新的未读邮件，并自动将该邮件标记为已读。没有未读邮件时返回 has_email=false。",
+        "operationId": "nextEmail",
+        "security": [
+          {
+            "apiKeyAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "email",
+            "in": "query",
+            "required": true,
+            "description": "邮箱地址。",
+            "schema": {
+              "format": "email",
+              "type": "string"
+            },
+            "example": "verify@example.com"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EnvelopeNextEmail"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "请求参数错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "未认证",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "无权限",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "未找到",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "410": {
+            "description": "资源已失效",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "请求过于频繁",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "服务器内部错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "x-hlool-auth": "X-API-Key"
+      }
+    },
+    "/api/generate-email": {
+      "post": {
+        "tags": [
+          "API Key 自动化"
+        ],
+        "summary": "生成邮箱",
+        "description": "为 API Key 调用方创建或复用邮箱。默认生成普通邮箱 prefix@domain；设置 address_type=subdomain 可生成泛子域名邮箱 prefix@subdomain.domain，subdomain 留空时自动生成。传入 domain=*.example.com 会按父域 example.com 的泛子域名邮箱处理。设置 share=true 或 share.enabled=true 可在同一响应中创建邮箱分享；返回的 data.share.url 是分享页 URL，data.share.access_url 会在 URL fragment 中带上 #key=。",
+        "operationId": "generateEmail",
+        "security": [
+          {
+            "apiKeyAuth": []
+          }
+        ],
+        "requestBody": {
+          "description": "可选的邮箱生成参数。",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GenerateEmailRequest"
+              },
+              "example": {
+                "address_type": "root",
+                "domain": "example.com",
+                "prefix": "verify",
+                "share": true
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "复用已有邮箱",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EnvelopeGenerateEmail"
+                }
+              }
+            }
+          },
+          "201": {
+            "description": "邮箱已创建",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EnvelopeGenerateEmail"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "请求参数错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "未认证",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "无权限",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "未找到",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "410": {
+            "description": "资源已失效",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "请求过于频繁",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "服务器内部错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "x-hlool-auth": "X-API-Key"
+      }
+    },
+    "/api/health": {
+      "get": {
+        "tags": [
+          "公开元数据"
+        ],
+        "summary": "健康检查",
+        "description": "返回服务健康状态元数据。",
+        "operationId": "health",
+        "responses": {
+          "200": {
+            "description": "成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EnvelopeHealth"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "请求参数错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "未认证",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "无权限",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "未找到",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "410": {
+            "description": "资源已失效",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "请求过于频繁",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "服务器内部错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "x-hlool-auth": "public"
+      }
+    },
+    "/api/mailboxes": {
+      "get": {
+        "tags": [
+          "API Key 自动化"
+        ],
+        "summary": "邮箱列表",
+        "description": "列出 API Key 拥有者创建的邮箱。使用 page 和 per_page 获取分页响应。",
+        "operationId": "listMailboxes",
+        "security": [
+          {
+            "apiKeyAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "page",
+            "in": "query",
+            "description": "分页页码。",
+            "schema": {
+              "format": "int32",
+              "type": "integer"
+            },
+            "example": 1
+          },
+          {
+            "name": "per_page",
+            "in": "query",
+            "description": "每页数量。",
+            "schema": {
+              "format": "int32",
+              "type": "integer"
+            },
+            "example": 20
+          },
+          {
+            "name": "q",
+            "in": "query",
+            "description": "可按邮箱地址、本地部分或主机名搜索。",
+            "schema": {
+              "type": "string"
+            },
+            "example": "verify"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EnvelopeMailboxPage"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "请求参数错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "未认证",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "无权限",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "未找到",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "410": {
+            "description": "资源已失效",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "请求过于频繁",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "服务器内部错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "x-hlool-auth": "X-API-Key"
+      }
+    },
+    "/api/mailboxes/{id}": {
+      "delete": {
+        "tags": [
+          "API Key 自动化"
+        ],
+        "summary": "删除邮箱",
+        "description": "删除指定邮箱记录以及该地址下已存储的邮件。",
+        "operationId": "deleteMailbox",
+        "security": [
+          {
+            "apiKeyAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "邮箱 ID。",
+            "schema": {
+              "format": "uint64",
+              "type": "integer"
+            },
+            "example": 45
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EnvelopeMailboxDelete"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "请求参数错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "未认证",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "无权限",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "未找到",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "410": {
+            "description": "资源已失效",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "请求过于频繁",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "服务器内部错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "x-hlool-auth": "X-API-Key"
+      }
+    },
+    "/api/openapi.json": {
+      "get": {
+        "tags": [
+          "公开元数据"
+        ],
+        "summary": "OpenAPI JSON",
+        "description": "返回 JSON 格式的 OpenAPI 文档。",
+        "operationId": "openAPIJSON",
+        "responses": {
+          "200": {
+            "description": "OpenAPI JSON 文档",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "请求参数错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "未认证",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "无权限",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "未找到",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "410": {
+            "description": "资源已失效",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "请求过于频繁",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "服务器内部错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "x-hlool-auth": "public"
+      }
+    },
+    "/api/openapi.yaml": {
+      "get": {
+        "tags": [
+          "公开元数据"
+        ],
+        "summary": "OpenAPI YAML",
+        "description": "返回 YAML 格式的 OpenAPI 文档。",
+        "operationId": "openAPIYAML",
+        "responses": {
+          "200": {
+            "description": "OpenAPI YAML 文档",
+            "content": {
+              "application/yaml": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "请求参数错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "未认证",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "无权限",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "未找到",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "410": {
+            "description": "资源已失效",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "请求过于频繁",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "服务器内部错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "x-hlool-auth": "public"
+      }
+    },
+    "/api/share-links": {
+      "get": {
+        "tags": [
+          "网页登录会话 API"
+        ],
+        "summary": "分享链接列表",
+        "description": "网页登录会话端点。列出当前登录用户的分享链接。",
+        "operationId": "listShareLinks",
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "page",
+            "in": "query",
+            "description": "分页页码。",
+            "schema": {
+              "format": "int32",
+              "type": "integer"
+            },
+            "example": 1
+          },
+          {
+            "name": "per_page",
+            "in": "query",
+            "description": "每页数量。",
+            "schema": {
+              "format": "int32",
+              "type": "integer"
+            },
+            "example": 20
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EnvelopeShareLinkPage"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "请求参数错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "未认证",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "无权限",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "未找到",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "410": {
+            "description": "资源已失效",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "请求过于频繁",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "服务器内部错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "x-hlool-auth": "cookie/session"
+      },
+      "post": {
+        "tags": [
+          "网页登录会话 API"
+        ],
+        "summary": "创建分享链接",
+        "description": "网页登录会话端点。为当前登录用户创建邮箱分享链接。",
+        "operationId": "createShareLink",
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ],
+        "requestBody": {
+          "description": "邮箱分享链接设置。",
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateShareLinkRequest"
+              },
+              "example": {
+                "mailbox_id": 45,
+                "resource_type": "mailbox"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "已创建",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EnvelopeShareLink"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "请求参数错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "未认证",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "无权限",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "未找到",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "410": {
+            "description": "资源已失效",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "请求过于频繁",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "服务器内部错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "x-hlool-auth": "cookie/session"
+      }
+    },
+    "/api/share-links/{id}": {
+      "delete": {
+        "tags": [
+          "网页登录会话 API"
+        ],
+        "summary": "Delete share link",
+        "description": "Session-only endpoint. Deletes one managed share link and its access logs.",
+        "operationId": "deleteShareLink",
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "Share link ID.",
+            "schema": {
+              "format": "uint64",
+              "type": "integer"
+            },
+            "example": 1
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EnvelopeDeleted"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "请求参数错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "未认证",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "无权限",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "未找到",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "410": {
+            "description": "资源已失效",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "请求过于频繁",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "服务器内部错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "x-hlool-auth": "cookie/session"
+      },
+      "get": {
+        "tags": [
+          "网页登录会话 API"
+        ],
+        "summary": "读取分享链接",
+        "description": "网页登录会话端点。读取一个已管理的分享链接。",
+        "operationId": "getShareLink",
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "分享链接 ID。",
+            "schema": {
+              "format": "uint64",
+              "type": "integer"
+            },
+            "example": 1
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EnvelopeShareLink"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "请求参数错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "未认证",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "无权限",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "未找到",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "410": {
+            "description": "资源已失效",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "请求过于频繁",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "服务器内部错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "x-hlool-auth": "cookie/session"
+      },
+      "patch": {
+        "tags": [
+          "网页登录会话 API"
+        ],
+        "summary": "更新分享链接",
+        "description": "网页登录会话端点。更新一个邮箱分享链接的过期时间。",
+        "operationId": "patchShareLink",
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "分享链接 ID。",
+            "schema": {
+              "format": "uint64",
+              "type": "integer"
+            },
+            "example": 1
+          }
+        ],
+        "requestBody": {
+          "description": "邮箱分享链接更新内容。",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PatchShareLinkRequest"
+              },
+              "example": {
+                "expires_at": "2026-06-01T00:00:00Z"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EnvelopeShareLink"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "请求参数错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "未认证",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "无权限",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "未找到",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "410": {
+            "description": "资源已失效",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "请求过于频繁",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "服务器内部错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "x-hlool-auth": "cookie/session"
+      }
+    },
+    "/api/share-links/{id}/access-logs": {
+      "get": {
+        "tags": [
+          "网页登录会话 API"
+        ],
+        "summary": "分享链接访问日志",
+        "description": "网页登录会话端点。列出一个分享链接的访问尝试记录。",
+        "operationId": "listShareLinkAccessLogs",
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "分享链接 ID。",
+            "schema": {
+              "format": "uint64",
+              "type": "integer"
+            },
+            "example": 1
+          },
+          {
+            "name": "page",
+            "in": "query",
+            "description": "分页页码。",
+            "schema": {
+              "format": "int32",
+              "type": "integer"
+            },
+            "example": 1
+          },
+          {
+            "name": "per_page",
+            "in": "query",
+            "description": "每页数量。",
+            "schema": {
+              "format": "int32",
+              "type": "integer"
+            },
+            "example": 20
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EnvelopeShareLinkAccessLogs"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "请求参数错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "未认证",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "无权限",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "未找到",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "410": {
+            "description": "资源已失效",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "请求过于频繁",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "服务器内部错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "x-hlool-auth": "cookie/session"
+      }
+    },
+    "/api/share-links/{id}/revoke": {
+      "post": {
+        "tags": [
+          "网页登录会话 API"
+        ],
+        "summary": "撤销分享链接",
+        "description": "网页登录会话端点。撤销一个分享链接。",
+        "operationId": "revokeShareLink",
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "分享链接 ID。",
+            "schema": {
+              "format": "uint64",
+              "type": "integer"
+            },
+            "example": 1
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EnvelopeShareLink"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "请求参数错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "未认证",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "无权限",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "未找到",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "410": {
+            "description": "资源已失效",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "请求过于频繁",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "服务器内部错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "x-hlool-auth": "cookie/session"
+      }
+    },
+    "/api/share-links/{id}/rotate-key": {
+      "post": {
+        "tags": [
+          "网页登录会话 API"
+        ],
+        "summary": "轮换邮箱分享 key",
+        "description": "网页登录会话端点。轮换一个邮箱分享的访问 key，并只返回一次新 key。",
+        "operationId": "rotateShareLinkKey",
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "分享链接 ID。",
+            "schema": {
+              "format": "uint64",
+              "type": "integer"
+            },
+            "example": 1
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EnvelopeShareLink"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "请求参数错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "未认证",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "无权限",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "未找到",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "410": {
+            "description": "资源已失效",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "请求过于频繁",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "服务器内部错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "x-hlool-auth": "cookie/session"
+      }
+    },
+    "/api/share-links/{id}/rotate-token": {
+      "post": {
+        "tags": [
+          "网页登录会话 API"
+        ],
+        "summary": "重新生成完整分享链接",
+        "description": "网页登录会话端点。重新生成邮箱分享的公开 token；邮箱分享会同时轮换访问 key，并只在本次响应返回完整 access_url。",
+        "operationId": "rotateShareLinkToken",
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "分享链接 ID。",
+            "schema": {
+              "format": "uint64",
+              "type": "integer"
+            },
+            "example": 1
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EnvelopeShareLink"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "请求参数错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "未认证",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "无权限",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "未找到",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "410": {
+            "description": "资源已失效",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "请求过于频繁",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "服务器内部错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "x-hlool-auth": "cookie/session"
+      }
+    },
+    "/api/shared/{token}": {
+      "get": {
+        "tags": [
+          "公开分享 API"
+        ],
+        "summary": "读取分享邮箱",
+        "description": "邮箱分享 token 的公开端点。没有 key 时返回锁定元数据，带 key 时返回邮箱元数据。",
+        "operationId": "getSharedLink",
+        "parameters": [
+          {
+            "name": "token",
+            "in": "path",
+            "required": true,
+            "description": "创建分享时一次性返回的分享 token。",
+            "schema": {
+              "type": "string"
+            },
+            "example": "share-hloolmail_xxx"
+          },
+          {
+            "name": "key",
+            "in": "query",
+            "description": "邮箱分享访问 key，传入后可解锁邮箱分享。",
+            "schema": {
+              "type": "string"
+            },
+            "example": "sharekey-hloolmail_xxx"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EnvelopePublicShared"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "请求参数错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "未认证",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "无权限",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "未找到",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "410": {
+            "description": "资源已失效",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "请求过于频繁",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "服务器内部错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "x-hlool-auth": "public"
+      }
+    },
+    "/api/shared/{token}/messages": {
+      "get": {
+        "tags": [
+          "公开分享 API"
+        ],
+        "summary": "分享邮箱邮件列表",
+        "description": "列出邮箱分享中的邮件。必须在 key 查询参数中提供分享访问 key。",
+        "operationId": "listSharedMailboxMessages",
+        "parameters": [
+          {
+            "name": "token",
+            "in": "path",
+            "required": true,
+            "description": "邮箱分享 token。",
+            "schema": {
+              "type": "string"
+            },
+            "example": "share-hloolmail_xxx"
+          },
+          {
+            "name": "key",
+            "in": "query",
+            "required": true,
+            "description": "邮箱分享访问 key。",
+            "schema": {
+              "type": "string"
+            },
+            "example": "sharekey-hloolmail_xxx"
+          },
+          {
+            "name": "page",
+            "in": "query",
+            "description": "分页页码。",
+            "schema": {
+              "format": "int32",
+              "type": "integer"
+            },
+            "example": 1
+          },
+          {
+            "name": "per_page",
+            "in": "query",
+            "description": "每页数量。",
+            "schema": {
+              "format": "int32",
+              "type": "integer"
+            },
+            "example": 20
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EnvelopePublicSharedMailboxMessages"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "请求参数错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "未认证",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "无权限",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "未找到",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "410": {
+            "description": "资源已失效",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "请求过于频繁",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "服务器内部错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "x-hlool-auth": "public"
+      }
+    },
+    "/api/shared/{token}/messages/{message_id}": {
+      "get": {
+        "tags": [
+          "公开分享 API"
+        ],
+        "summary": "读取分享邮箱邮件",
+        "description": "从邮箱分享中读取一封邮件。必须提供分享访问 key，且只返回属于该分享邮箱的邮件。",
+        "operationId": "getSharedMailboxMessage",
+        "parameters": [
+          {
+            "name": "token",
+            "in": "path",
+            "required": true,
+            "description": "邮箱分享 token。",
+            "schema": {
+              "type": "string"
+            },
+            "example": "share-hloolmail_xxx"
+          },
+          {
+            "name": "message_id",
+            "in": "path",
+            "required": true,
+            "description": "分享邮箱内的邮件 ID。",
+            "schema": {
+              "type": "string"
+            },
+            "example": "msg-uuid"
+          },
+          {
+            "name": "key",
+            "in": "query",
+            "required": true,
+            "description": "邮箱分享访问 key。",
+            "schema": {
+              "type": "string"
+            },
+            "example": "sharekey-hloolmail_xxx"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EnvelopePublicSharedMailboxMessage"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "请求参数错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "未认证",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "无权限",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "未找到",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "410": {
+            "description": "资源已失效",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "请求过于频繁",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "服务器内部错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "x-hlool-auth": "public"
+      }
+    },
+    "/api/skill.md": {
+      "get": {
+        "tags": [
+          "公开元数据"
+        ],
+        "summary": "Skill 指南",
+        "description": "返回由 API 注册表生成的 AI 助手 Skill 指南。",
+        "operationId": "apiSkillMarkdown",
+        "responses": {
+          "200": {
+            "description": "Markdown Skill 文档",
+            "content": {
+              "text/markdown": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "请求参数错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "未认证",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "无权限",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "未找到",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "410": {
+            "description": "资源已失效",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "请求过于频繁",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "服务器内部错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "x-hlool-auth": "public"
+      }
+    },
+    "/api/stats": {
+      "get": {
+        "tags": [
+          "API Key 自动化"
+        ],
+        "summary": "统计信息",
+        "description": "返回 API Key 拥有者可见的统计数据。",
+        "operationId": "stats",
+        "security": [
+          {
+            "apiKeyAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EnvelopeStats"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "请求参数错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "未认证",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "无权限",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "未找到",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "410": {
+            "description": "资源已失效",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "请求过于频繁",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "服务器内部错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "x-hlool-auth": "X-API-Key"
+      }
+    },
+    "/api/version": {
+      "get": {
+        "tags": [
+          "公开元数据"
+        ],
+        "summary": "版本信息",
+        "description": "返回当前服务版本、commit 和构建时间。",
+        "operationId": "versionInfo",
+        "responses": {
+          "200": {
+            "description": "成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EnvelopeVersion"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "请求参数错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "未认证",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "无权限",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "未找到",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "410": {
+            "description": "资源已失效",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "请求过于频繁",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "服务器内部错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "x-hlool-auth": "public"
+      }
+    },
+    "/api/webhooks": {
+      "get": {
+        "tags": [
+          "网页登录会话 API"
+        ],
+        "summary": "Webhook 列表",
+        "description": "网页登录会话端点。列出当前登录用户的 Webhook 端点。",
+        "operationId": "listWebhooks",
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "page",
+            "in": "query",
+            "description": "分页页码。",
+            "schema": {
+              "format": "int32",
+              "type": "integer"
+            },
+            "example": 1
+          },
+          {
+            "name": "per_page",
+            "in": "query",
+            "description": "每页数量。",
+            "schema": {
+              "format": "int32",
+              "type": "integer"
+            },
+            "example": 20
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EnvelopeWebhookPage"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "请求参数错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "未认证",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "无权限",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "未找到",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "410": {
+            "description": "资源已失效",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "请求过于频繁",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "服务器内部错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "x-hlool-auth": "cookie/session"
+      },
+      "post": {
+        "tags": [
+          "网页登录会话 API"
+        ],
+        "summary": "创建 Webhook",
+        "description": "网页登录会话端点。创建一个 Webhook 端点。",
+        "operationId": "createWebhook",
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ],
+        "requestBody": {
+          "description": "Webhook 设置。",
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WebhookRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "已创建",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EnvelopeWebhook"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "请求参数错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "未认证",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "无权限",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "未找到",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "410": {
+            "description": "资源已失效",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "请求过于频繁",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "服务器内部错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "x-hlool-auth": "cookie/session"
+      }
+    },
+    "/api/webhooks/{id}": {
+      "delete": {
+        "tags": [
+          "网页登录会话 API"
+        ],
+        "summary": "删除 Webhook",
+        "description": "网页登录会话端点。删除一个 Webhook 端点。",
+        "operationId": "deleteWebhook",
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "Webhook ID。",
+            "schema": {
+              "format": "uint64",
+              "type": "integer"
+            },
+            "example": 1
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EnvelopeDeleted"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "请求参数错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "未认证",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "无权限",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "未找到",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "410": {
+            "description": "资源已失效",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "请求过于频繁",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "服务器内部错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "x-hlool-auth": "cookie/session"
+      },
+      "patch": {
+        "tags": [
+          "网页登录会话 API"
+        ],
+        "summary": "更新 Webhook",
+        "description": "网页登录会话端点。更新一个 Webhook 端点。",
+        "operationId": "patchWebhook",
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "Webhook ID。",
+            "schema": {
+              "format": "uint64",
+              "type": "integer"
+            },
+            "example": 1
+          }
+        ],
+        "requestBody": {
+          "description": "Webhook 更新内容。",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PatchWebhookRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EnvelopeWebhook"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "请求参数错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "未认证",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "无权限",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "未找到",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "410": {
+            "description": "资源已失效",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "请求过于频繁",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "服务器内部错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "x-hlool-auth": "cookie/session"
+      }
+    },
+    "/api/webhooks/{id}/deliveries": {
+      "get": {
+        "tags": [
+          "网页登录会话 API"
+        ],
+        "summary": "Webhook 投递记录",
+        "description": "网页登录会话端点。列出一个 Webhook 端点的投递尝试记录。",
+        "operationId": "listWebhookDeliveries",
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "Webhook ID。",
+            "schema": {
+              "format": "uint64",
+              "type": "integer"
+            },
+            "example": 1
+          },
+          {
+            "name": "page",
+            "in": "query",
+            "description": "分页页码。",
+            "schema": {
+              "format": "int32",
+              "type": "integer"
+            },
+            "example": 1
+          },
+          {
+            "name": "per_page",
+            "in": "query",
+            "description": "每页数量。",
+            "schema": {
+              "format": "int32",
+              "type": "integer"
+            },
+            "example": 20
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EnvelopeWebhookDeliveries"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "请求参数错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "未认证",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "无权限",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "未找到",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "410": {
+            "description": "资源已失效",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "请求过于频繁",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "服务器内部错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "x-hlool-auth": "cookie/session"
+      }
+    },
+    "/api/webhooks/{id}/rotate-secret": {
+      "post": {
+        "tags": [
+          "网页登录会话 API"
+        ],
+        "summary": "轮换 Webhook secret",
+        "description": "网页登录会话端点。轮换一个 Webhook 端点的签名 secret。",
+        "operationId": "rotateWebhookSecret",
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "Webhook ID。",
+            "schema": {
+              "format": "uint64",
+              "type": "integer"
+            },
+            "example": 1
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EnvelopeWebhook"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "请求参数错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "未认证",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "无权限",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "未找到",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "410": {
+            "description": "资源已失效",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "请求过于频繁",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "服务器内部错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "x-hlool-auth": "cookie/session"
+      }
+    },
+    "/api/webhooks/{id}/test": {
+      "post": {
+        "tags": [
+          "网页登录会话 API"
+        ],
+        "summary": "测试 Webhook",
+        "description": "网页登录会话端点。将一次测试 Webhook 投递加入队列。",
+        "operationId": "testWebhook",
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "Webhook ID。",
+            "schema": {
+              "format": "uint64",
+              "type": "integer"
+            },
+            "example": 1
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EnvelopeWebhookDelivery"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "请求参数错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "未认证",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "无权限",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "未找到",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "410": {
+            "description": "资源已失效",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "请求过于频繁",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "服务器内部错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "x-hlool-auth": "cookie/session"
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "AttachmentMetadata": {
+        "additionalProperties": false,
+        "properties": {
+          "content_id": {
+            "type": "string"
+          },
+          "content_type": {
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "disposition": {
+            "type": "string"
+          },
+          "filename": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "inline": {
+            "type": "boolean"
+          },
+          "sequence": {
+            "format": "int32",
+            "type": "integer"
+          },
+          "sha256": {
+            "type": "string"
+          },
+          "size_bytes": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "transfer_encoding": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "sequence",
+          "size_bytes"
+        ],
+        "type": "object"
+      },
+      "AvailableDomain": {
+        "additionalProperties": false,
+        "properties": {
+          "capabilities": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "domain": {
+            "type": "string"
+          },
+          "id": {
+            "format": "uint64",
+            "type": "integer"
+          },
+          "message_count": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "mode": {
+            "type": "string"
+          },
+          "root_ready": {
+            "type": "boolean"
+          },
+          "wildcard_pattern": {
+            "type": "string"
+          },
+          "wildcard_ready": {
+            "type": "boolean"
+          },
+          "wildcard_requested": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "id",
+          "domain",
+          "mode",
+          "message_count"
+        ],
+        "type": "object"
+      },
+      "AvailableDomainsData": {
+        "additionalProperties": false,
+        "properties": {
+          "domains": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "private_domains": {
+            "items": {
+              "$ref": "#/components/schemas/AvailableDomain"
+            },
+            "type": "array"
+          },
+          "public_domains": {
+            "items": {
+              "$ref": "#/components/schemas/AvailableDomain"
+            },
+            "type": "array"
+          },
+          "public_unavailable_reason": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "domains",
+          "public_domains",
+          "private_domains"
+        ],
+        "type": "object"
+      },
+      "ClearEmailsData": {
+        "additionalProperties": false,
+        "properties": {
+          "cleared": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "cleared"
+        ],
+        "type": "object"
+      },
+      "CreateShareLinkRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "expires_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "mailbox_id": {
+            "format": "uint64",
+            "type": "integer"
+          },
+          "resource_type": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "mailbox_id"
+        ],
+        "type": "object"
+      },
+      "DeleteMailboxData": {
+        "additionalProperties": false,
+        "properties": {
+          "deleted": {
+            "type": "boolean"
+          },
+          "messages_deleted": {
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "deleted",
+          "messages_deleted"
+        ],
+        "type": "object"
+      },
+      "DeleteMessageData": {
+        "additionalProperties": false,
+        "properties": {
+          "deleted": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "deleted"
+        ],
+        "type": "object"
+      },
+      "DeletedData": {
+        "additionalProperties": false,
+        "properties": {
+          "deleted": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "deleted"
+        ],
+        "type": "object"
+      },
+      "Domain": {
+        "additionalProperties": false,
+        "properties": {
+          "active": {
+            "type": "boolean"
+          },
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "domain": {
+            "type": "string"
+          },
+          "domain_expires_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "id": {
+            "format": "uint64",
+            "type": "integer"
+          },
+          "mailbox_created_count": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "message_count": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "mode": {
+            "type": "string"
+          },
+          "mx_verified": {
+            "type": "boolean"
+          },
+          "owner_id": {
+            "format": "uint64",
+            "type": "integer"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "wildcard_enabled": {
+            "type": "boolean"
+          },
+          "wildcard_requested": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "id",
+          "domain",
+          "mode",
+          "active",
+          "mx_verified"
+        ],
+        "type": "object"
+      },
+      "EnvelopeAvailableDomains": {
+        "additionalProperties": false,
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/AvailableDomainsData"
+          },
+          "error": {
+            "nullable": true,
+            "type": "string"
+          },
+          "success": {
+            "type": "boolean"
+          },
+          "usage": {
+            "$ref": "#/components/schemas/Usage"
+          }
+        },
+        "required": [
+          "success",
+          "data",
+          "error"
+        ],
+        "type": "object"
+      },
+      "EnvelopeClearEmails": {
+        "additionalProperties": false,
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/ClearEmailsData"
+          },
+          "error": {
+            "nullable": true,
+            "type": "string"
+          },
+          "success": {
+            "type": "boolean"
+          },
+          "usage": {
+            "$ref": "#/components/schemas/Usage"
+          }
+        },
+        "required": [
+          "success",
+          "data",
+          "error"
+        ],
+        "type": "object"
+      },
+      "EnvelopeDeleteMessage": {
+        "additionalProperties": false,
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/DeleteMessageData"
+          },
+          "error": {
+            "nullable": true,
+            "type": "string"
+          },
+          "success": {
+            "type": "boolean"
+          },
+          "usage": {
+            "$ref": "#/components/schemas/Usage"
+          }
+        },
+        "required": [
+          "success",
+          "data",
+          "error"
+        ],
+        "type": "object"
+      },
+      "EnvelopeDeleted": {
+        "additionalProperties": false,
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/DeletedData"
+          },
+          "error": {
+            "nullable": true,
+            "type": "string"
+          },
+          "success": {
+            "type": "boolean"
+          },
+          "usage": {
+            "$ref": "#/components/schemas/Usage"
+          }
+        },
+        "required": [
+          "success",
+          "data",
+          "error"
+        ],
+        "type": "object"
+      },
+      "EnvelopeGenerateEmail": {
+        "additionalProperties": false,
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/GenerateEmailData"
+          },
+          "error": {
+            "nullable": true,
+            "type": "string"
+          },
+          "success": {
+            "type": "boolean"
+          },
+          "usage": {
+            "$ref": "#/components/schemas/Usage"
+          }
+        },
+        "required": [
+          "success",
+          "data",
+          "error"
+        ],
+        "type": "object"
+      },
+      "EnvelopeHealth": {
+        "additionalProperties": false,
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/HealthData"
+          },
+          "error": {
+            "nullable": true,
+            "type": "string"
+          },
+          "success": {
+            "type": "boolean"
+          },
+          "usage": {
+            "$ref": "#/components/schemas/Usage"
+          }
+        },
+        "required": [
+          "success",
+          "data",
+          "error"
+        ],
+        "type": "object"
+      },
+      "EnvelopeMailboxDelete": {
+        "additionalProperties": false,
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/DeleteMailboxData"
+          },
+          "error": {
+            "nullable": true,
+            "type": "string"
+          },
+          "success": {
+            "type": "boolean"
+          },
+          "usage": {
+            "$ref": "#/components/schemas/Usage"
+          }
+        },
+        "required": [
+          "success",
+          "data",
+          "error"
+        ],
+        "type": "object"
+      },
+      "EnvelopeMailboxPage": {
+        "additionalProperties": false,
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/MailboxPage"
+          },
+          "error": {
+            "nullable": true,
+            "type": "string"
+          },
+          "success": {
+            "type": "boolean"
+          },
+          "usage": {
+            "$ref": "#/components/schemas/Usage"
+          }
+        },
+        "required": [
+          "success",
+          "data",
+          "error"
+        ],
+        "type": "object"
+      },
+      "EnvelopeMarkRead": {
+        "additionalProperties": false,
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/MarkReadData"
+          },
+          "error": {
+            "nullable": true,
+            "type": "string"
+          },
+          "success": {
+            "type": "boolean"
+          },
+          "usage": {
+            "$ref": "#/components/schemas/Usage"
+          }
+        },
+        "required": [
+          "success",
+          "data",
+          "error"
+        ],
+        "type": "object"
+      },
+      "EnvelopeMessageDetail": {
+        "additionalProperties": false,
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/MessageDetail"
+          },
+          "error": {
+            "nullable": true,
+            "type": "string"
+          },
+          "success": {
+            "type": "boolean"
+          },
+          "usage": {
+            "$ref": "#/components/schemas/Usage"
+          }
+        },
+        "required": [
+          "success",
+          "data",
+          "error"
+        ],
+        "type": "object"
+      },
+      "EnvelopeMessagePage": {
+        "additionalProperties": false,
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/MessagePage"
+          },
+          "error": {
+            "nullable": true,
+            "type": "string"
+          },
+          "success": {
+            "type": "boolean"
+          },
+          "usage": {
+            "$ref": "#/components/schemas/Usage"
+          }
+        },
+        "required": [
+          "success",
+          "data",
+          "error"
+        ],
+        "type": "object"
+      },
+      "EnvelopeNextEmail": {
+        "additionalProperties": false,
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/NextEmailData"
+          },
+          "error": {
+            "nullable": true,
+            "type": "string"
+          },
+          "success": {
+            "type": "boolean"
+          },
+          "usage": {
+            "$ref": "#/components/schemas/Usage"
+          }
+        },
+        "required": [
+          "success",
+          "data",
+          "error"
+        ],
+        "type": "object"
+      },
+      "EnvelopePublicShared": {
+        "additionalProperties": false,
+        "properties": {
+          "data": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/PublicSharedLocked"
+              },
+              {
+                "$ref": "#/components/schemas/PublicSharedMailbox"
+              }
+            ]
+          },
+          "error": {
+            "nullable": true,
+            "type": "string"
+          },
+          "success": {
+            "type": "boolean"
+          },
+          "usage": {
+            "$ref": "#/components/schemas/Usage"
+          }
+        },
+        "required": [
+          "success",
+          "data",
+          "error"
+        ],
+        "type": "object"
+      },
+      "EnvelopePublicSharedMailboxMessage": {
+        "additionalProperties": false,
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/PublicSharedMailboxMessage"
+          },
+          "error": {
+            "nullable": true,
+            "type": "string"
+          },
+          "success": {
+            "type": "boolean"
+          },
+          "usage": {
+            "$ref": "#/components/schemas/Usage"
+          }
+        },
+        "required": [
+          "success",
+          "data",
+          "error"
+        ],
+        "type": "object"
+      },
+      "EnvelopePublicSharedMailboxMessages": {
+        "additionalProperties": false,
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/MessagePage"
+          },
+          "error": {
+            "nullable": true,
+            "type": "string"
+          },
+          "success": {
+            "type": "boolean"
+          },
+          "usage": {
+            "$ref": "#/components/schemas/Usage"
+          }
+        },
+        "required": [
+          "success",
+          "data",
+          "error"
+        ],
+        "type": "object"
+      },
+      "EnvelopeShareLink": {
+        "additionalProperties": false,
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/ShareLink"
+          },
+          "error": {
+            "nullable": true,
+            "type": "string"
+          },
+          "success": {
+            "type": "boolean"
+          },
+          "usage": {
+            "$ref": "#/components/schemas/Usage"
+          }
+        },
+        "required": [
+          "success",
+          "data",
+          "error"
+        ],
+        "type": "object"
+      },
+      "EnvelopeShareLinkAccessLogs": {
+        "additionalProperties": false,
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/ShareLinkAccessLogPage"
+          },
+          "error": {
+            "nullable": true,
+            "type": "string"
+          },
+          "success": {
+            "type": "boolean"
+          },
+          "usage": {
+            "$ref": "#/components/schemas/Usage"
+          }
+        },
+        "required": [
+          "success",
+          "data",
+          "error"
+        ],
+        "type": "object"
+      },
+      "EnvelopeShareLinkPage": {
+        "additionalProperties": false,
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/ShareLinkPage"
+          },
+          "error": {
+            "nullable": true,
+            "type": "string"
+          },
+          "success": {
+            "type": "boolean"
+          },
+          "usage": {
+            "$ref": "#/components/schemas/Usage"
+          }
+        },
+        "required": [
+          "success",
+          "data",
+          "error"
+        ],
+        "type": "object"
+      },
+      "EnvelopeStats": {
+        "additionalProperties": false,
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/StatsData"
+          },
+          "error": {
+            "nullable": true,
+            "type": "string"
+          },
+          "success": {
+            "type": "boolean"
+          },
+          "usage": {
+            "$ref": "#/components/schemas/Usage"
+          }
+        },
+        "required": [
+          "success",
+          "data",
+          "error"
+        ],
+        "type": "object"
+      },
+      "EnvelopeVersion": {
+        "additionalProperties": false,
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/VersionData"
+          },
+          "error": {
+            "nullable": true,
+            "type": "string"
+          },
+          "success": {
+            "type": "boolean"
+          },
+          "usage": {
+            "$ref": "#/components/schemas/Usage"
+          }
+        },
+        "required": [
+          "success",
+          "data",
+          "error"
+        ],
+        "type": "object"
+      },
+      "EnvelopeWebhook": {
+        "additionalProperties": false,
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/WebhookEndpoint"
+          },
+          "error": {
+            "nullable": true,
+            "type": "string"
+          },
+          "success": {
+            "type": "boolean"
+          },
+          "usage": {
+            "$ref": "#/components/schemas/Usage"
+          }
+        },
+        "required": [
+          "success",
+          "data",
+          "error"
+        ],
+        "type": "object"
+      },
+      "EnvelopeWebhookDeliveries": {
+        "additionalProperties": false,
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/WebhookDeliveryPage"
+          },
+          "error": {
+            "nullable": true,
+            "type": "string"
+          },
+          "success": {
+            "type": "boolean"
+          },
+          "usage": {
+            "$ref": "#/components/schemas/Usage"
+          }
+        },
+        "required": [
+          "success",
+          "data",
+          "error"
+        ],
+        "type": "object"
+      },
+      "EnvelopeWebhookDelivery": {
+        "additionalProperties": false,
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/WebhookDelivery"
+          },
+          "error": {
+            "nullable": true,
+            "type": "string"
+          },
+          "success": {
+            "type": "boolean"
+          },
+          "usage": {
+            "$ref": "#/components/schemas/Usage"
+          }
+        },
+        "required": [
+          "success",
+          "data",
+          "error"
+        ],
+        "type": "object"
+      },
+      "EnvelopeWebhookPage": {
+        "additionalProperties": false,
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/WebhookEndpointPage"
+          },
+          "error": {
+            "nullable": true,
+            "type": "string"
+          },
+          "success": {
+            "type": "boolean"
+          },
+          "usage": {
+            "$ref": "#/components/schemas/Usage"
+          }
+        },
+        "required": [
+          "success",
+          "data",
+          "error"
+        ],
+        "type": "object"
+      },
+      "ErrorEnvelope": {
+        "additionalProperties": false,
+        "properties": {
+          "data": {
+            "nullable": true
+          },
+          "error": {
+            "nullable": true,
+            "type": "string"
+          },
+          "success": {
+            "type": "boolean"
+          },
+          "usage": {
+            "$ref": "#/components/schemas/Usage"
+          }
+        },
+        "required": [
+          "success",
+          "data",
+          "error"
+        ],
+        "type": "object"
+      },
+      "GenerateEmailData": {
+        "additionalProperties": false,
+        "properties": {
+          "address_type": {
+            "type": "string"
+          },
+          "domain": {
+            "$ref": "#/components/schemas/Domain"
+          },
+          "domain_id": {
+            "format": "uint64",
+            "type": "integer"
+          },
+          "email": {
+            "format": "email",
+            "type": "string"
+          },
+          "host": {
+            "type": "string"
+          },
+          "local_part": {
+            "type": "string"
+          },
+          "reuse": {
+            "type": "boolean"
+          },
+          "root_domain": {
+            "type": "string"
+          },
+          "share": {
+            "$ref": "#/components/schemas/GeneratedMailboxShare"
+          },
+          "subdomain": {
+            "type": "string"
+          },
+          "wildcard_pattern": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "email",
+          "domain_id",
+          "domain"
+        ],
+        "type": "object"
+      },
+      "GenerateEmailRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "address_type": {
+            "type": "string"
+          },
+          "domain": {
+            "type": "string"
+          },
+          "prefix": {
+            "type": "string"
+          },
+          "share": {
+            "oneOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "$ref": "#/components/schemas/GenerateEmailShareOptions"
+              }
+            ]
+          },
+          "subdomain": {
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "GenerateEmailShareOptions": {
+        "additionalProperties": false,
+        "properties": {
+          "enabled": {
+            "type": "boolean"
+          },
+          "expires_at": {
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "GeneratedMailboxShare": {
+        "additionalProperties": false,
+        "properties": {
+          "access_url": {
+            "format": "uri",
+            "type": "string"
+          },
+          "expires_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "id": {
+            "format": "uint64",
+            "type": "integer"
+          },
+          "key": {
+            "type": "string"
+          },
+          "resource_type": {
+            "type": "string"
+          },
+          "token": {
+            "type": "string"
+          },
+          "token_prefix": {
+            "type": "string"
+          },
+          "url": {
+            "format": "uri",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "resource_type",
+          "token_prefix",
+          "url",
+          "access_url"
+        ],
+        "type": "object"
+      },
+      "HealthData": {
+        "additionalProperties": false,
+        "properties": {
+          "status": {
+            "type": "string"
+          },
+          "time": {
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "status",
+          "time"
+        ],
+        "type": "object"
+      },
+      "Mailbox": {
+        "additionalProperties": false,
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "domain_id": {
+            "format": "uint64",
+            "type": "integer"
+          },
+          "email": {
+            "format": "email",
+            "type": "string"
+          },
+          "host": {
+            "type": "string"
+          },
+          "id": {
+            "format": "uint64",
+            "type": "integer"
+          },
+          "last_message_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "local_part": {
+            "type": "string"
+          },
+          "message_count": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "owner_id": {
+            "format": "uint64",
+            "type": "integer"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "owner_id",
+          "email",
+          "local_part",
+          "host",
+          "domain_id",
+          "created_at",
+          "updated_at"
+        ],
+        "type": "object"
+      },
+      "MailboxPage": {
+        "additionalProperties": false,
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/Mailbox"
+            },
+            "type": "array"
+          },
+          "page": {
+            "format": "int32",
+            "type": "integer"
+          },
+          "per_page": {
+            "format": "int32",
+            "type": "integer"
+          },
+          "total": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "total_pages": {
+            "format": "int32",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items",
+          "page",
+          "per_page",
+          "total",
+          "total_pages"
+        ],
+        "type": "object"
+      },
+      "MarkReadData": {
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "seen": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "id",
+          "seen"
+        ],
+        "type": "object"
+      },
+      "MessageDetail": {
+        "additionalProperties": false,
+        "properties": {
+          "attachment_count": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "attachments": {
+            "items": {
+              "$ref": "#/components/schemas/AttachmentMetadata"
+            },
+            "type": "array"
+          },
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "expires_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "from_address": {
+            "format": "email",
+            "type": "string"
+          },
+          "from_name": {
+            "type": "string"
+          },
+          "headers_json": {
+            "type": "string"
+          },
+          "html_content": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "recipient": {
+            "format": "email",
+            "type": "string"
+          },
+          "seen": {
+            "type": "boolean"
+          },
+          "subject": {
+            "type": "string"
+          },
+          "text_content": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "recipient",
+          "from_address",
+          "subject",
+          "seen",
+          "attachment_count",
+          "attachments",
+          "created_at",
+          "expires_at"
+        ],
+        "type": "object"
+      },
+      "MessagePage": {
+        "additionalProperties": false,
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/MessageSummary"
+            },
+            "type": "array"
+          },
+          "page": {
+            "format": "int32",
+            "type": "integer"
+          },
+          "per_page": {
+            "format": "int32",
+            "type": "integer"
+          },
+          "total": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "total_pages": {
+            "format": "int32",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items",
+          "page",
+          "per_page",
+          "total",
+          "total_pages"
+        ],
+        "type": "object"
+      },
+      "MessageSummary": {
+        "additionalProperties": false,
+        "properties": {
+          "attachment_count": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "expires_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "from_address": {
+            "format": "email",
+            "type": "string"
+          },
+          "from_name": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "preview": {
+            "type": "string"
+          },
+          "recipient": {
+            "format": "email",
+            "type": "string"
+          },
+          "seen": {
+            "type": "boolean"
+          },
+          "subject": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "recipient",
+          "from_address",
+          "subject",
+          "seen",
+          "preview",
+          "attachment_count",
+          "created_at",
+          "expires_at"
+        ],
+        "type": "object"
+      },
+      "NextEmailData": {
+        "additionalProperties": false,
+        "properties": {
+          "has_email": {
+            "type": "boolean"
+          },
+          "message": {
+            "$ref": "#/components/schemas/MessageDetail",
+            "nullable": true
+          }
+        },
+        "required": [
+          "has_email",
+          "message"
+        ],
+        "type": "object"
+      },
+      "PatchShareLinkRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "expires_at": {
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "PatchWebhookRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "domain_id": {
+            "format": "uint64",
+            "type": "integer"
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "events": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "mailbox_id": {
+            "format": "uint64",
+            "type": "integer"
+          },
+          "name": {
+            "type": "string"
+          },
+          "scope": {
+            "type": "string"
+          },
+          "url": {
+            "format": "uri",
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "PublicSharedLocked": {
+        "additionalProperties": false,
+        "properties": {
+          "expires_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "key_required": {
+            "type": "boolean"
+          },
+          "locked": {
+            "type": "boolean"
+          },
+          "mailbox": {
+            "$ref": "#/components/schemas/PublicSharedMailboxMetadata"
+          },
+          "resource_type": {
+            "type": "string"
+          },
+          "token_prefix": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "resource_type",
+          "token_prefix",
+          "key_required"
+        ],
+        "type": "object"
+      },
+      "PublicSharedMailbox": {
+        "additionalProperties": false,
+        "properties": {
+          "expires_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "mailbox": {
+            "$ref": "#/components/schemas/PublicSharedMailboxMetadata"
+          },
+          "resource_type": {
+            "type": "string"
+          },
+          "token_prefix": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "resource_type",
+          "token_prefix",
+          "mailbox"
+        ],
+        "type": "object"
+      },
+      "PublicSharedMailboxMessage": {
+        "additionalProperties": false,
+        "properties": {
+          "attachments": {
+            "items": {
+              "$ref": "#/components/schemas/AttachmentMetadata"
+            },
+            "type": "array"
+          },
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "expires_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "from_address": {
+            "format": "email",
+            "type": "string"
+          },
+          "from_name": {
+            "type": "string"
+          },
+          "html_content": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "recipient": {
+            "format": "email",
+            "type": "string"
+          },
+          "resource_type": {
+            "type": "string"
+          },
+          "subject": {
+            "type": "string"
+          },
+          "text_content": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "recipient",
+          "from_address",
+          "subject",
+          "attachments",
+          "created_at",
+          "expires_at"
+        ],
+        "type": "object"
+      },
+      "PublicSharedMailboxMetadata": {
+        "additionalProperties": false,
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "domain_id": {
+            "format": "uint64",
+            "type": "integer"
+          },
+          "email": {
+            "format": "email",
+            "type": "string"
+          },
+          "host": {
+            "type": "string"
+          },
+          "id": {
+            "format": "uint64",
+            "type": "integer"
+          },
+          "last_message_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "local_part": {
+            "type": "string"
+          },
+          "message_count": {
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "email",
+          "message_count",
+          "created_at"
+        ],
+        "type": "object"
+      },
+      "ShareLink": {
+        "additionalProperties": false,
+        "properties": {
+          "access_count": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "access_key": {
+            "type": "string"
+          },
+          "access_url": {
+            "format": "uri",
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "expires_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "id": {
+            "format": "uint64",
+            "type": "integer"
+          },
+          "key_set": {
+            "type": "boolean"
+          },
+          "last_accessed_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "mailbox_email": {
+            "format": "email",
+            "type": "string"
+          },
+          "mailbox_id": {
+            "format": "uint64",
+            "type": "integer"
+          },
+          "resource_type": {
+            "type": "string"
+          },
+          "revoked_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "share_url": {
+            "format": "uri",
+            "type": "string"
+          },
+          "token": {
+            "type": "string"
+          },
+          "token_prefix": {
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "resource_type",
+          "mailbox_id",
+          "token_prefix",
+          "key_set",
+          "access_count",
+          "created_at",
+          "updated_at"
+        ],
+        "type": "object"
+      },
+      "ShareLinkAccessLog": {
+        "additionalProperties": false,
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "failure_reason": {
+            "type": "string"
+          },
+          "id": {
+            "format": "uint64",
+            "type": "integer"
+          },
+          "ip": {
+            "type": "string"
+          },
+          "mailbox_id": {
+            "format": "uint64",
+            "type": "integer"
+          },
+          "resource_type": {
+            "type": "string"
+          },
+          "share_link_id": {
+            "format": "uint64",
+            "type": "integer"
+          },
+          "success": {
+            "type": "boolean"
+          },
+          "user_agent": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "share_link_id",
+          "resource_type",
+          "success",
+          "ip",
+          "user_agent",
+          "created_at"
+        ],
+        "type": "object"
+      },
+      "ShareLinkAccessLogPage": {
+        "additionalProperties": false,
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/ShareLinkAccessLog"
+            },
+            "type": "array"
+          },
+          "page": {
+            "format": "int32",
+            "type": "integer"
+          },
+          "per_page": {
+            "format": "int32",
+            "type": "integer"
+          },
+          "total": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "total_pages": {
+            "format": "int32",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items",
+          "page",
+          "per_page",
+          "total",
+          "total_pages"
+        ],
+        "type": "object"
+      },
+      "ShareLinkPage": {
+        "additionalProperties": false,
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/ShareLink"
+            },
+            "type": "array"
+          },
+          "page": {
+            "format": "int32",
+            "type": "integer"
+          },
+          "per_page": {
+            "format": "int32",
+            "type": "integer"
+          },
+          "total": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "total_pages": {
+            "format": "int32",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items",
+          "page",
+          "per_page",
+          "total",
+          "total_pages"
+        ],
+        "type": "object"
+      },
+      "StatsData": {
+        "additionalProperties": false,
+        "properties": {
+          "api_calls_today": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "api_keys": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "domains": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "mailboxes": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "messages": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "public_domains": {
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "messages",
+          "domains",
+          "api_keys",
+          "mailboxes",
+          "public_domains",
+          "api_calls_today"
+        ],
+        "type": "object"
+      },
+      "SuccessEnvelope": {
+        "additionalProperties": false,
+        "properties": {
+          "data": {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          "error": {
+            "nullable": true,
+            "type": "string"
+          },
+          "success": {
+            "type": "boolean"
+          },
+          "usage": {
+            "$ref": "#/components/schemas/Usage"
+          }
+        },
+        "required": [
+          "success",
+          "data",
+          "error"
+        ],
+        "type": "object"
+      },
+      "Usage": {
+        "additionalProperties": false,
+        "properties": {
+          "daily_limit": {
+            "type": "string"
+          },
+          "daily_unlimited": {
+            "type": "string"
+          },
+          "remaining_today": {
+            "type": "string"
+          },
+          "remaining_total": {
+            "type": "string"
+          },
+          "total_limit": {
+            "type": "string"
+          },
+          "total_unlimited": {
+            "type": "string"
+          },
+          "total_usage": {
+            "type": "string"
+          },
+          "used_today": {
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "VersionData": {
+        "additionalProperties": false,
+        "properties": {
+          "buildTime": {
+            "type": "string"
+          },
+          "commit": {
+            "type": "string"
+          },
+          "version": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "version",
+          "commit",
+          "buildTime"
+        ],
+        "type": "object"
+      },
+      "WebhookDelivery": {
+        "additionalProperties": false,
+        "properties": {
+          "attempt_count": {
+            "format": "int32",
+            "type": "integer"
+          },
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "endpoint_id": {
+            "format": "uint64",
+            "type": "integer"
+          },
+          "error": {
+            "type": "string"
+          },
+          "event_type": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "last_attempt_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "max_attempts": {
+            "format": "int32",
+            "type": "integer"
+          },
+          "message_id": {
+            "type": "string"
+          },
+          "next_attempt_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "response_body": {
+            "type": "string"
+          },
+          "response_status": {
+            "format": "int32",
+            "type": "integer"
+          },
+          "status": {
+            "type": "string"
+          },
+          "succeeded_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "endpoint_id",
+          "event_type",
+          "status",
+          "attempt_count",
+          "max_attempts",
+          "created_at",
+          "updated_at"
+        ],
+        "type": "object"
+      },
+      "WebhookDeliveryPage": {
+        "additionalProperties": false,
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/WebhookDelivery"
+            },
+            "type": "array"
+          },
+          "page": {
+            "format": "int32",
+            "type": "integer"
+          },
+          "per_page": {
+            "format": "int32",
+            "type": "integer"
+          },
+          "total": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "total_pages": {
+            "format": "int32",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items",
+          "page",
+          "per_page",
+          "total",
+          "total_pages"
+        ],
+        "type": "object"
+      },
+      "WebhookEndpoint": {
+        "additionalProperties": false,
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "disabled_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "domain_id": {
+            "format": "uint64",
+            "type": "integer"
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "events": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "failure_count": {
+            "format": "int32",
+            "type": "integer"
+          },
+          "id": {
+            "format": "uint64",
+            "type": "integer"
+          },
+          "last_failure_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "last_success_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "mailbox_id": {
+            "format": "uint64",
+            "type": "integer"
+          },
+          "name": {
+            "type": "string"
+          },
+          "scope": {
+            "type": "string"
+          },
+          "secret": {
+            "type": "string"
+          },
+          "secret_preview": {
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "url": {
+            "format": "uri",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "url",
+          "enabled",
+          "events",
+          "scope",
+          "failure_count",
+          "created_at",
+          "updated_at"
+        ],
+        "type": "object"
+      },
+      "WebhookEndpointPage": {
+        "additionalProperties": false,
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/WebhookEndpoint"
+            },
+            "type": "array"
+          },
+          "page": {
+            "format": "int32",
+            "type": "integer"
+          },
+          "per_page": {
+            "format": "int32",
+            "type": "integer"
+          },
+          "total": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "total_pages": {
+            "format": "int32",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items",
+          "page",
+          "per_page",
+          "total",
+          "total_pages"
+        ],
+        "type": "object"
+      },
+      "WebhookRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "domain_id": {
+            "format": "uint64",
+            "type": "integer"
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "events": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "mailbox_id": {
+            "format": "uint64",
+            "type": "integer"
+          },
+          "name": {
+            "type": "string"
+          },
+          "scope": {
+            "type": "string"
+          },
+          "url": {
+            "format": "uri",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "url"
+        ],
+        "type": "object"
+      }
+    },
+    "securitySchemes": {
+      "apiKeyAuth": {
+        "type": "apiKey",
+        "in": "header",
+        "name": "X-API-Key",
+        "description": "自动化端点使用的 API Key。"
+      },
+      "sessionCookie": {
+        "type": "apiKey",
+        "in": "cookie",
+        "name": "gptmail_session",
+        "description": "Web Console 会话专用管理端点使用的会话 Cookie。"
+      }
+    }
+  },
+  "x-hlool-frontend": [
+    {
+      "method": "GET",
+      "path": "/api/docs.md",
+      "auth": "public",
+      "requestPath": "/api/docs.md",
+      "title": "Markdown 文档",
+      "description": "读取适合 AI 阅读的 Markdown API 参考。"
+    },
+    {
+      "method": "GET",
+      "path": "/api/domains/available",
+      "auth": "apiKey",
+      "requestPath": "/api/domains/available",
+      "title": "可用域名",
+      "description": "生成邮箱前先用它发现公共域名和当前 API Key 可访问的私有域名。"
+    },
+    {
+      "method": "GET",
+      "path": "/api/email/:id",
+      "auth": "apiKey",
+      "requestPath": "/api/email/msg-uuid",
+      "title": "读取邮件",
+      "description": "读取一封邮件的正文、邮件头、已读状态和附件元数据。"
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/email/:id",
+      "auth": "apiKey",
+      "requestPath": "/api/email/msg-uuid",
+      "dangerous": true,
+      "title": "删除邮件",
+      "description": "删除当前 API Key 可访问的一封邮件。"
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/email/:id/read",
+      "auth": "apiKey",
+      "requestPath": "/api/email/msg-uuid/read",
+      "title": "标记已读",
+      "description": "将一封邮件标记为已读。"
+    },
+    {
+      "method": "GET",
+      "path": "/api/emails",
+      "auth": "apiKey",
+      "requestPath": "/api/emails",
+      "queryTemplate": "email=verify@example.com\u0026page=1\u0026per_page=20",
+      "title": "邮件列表",
+      "description": "列出邮箱邮件，不会自动标记已读。"
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/emails/clear",
+      "auth": "apiKey",
+      "requestPath": "/api/emails/clear",
+      "queryTemplate": "email=verify@example.com",
+      "dangerous": true,
+      "title": "清空收件箱",
+      "description": "删除一个邮箱中的全部邮件。"
+    },
+    {
+      "method": "GET",
+      "path": "/api/emails/next",
+      "auth": "apiKey",
+      "requestPath": "/api/emails/next",
+      "queryTemplate": "email=verify@example.com",
+      "title": "下一封未读邮件",
+      "description": "轮询最新未读邮件，并自动标记为已读。"
+    },
+    {
+      "method": "POST",
+      "path": "/api/generate-email",
+      "auth": "apiKey",
+      "requestPath": "/api/generate-email",
+      "bodyTemplate": "{\n  \"prefix\": \"verify\",\n  \"domain\": \"\",\n  \"address_type\": \"root\",\n  \"subdomain\": \"\",\n  \"share\": false\n}",
+      "title": "生成邮箱",
+      "description": "创建邮箱，可同时生成带访问 key 的分享 URL。"
+    },
+    {
+      "method": "GET",
+      "path": "/api/health",
+      "auth": "public",
+      "requestPath": "/api/health",
+      "title": "健康状态",
+      "description": "检查 API 服务是否可访问。"
+    },
+    {
+      "method": "GET",
+      "path": "/api/mailboxes",
+      "auth": "apiKey",
+      "requestPath": "/api/mailboxes",
+      "queryTemplate": "page=1\u0026per_page=20",
+      "title": "邮箱列表",
+      "description": "列出 API Key 拥有者创建的邮箱。"
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/mailboxes/:id",
+      "auth": "apiKey",
+      "requestPath": "/api/mailboxes/45",
+      "dangerous": true,
+      "title": "删除邮箱",
+      "description": "删除一个邮箱记录及其已存储邮件。"
+    },
+    {
+      "method": "GET",
+      "path": "/api/openapi.json",
+      "auth": "public",
+      "requestPath": "/api/openapi.json",
+      "title": "OpenAPI JSON",
+      "description": "读取机器可读的 OpenAPI 文档。"
+    },
+    {
+      "method": "GET",
+      "path": "/api/openapi.yaml",
+      "auth": "public",
+      "requestPath": "/api/openapi.yaml",
+      "title": "OpenAPI YAML",
+      "description": "读取 YAML 格式的机器可读 OpenAPI 文档。"
+    },
+    {
+      "method": "GET",
+      "path": "/api/shared/:token",
+      "auth": "public",
+      "requestPath": "/api/shared/share-hloolmail_xxx",
+      "queryTemplate": "key=sharekey-hloolmail_xxx",
+      "title": "读取分享邮箱",
+      "description": "打开分享 token；邮箱分享可用 key 解锁。"
+    },
+    {
+      "method": "GET",
+      "path": "/api/shared/:token/messages",
+      "auth": "public",
+      "requestPath": "/api/shared/share-hloolmail_xxx/messages",
+      "queryTemplate": "key=sharekey-hloolmail_xxx\u0026page=1\u0026per_page=20",
+      "title": "分享邮箱邮件列表",
+      "description": "列出带 key 的邮箱分享中的邮件。"
+    },
+    {
+      "method": "GET",
+      "path": "/api/shared/:token/messages/:message_id",
+      "auth": "public",
+      "requestPath": "/api/shared/share-hloolmail_xxx/messages/msg-uuid",
+      "queryTemplate": "key=sharekey-hloolmail_xxx",
+      "title": "读取分享邮箱邮件",
+      "description": "从带 key 的邮箱分享中读取一封邮件。"
+    },
+    {
+      "method": "GET",
+      "path": "/api/skill.md",
+      "auth": "public",
+      "requestPath": "/api/skill.md",
+      "title": "Skill 指南",
+      "description": "读取 AI 助手 Skill 使用说明。"
+    },
+    {
+      "method": "GET",
+      "path": "/api/stats",
+      "auth": "apiKey",
+      "requestPath": "/api/stats",
+      "title": "统计信息",
+      "description": "获取 API Key 拥有者可见的统计数据。"
+    },
+    {
+      "method": "GET",
+      "path": "/api/version",
+      "auth": "public",
+      "requestPath": "/api/version",
+      "title": "版本信息",
+      "description": "读取服务版本元数据。"
+    }
+  ]
+}

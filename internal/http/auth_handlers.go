@@ -795,6 +795,10 @@ func setSessionCookie(c *gin.Context, value string, ttl time.Duration) {
 	c.SetCookie(sessionCookieName, value, maxAge, "/", "", isSecure, true)
 }
 
+func clearSessionCookie(c *gin.Context) {
+	setSessionCookie(c, "", -1)
+}
+
 type installInput struct {
 	HTTPAddr         string `json:"http_addr"`
 	SMTPAddr         string `json:"smtp_addr"`
