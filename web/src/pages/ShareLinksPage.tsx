@@ -423,7 +423,7 @@ function ShareAccessLogsModal({ link, onClose }: { link: ShareLinkDTO; onClose: 
   );
 }
 
-export function publicShareURL(link: ShareLinkDTO) {
+function publicShareURL(link: ShareLinkDTO) {
   if (link.access_url) {
     return link.access_url.startsWith('/') ? `${window.location.origin}${link.access_url}` : link.access_url;
   }

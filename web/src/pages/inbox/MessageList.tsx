@@ -1,9 +1,10 @@
-import { forwardRef } from 'react';
+import { forwardRef, memo } from 'react';
 import { motion } from 'framer-motion';
 import { ChevronDown, MailOpen } from 'lucide-react';
 import type { MessageSummary } from '../../api';
 import { EmptyState, PaginationControls, SenderBrandAvatar } from '../../components/shared';
-import { extractCode, relativeTime, VerificationCodeCopyButton } from '../../lib/display';
+import { extractCode, relativeTime } from '../../lib/display';
+import { VerificationCodeCopyButton } from '../../lib/VerificationCodeCopyButton';
 import { formatCount, mailListVariants, mailRowVariants } from './utils';
 import type { InboxText } from './types';
 
@@ -85,7 +86,7 @@ type MessageRowProps = {
   onSelect: () => void;
 };
 
-export function MessageRow({
+export const MessageRow = memo(function MessageRow({
   text,
   message,
   expanded,
@@ -141,7 +142,7 @@ export function MessageRow({
       )}
     </motion.div>
   );
-}
+});
 
 function InboxListError({ label, actionLabel, onRetry }: { label: string; actionLabel: string; onRetry: () => void }) {
   return (

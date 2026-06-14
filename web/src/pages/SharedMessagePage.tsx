@@ -14,7 +14,8 @@ import type {
 } from '../api';
 import { ApiError, api } from '../api';
 import { buildEmailSrcDoc } from '../lib/emailHtml';
-import { extractCode, VerificationCodeCopyButton } from '../lib/display';
+import { extractCode } from '../lib/display';
+import { VerificationCodeCopyButton } from '../lib/VerificationCodeCopyButton';
 import { useText } from '../locales';
 import { EmptyState, LoadingState, SenderBrandAvatar } from '../components/shared';
 import { MessageList } from './inbox/MessageList';

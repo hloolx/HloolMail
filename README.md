@@ -162,6 +162,8 @@ export FRONTEND_DIST=web/dist
 ./hloolmail
 ```
 
+生产构建如需输出 canonical，请在构建前设置 `VITE_CANONICAL_URL` 为公开访问的完整 URL；未设置时不会生成 canonical 标签。
+
 只把 `web/dist` 当成纯静态前端单独部署不是推荐模式，因为前端默认调用同源 `/api`。如果确实要分离部署，需要在前端域名上反向代理 `/api` 到 HLOOL Mail 后端，并处理 Cookie、CORS 和 HTTPS。
 
 ## Install Page
@@ -448,6 +450,8 @@ systemctl status hloolmail
 跨大版本升级前先阅读 Release Note，并确认 `.env` / systemd 环境变量仍然符合当前版本要求。
 
 ## 本地开发
+
+前端工具链要求 Node.js `^20.19.0 || >=22.12.0`；CI 和 Docker 构建使用 Node 22，以匹配 Vite 8 的运行时要求。
 
 后端和完整构建：
 

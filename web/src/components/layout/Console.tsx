@@ -5,6 +5,7 @@ import type { User } from '../../api';
 import { useText } from '../../locales';
 import type { Page } from '../../store';
 import { useAppStore } from '../../store';
+import { useShallow } from 'zustand/react/shallow';
 import { adminPageSet, getAdminPageElement } from '../../features/admin/sectionRegistry';
 import { normalizeNicknameInput } from '../../lib/userDisplay';
 import { LoadingState, PageTransition } from '../shared';
@@ -27,7 +28,14 @@ import { Sidebar } from './Sidebar';
 import { Topbar } from './Topbar';
 
 export function Console({ user }: { user: User }) {
-  const { page, setPage, sidebarCollapsed, toggleSidebar } = useAppStore();
+  const { page, setPage, sidebarCollapsed, toggleSidebar } = useAppStore(
+    useShallow((s) => ({
+      page: s.page,
+      setPage: s.setPage,
+      sidebarCollapsed: s.sidebarCollapsed,
+      toggleSidebar: s.toggleSidebar
+    }))
+  );
   const [tutorialReplayKey, setTutorialReplayKey] = useState(0);
   const adminPages = new Set<Page>([...adminPageSet, 'users', 'admin-oauth', 'announcements']);
   const visiblePage: Page = user.role !== 'admin' && adminPages.has(page) ? 'inbox' : page;

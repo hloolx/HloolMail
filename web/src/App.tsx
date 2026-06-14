@@ -9,6 +9,7 @@ import { useAppStore } from './store';
 import { CenteredState, ErrorBoundary, PageTransition } from './components/shared';
 import { Console } from './components/layout/Console';
 import { notifySuccess } from './lib/feedback';
+import { setMonitoringTag, setMonitoringUser } from './lib/monitoring';
 import { expireUserSession } from './lib/queryClient';
 
 const InstallPage = lazy(() => import('./pages/InstallPage').then(m => ({ default: m.InstallPage })));
@@ -34,7 +35,12 @@ function AppContent() {
   const isAuthRoute = authRoute !== null;
   const legalRoute = legalRouteFromLocation(routeKey);
   const isLegalRoute = legalRoute !== null;
-  const { theme, language, page, awayMailCount, awayAnnouncementCount } = useAppStore();
+  // Keep high-churn store fields isolated so background counters do not re-render the app shell.
+  const theme = useAppStore((state) => state.theme);
+  const language = useAppStore((state) => state.language);
+  const page = useAppStore((state) => state.page);
+  const awayMailCount = useAppStore((state) => state.awayMailCount);
+  const awayAnnouncementCount = useAppStore((state) => state.awayAnnouncementCount);
   const text = useText();
   const me = useQuery({
     queryKey: ['me'],
@@ -82,6 +88,17 @@ function AppContent() {
     window.addEventListener('hlool:auth-expired', handleAuthExpired);
     return () => window.removeEventListener('hlool:auth-expired', handleAuthExpired);
   }, [queryClient]);
+
+  useEffect(() => {
+    const user = me.data?.user;
+    if (!user) {
+      setMonitoringUser(null);
+      setMonitoringTag('user.role', 'anonymous');
+      return;
+    }
+    setMonitoringUser({ id: user.id, role: user.role });
+    setMonitoringTag('user.role', user.role);
+  }, [me.data?.user]);
 
   useEffect(() => {
     const unreadCount = awayMailCount + awayAnnouncementCount;

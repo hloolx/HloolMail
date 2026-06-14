@@ -6,13 +6,13 @@ import { toast } from 'sonner';
 import type { Domain, InstallStatus } from '../api';
 import { api, postJSON } from '../api';
 import type { BatchDomainInput, BatchDomainItemResult, BatchDomainResponse } from '../types';
-import { currentText, useText } from '../locales';
+import { useText } from '../locales';
 import { useCopyState } from '../hooks/useCopyState';
 import { copy } from '../lib/clipboard';
 import { domainInputWantsWildcard, normalizeDomainInput } from '../lib/domain';
 import { notifySuccess } from '../lib/feedback';
-import { queryKeys } from '../lib/queryKeys';
 import { DialogShell, IconButton, InfoTip, LoadingIndicator } from '../components/shared';
+import { formatRelativeTime, invalidateDomainQueries } from './domainPageUtils';
 
 const MAX_BATCH_SIZE = 50;
 
@@ -300,33 +300,4 @@ export function AddDomainDialog({
             </div>
     </DialogShell>
   );
-}
-
-export function invalidateDomainQueries(queryClient: ReturnType<typeof useQueryClient>) {
-  queryClient.invalidateQueries({ queryKey: queryKeys.domains.all });
-  queryClient.invalidateQueries({ queryKey: queryKeys.domains.available });
-  queryClient.invalidateQueries({ queryKey: queryKeys.userOnboarding });
-  queryClient.invalidateQueries({ queryKey: queryKeys.admin.domainHealthRoot });
-}
-
-export function pendingDeleteAt(domain: Domain) {
-  return domain.pending_delete_at;
-}
-
-export function formatRelativeTime(value?: string, pastLabel = ''): string {
-  if (!value) return '-';
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return '-';
-  const diff = date.getTime() - Date.now();
-  if (diff <= 0) return pastLabel;
-  const t = currentText();
-  const minutes = Math.ceil(diff / 60000);
-  if (minutes < 60) return t.domains.minutesLater.replace('{minutes}', String(minutes));
-  const hours = Math.floor(minutes / 60);
-  const rest = minutes % 60;
-  return rest ? t.domains.hoursMinLater.replace('{hours}', String(hours)).replace('{rest}', String(rest)) : t.domains.hoursLater.replace('{hours}', String(hours));
-}
-
-export function isCheckReady(result: { mx_verified?: boolean; wildcard_enabled?: boolean; wildcard_checked?: boolean } | null | undefined) {
-  return Boolean(result?.mx_verified || result?.wildcard_enabled);
 }

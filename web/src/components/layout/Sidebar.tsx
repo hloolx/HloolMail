@@ -5,6 +5,7 @@ import { roleText, useText } from '../../locales';
 import type { User } from '../../api';
 import { postJSON } from '../../api';
 import { useAppStore } from '../../store';
+import { useShallow } from 'zustand/react/shallow';
 import { clearUserSession } from '../../lib/queryClient';
 import { displayName, displaySubtitle } from '../../lib/userDisplay';
 import { UserAvatar } from '../shared';
@@ -20,7 +21,16 @@ export function Sidebar({ user }: { user: User }) {
     mobileSidebarOpen,
     closeMobileSidebar,
     toggleSidebar
-  } = useAppStore();
+  } = useAppStore(
+    useShallow((s) => ({
+      page: s.page,
+      setPage: s.setPage,
+      sidebarCollapsed: s.sidebarCollapsed,
+      mobileSidebarOpen: s.mobileSidebarOpen,
+      closeMobileSidebar: s.closeMobileSidebar,
+      toggleSidebar: s.toggleSidebar
+    }))
+  );
   const text = useText();
   const sidebarTitle = sidebarCollapsed ? text.nav.expandSidebar : text.nav.collapseSidebar;
   const [profileOpen, setProfileOpen] = useState(false);

@@ -4,14 +4,10 @@ import type { User } from '../../api';
 import { api } from '../../api';
 import { useText } from '../../locales';
 import { useAppStore } from '../../store';
+import { useShallow } from 'zustand/react/shallow';
 import type { Language, ThemeMode } from '../../store';
 import { animateThemeSwitch } from '../../lib/theme';
-
-type VersionInfo = {
-  version: string;
-  commit: string;
-  buildTime: string;
-};
+import { getVersionInfo } from '../../lib/openapiClient';
 
 type UpdateInfo = {
   currentVersion: string;
@@ -21,11 +17,18 @@ type UpdateInfo = {
 };
 
 export function HeaderSettings({ user }: { user?: User }) {
-  const { theme, setTheme, language, setLanguage } = useAppStore();
+  const { theme, setTheme, language, setLanguage } = useAppStore(
+    useShallow((s) => ({
+      theme: s.theme,
+      setTheme: s.setTheme,
+      language: s.language,
+      setLanguage: s.setLanguage
+    }))
+  );
   const text = useText();
   const [open, setOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
-  const [versionInfo, setVersionInfo] = useState<VersionInfo | null>(null);
+  const [versionInfo, setVersionInfo] = useState<Awaited<ReturnType<typeof getVersionInfo>> | null>(null);
   const [updateInfo, setUpdateInfo] = useState<UpdateInfo | null>(null);
   const [updateCheckFailed, setUpdateCheckFailed] = useState(false);
   const [checkingUpdate, setCheckingUpdate] = useState(false);
@@ -59,7 +62,7 @@ export function HeaderSettings({ user }: { user?: User }) {
 
   useEffect(() => {
     if (!open || !isAdmin || versionInfo) return;
-    api<VersionInfo>('/api/version', { method: 'GET' })
+    getVersionInfo()
       .then(setVersionInfo)
       .catch(() => {});
   }, [open, isAdmin, versionInfo]);

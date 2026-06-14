@@ -13,7 +13,8 @@ import { queryKeys } from '../lib/queryKeys';
 import { boolBadge, domainModeLabel, formatDomainExpiry } from '../lib/display';
 import { DataTable, DataTableToolbar, DataTableViewOptions, EmptyState, IconButton, InfoTip } from '../components/shared';
 import type { DataTableColumn, DataTableSortState } from '../components/shared';
-import { AddDomainDialog, formatRelativeTime, invalidateDomainQueries, isCheckReady, pendingDeleteAt } from './AddDomainDialog';
+import { AddDomainDialog } from './AddDomainDialog';
+import { formatRelativeTime, invalidateDomainQueries, isCheckReady, pendingDeleteAt } from './domainPageUtils';
 
 export function DomainManagementPage({ user }: { user: User }) {
   const queryClient = useQueryClient();

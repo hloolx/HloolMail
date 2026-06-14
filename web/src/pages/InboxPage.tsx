@@ -26,7 +26,10 @@ import { OneTimeLinkCard } from './ShareLinksPage';
 
 export function InboxPage() {
   const queryClient = useQueryClient();
-  const { email, setEmail, apiKey, language } = useAppStore();
+  const email = useAppStore((s) => s.email);
+  const setEmail = useAppStore((s) => s.setEmail);
+  const apiKey = useAppStore((s) => s.apiKey);
+  const language = useAppStore((s) => s.language);
   const shouldReduceMotion = useReducedMotion();
   const text = useText();
   const mailListRef = useRef<HTMLDivElement>(null);

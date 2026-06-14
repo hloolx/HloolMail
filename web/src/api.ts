@@ -54,7 +54,7 @@ export type Domain = {
 export type PublicDomainItem = {
   id?: number;
   domain: string;
-  mode: 'public' | 'private';
+  mode: 'public' | 'private' | OpenString;
   message_count?: number;
   root_ready?: boolean;
   wildcard_ready?: boolean;

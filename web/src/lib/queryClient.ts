@@ -4,6 +4,7 @@ import { ApiError, clearPendingGetRequests } from '../api';
 import { clearStoredRequestHistory } from '../hooks/useRequestHistory';
 import { useAppStore } from '../store';
 import type { MeResponse } from '../types';
+import { captureException } from './monitoring';
 
 const SESSION_EXPIRED_MESSAGE = 'Session expired. Please sign in again.';
 const DEFAULT_ERROR_MESSAGE = 'Request failed. Please try again.';
@@ -84,10 +85,18 @@ export function createAppQueryClient() {
 function handleQueryError(error: unknown, queryClient: QueryClient, queryKey: readonly unknown[]) {
   if (handleAuthProbeUnauthorized(error, queryClient, queryKey)) return;
   if (handleAuthError(error, queryClient)) return;
+  // Non-auth query errors are reported globally. Noise is filtered in captureException.
+  captureException(error, {
+    source: 'react-query',
+    kind: 'query',
+    queryKey: typeof queryKey[0] === 'string' ? queryKey[0] : String(queryKey[0] ?? 'unknown')
+  });
 }
 
 function handleMutationError(error: unknown, queryClient: QueryClient, hasLocalHandler: boolean) {
   if (handleAuthError(error, queryClient)) return;
+  // Local handlers keep their own UI, but unexpected failures are still observable.
+  captureException(error, { source: 'react-query', kind: 'mutation', handledLocally: hasLocalHandler });
   if (hasLocalHandler) return;
   toast.error(readErrorMessage(error));
 }

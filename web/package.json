@@ -1,11 +1,15 @@
 {
   "name": "gptmail-console",
   "private": true,
-  "version": "0.8.1",
+  "version": "0.8.2",
   "type": "module",
+  "engines": {
+    "node": "^20.19.0 || >=22.12.0"
+  },
   "scripts": {
     "dev": "vite --host 0.0.0.0",
     "build": "tsc --noEmit -p tsconfig.json && vite build",
+    "build:analyze": "tsc --noEmit -p tsconfig.json && ANALYZE=1 vite build",
     "lint": "eslint .",
     "test": "vitest run --environment jsdom",
     "gen:api:snapshot": "node scripts/generate-openapi-snapshot.cjs",
@@ -16,11 +20,13 @@
     "preview": "vite preview --host 0.0.0.0"
   },
   "dependencies": {
+    "@sentry/react": "^10.57.0",
     "@tanstack/react-query": "^5.90.12",
     "canvas-confetti": "^1.9.4",
     "framer-motion": "^12.38.0",
     "html-to-image": "^1.11.13",
     "lucide-react": "^0.468.0",
+    "openapi-fetch": "^0.17.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "sonner": "^1.7.1",
@@ -32,17 +38,18 @@
     "@types/canvas-confetti": "^1.9.0",
     "@types/react": "^19.0.1",
     "@types/react-dom": "^19.0.2",
-    "@vitejs/plugin-react": "^4.3.4",
+    "@vitejs/plugin-react": "^6.0.2",
     "eslint": "^10.4.0",
     "eslint-plugin-react-hooks": "^7.1.1",
     "eslint-plugin-react-refresh": "^0.5.2",
     "jsdom": "^29.1.1",
     "openapi-typescript": "^7.13.0",
     "prettier": "^3.8.3",
+    "rollup-plugin-visualizer": "^7.0.1",
     "tailwindcss": "^4.1.17",
     "typescript": "^5.7.2",
     "typescript-eslint": "^8.59.4",
-    "vite": "^6.0.3",
+    "vite": "^8.0.16",
     "vitest": "^4.1.8"
   }
 }

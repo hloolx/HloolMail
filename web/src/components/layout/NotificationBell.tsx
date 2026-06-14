@@ -22,11 +22,9 @@ export function NotificationBell() {
   const shouldReduceMotion = Boolean(useReducedMotion());
   const [open, setOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
-  const {
-    mailNotifications,
-    clearMailNotifications,
-    setPage
-  } = useAppStore();
+  const mailNotifications = useAppStore((s) => s.mailNotifications);
+  const clearMailNotifications = useAppStore((s) => s.clearMailNotifications);
+  const setPage = useAppStore((s) => s.setPage);
 
   const notificationsInterval = useVisibleRefetchInterval(30000);
 

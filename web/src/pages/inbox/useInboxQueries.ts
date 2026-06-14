@@ -1,7 +1,8 @@
 import { useQuery } from '@tanstack/react-query';
-import type { DomainAvailability, MailboxInfo, MailboxStats, MessageDetail, MessageSummary, PaginatedResponse } from '../../api';
+import type { MailboxInfo, MailboxStats, MessageDetail, MessageSummary, PaginatedResponse } from '../../api';
 import { api } from '../../api';
 import { useVisibleRefetchInterval } from '../../hooks/useVisibleRefetchInterval';
+import { getAvailableDomains } from '../../lib/openapiClient';
 import { EMAIL_PAGE_SIZE, MAILBOX_PAGE_SIZE } from './utils';
 
 type InboxQueriesOptions = {
@@ -26,7 +27,7 @@ export function useInboxQueries({
 
   const domains = useQuery({
     queryKey: ['domains-available', apiKey],
-    queryFn: () => api<DomainAvailability>('/api/domains/available', { apiKey }),
+    queryFn: () => getAvailableDomains({ apiKey }),
     staleTime: 10_000
   });
 

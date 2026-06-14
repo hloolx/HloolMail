@@ -1,5 +1,6 @@
 import type { InstallDNSCheckResult } from '../api';
 import { useText } from '../locales';
+import { installDNSMessage } from './installDNSMessage';
 
 export function DNSCheckDetails({ result, text }: { result: InstallDNSCheckResult; text: ReturnType<typeof useText> }) {
   return (
@@ -29,7 +30,6 @@ export function DNSCheckDetails({ result, text }: { result: InstallDNSCheckResul
     </div>
   );
 }
-
 function DNSLine({ label, ok, value }: { label: string; ok: boolean; value: string }) {
   return (
     <div className="install-dns-line">
@@ -38,10 +38,4 @@ function DNSLine({ label, ok, value }: { label: string; ok: boolean; value: stri
       <code>{value}</code>
     </div>
   );
-}
-
-export function installDNSMessage(result: InstallDNSCheckResult, text: ReturnType<typeof useText>) {
-  if (result.verified) return text.install.dnsPassed;
-  if (result.message && result.message !== 'DNS records are not ready yet') return result.message;
-  return text.install.dnsNotReady;
 }

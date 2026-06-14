@@ -1,7 +1,7 @@
 import { Check } from 'lucide-react';
 import { useText } from '../locales';
 
-export const STEPS = ['stepAdmin', 'stepDNS', 'stepInstall'] as const;
+const STEPS = ['stepAdmin', 'stepDNS', 'stepInstall'] as const;
 
 export function StepIndicator({ current, text }: { current: number; text: ReturnType<typeof useText> }) {
   const steps = [

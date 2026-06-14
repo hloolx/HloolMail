@@ -1,25 +1,26 @@
 import { useEffect, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Activity, AlertTriangle, Globe2, Inbox, MailPlus } from 'lucide-react';
-import type { AppNotification, DomainAvailability, PublicDomainItem, User } from '../api';
+import type { AppNotification, PublicDomainItem, User } from '../api';
 import { api } from '../api';
-import type { Stats, TimeseriesStats } from '../types';
+import type { TimeseriesStats } from '../types';
 import { useText } from '../locales';
 import { useAppStore } from '../store';
 import { DataTable, EmptyState, InfoTip, Metric, PaginationControls, UserAvatar } from '../components/shared';
 import type { DataTableColumn, DataTableRow } from '../components/shared';
 import { LineChart } from '../components/charts/LineChart';
 import { displayName } from '../lib/userDisplay';
+import { getAvailableDomains, getStats } from '../lib/openapiClient';
 
 export function Dashboard({ user }: { user: User }) {
-  const { setPage } = useAppStore();
+  const setPage = useAppStore((s) => s.setPage);
   const text = useText();
   const [domainPage, setDomainPage] = useState(1);
   const pageSize = 10;
 
   const stats = useQuery({
     queryKey: ['stats'],
-    queryFn: () => api<Stats>('/api/stats'),
+    queryFn: getStats,
     staleTime: 30_000,
   });
 
@@ -31,7 +32,7 @@ export function Dashboard({ user }: { user: User }) {
 
   const domains = useQuery({
     queryKey: ['domains-available'],
-    queryFn: () => api<DomainAvailability>('/api/domains/available'),
+    queryFn: () => getAvailableDomains(),
     staleTime: 30_000,
   });
 

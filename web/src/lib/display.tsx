@@ -1,9 +1,5 @@
-import type { MouseEvent } from 'react';
-import { Check, Copy as CopyIcon } from 'lucide-react';
 import type { Domain, MessageSummary } from '../api';
-import { useCopyState } from '../hooks/useCopyState';
-import { copy as copyText } from './clipboard';
-import { currentText, useText } from '../locales';
+import { currentText } from '../locales';
 import type { Language } from '../store';
 
 export function boolBadge(value?: boolean) {
@@ -11,7 +7,7 @@ export function boolBadge(value?: boolean) {
   return <span className={`status-dot ${value ? 'status-dot-ok' : 'status-dot-bad'}`}>{value ? text.common.yes : text.common.no}</span>;
 }
 
-export function domainModeLabel(mode: Domain['mode'], language?: Language) {
+export function domainModeLabel(mode: string, language?: Language) {
   const text = currentText(language);
   return mode === 'public' ? text.domains.modePublic : text.domains.modePrivate;
 }
@@ -167,32 +163,6 @@ export function extractCode(message: CodeExtractableMessage | Pick<MessageSummar
   const explicitCode = 'verification_code' in message ? normalizeCodeValue(message.verification_code || '') : '';
   if (explicitCode && isCodeShape(explicitCode)) return explicitCode;
   return extractCodeCandidates(message)[0]?.value;
-}
-
-export function VerificationCodeCopyButton({ code, compact = false, className = '' }: { code: string; compact?: boolean; className?: string }) {
-  const text = useText();
-  const [copied, markCopied] = useCopyState();
-  const title = copied ? text.common.copied : text.inbox.copyCode;
-
-  const handleCopy = (event: MouseEvent<HTMLButtonElement>) => {
-    event.stopPropagation();
-    void copyText(code, { event }).then((ok) => {
-      if (ok) markCopied();
-    });
-  };
-
-  return (
-    <button
-      type="button"
-      className={`verification-code-copy ${compact ? 'verification-code-copy-compact' : ''} ${className}`.trim()}
-      title={title}
-      aria-label={`${title}: ${code}`}
-      onClick={handleCopy}
-    >
-      <span className="verification-code-copy-value">{code}</span>
-      {copied ? <Check size={compact ? 13 : 15} /> : <CopyIcon size={compact ? 13 : 15} />}
-    </button>
-  );
 }
 
 function extractCodeCandidates(message: CodeExtractableMessage | Pick<MessageSummary, 'subject' | 'preview'>) {

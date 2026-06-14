@@ -1,6 +1,7 @@
 import { Paperclip } from 'lucide-react';
 import type { AttachmentMetadata, MessageDetail } from '../api';
-import { extractCode, VerificationCodeCopyButton } from '../lib/display';
+import { extractCode } from '../lib/display';
+import { VerificationCodeCopyButton } from '../lib/VerificationCodeCopyButton';
 import { buildEmailSrcDoc } from '../lib/emailHtml';
 import { useText } from '../locales';
 import { EmptyState, LoadingState, SenderBrandAvatar } from '../components/shared';

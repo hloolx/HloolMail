@@ -9,7 +9,8 @@ import { useText } from '../locales';
 import { notifySuccess } from '../lib/feedback';
 import { AppLogo, CodeBlock, Field, LoadingIndicator, StatusPill } from '../components/shared';
 import { StepIndicator } from './InstallStepIndicator';
-import { DNSCheckDetails, installDNSMessage } from './InstallDNSVerify';
+import { DNSCheckDetails } from './InstallDNSVerify';
+import { installDNSMessage } from './installDNSMessage';
 
 type InstallForm = {
   admin_email: string;
@@ -234,7 +235,7 @@ export function InstallPage({ status, onDone }: { status?: InstallStatus; onDone
       setForm(devForm);
       install.mutate(devForm);
     }
-  }, [onDone, install]);
+  }, [install]);
 
   // Derive step from state
   const currentStep = runtimeConfigLocked ? 2 : (dnsVerified ? 2 : (form.admin_email && form.admin_password ? 1 : 0));

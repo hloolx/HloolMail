@@ -6,6 +6,7 @@ import type { InboxSSEEvent, User, UserOnboardingStatus } from '../../api';
 import { api, parseFromAddress } from '../../api';
 import { useText } from '../../locales';
 import { useAppStore } from '../../store';
+import { useShallow } from 'zustand/react/shallow';
 import { useBrowserNotification } from '../../hooks/useBrowserNotification';
 import { useVisibilityChange } from '../../hooks/useVisibilityChange';
 import { sseStream } from '../../lib/sse';
@@ -19,7 +20,20 @@ type TopbarProps = {
 };
 
 export function Topbar({ user, onReplayTutorial }: TopbarProps) {
-  const { page, sidebarCollapsed, mobileSidebarOpen, toggleSidebar, toggleMobileSidebar, email, addMailNotification, awayMailCount, awayAnnouncementCount, resetAwayCounts } = useAppStore();
+  const { toggleSidebar, toggleMobileSidebar, addMailNotification, resetAwayCounts } = useAppStore(
+    useShallow((s) => ({
+      toggleSidebar: s.toggleSidebar,
+      toggleMobileSidebar: s.toggleMobileSidebar,
+      addMailNotification: s.addMailNotification,
+      resetAwayCounts: s.resetAwayCounts
+    }))
+  );
+  const page = useAppStore((s) => s.page);
+  const sidebarCollapsed = useAppStore((s) => s.sidebarCollapsed);
+  const mobileSidebarOpen = useAppStore((s) => s.mobileSidebarOpen);
+  const email = useAppStore((s) => s.email);
+  const awayMailCount = useAppStore((s) => s.awayMailCount);
+  const awayAnnouncementCount = useAppStore((s) => s.awayAnnouncementCount);
   const queryClient = useQueryClient();
   const text = useText();
   const [isMobileNavigation, setIsMobileNavigation] = useState(() => (
