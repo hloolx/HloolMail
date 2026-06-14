@@ -34,9 +34,21 @@ HLOOL Mail 用来搭建自部署、支持多用户的私有域名收信和邮件
 - 不是传统 IMAP/POP3 邮箱客户端，也不提供 IMAP/POP3。
 - 不负责外发邮件，核心目标是稳定收信、归属隔离、自动化读取和控制台管理。
 
+<p align="center">
+  <img src="assets/readme-alan-sheep/01-private-mail-gateway.png" width="820" alt="HLOOL Mail 自托管私有域名收信入口插图">
+</p>
+
+<p align="center"><em>把 MX 指向自己的 HLOOL Mail 主机后，收信入口、用户、额度、API Key 和数据边界都由自己管理。</em></p>
+
 ## 5 分钟 Docker Compose
 
 Docker Compose 是推荐部署方式，默认启动 `app` 和 `postgres`，应用通过 PostgreSQL 持久化数据。
+
+<p align="center">
+  <img src="assets/readme-alan-sheep/02-compose-deploy.png" width="820" alt="Docker Compose 启动应用和 PostgreSQL 插图">
+</p>
+
+<p align="center"><em>推荐用 Docker Compose 同时启动应用和 PostgreSQL，让服务配置、数据持久化和升级路径更清晰。</em></p>
 
 ```bash
 cp .env.compose.example .env
@@ -214,6 +226,12 @@ example.com.         MX 10  mail.example.com.
 
 MX 不写端口。端口转发只发生在服务器、面板、云防火墙或负载均衡层。
 
+<p align="center">
+  <img src="assets/readme-alan-sheep/03-dns-mx-route.png" width="820" alt="DNS MX 指向 HLOOL Mail 收信主机插图">
+</p>
+
+<p align="center"><em>域名的 MX 记录只负责把邮件路由到你的收信主机；端口映射留给服务器和网络层处理。</em></p>
+
 ## 搜索引擎与 Safe Browsing 风险控制
 
 不要一上线就开放 API 文档索引。推荐默认保持 `PUBLIC_INDEXING=landing`，只让公开首页可抓取；被 Chrome 或 Safe Browsing 标记后的恢复期改为 `PUBLIC_INDEXING=none`；等 Search Console 和 Safe Browsing 状态稳定后，再切到 `PUBLIC_INDEXING=docs` 开放公开文档。
@@ -234,6 +252,12 @@ Web Console 中创建 API Key 后，明文只会显示一次；后续只能看�
 
 跨用户的域名健康、公开分享链接、配额预警、审计和其他全局处置只放在管理后台，并走 `/api/admin/*` 管理接口。普通路由如果处理 share、mailbox、stats、webhook 或 domain 数据，都必须继续按 owner scope 返回。
 
+<p align="center">
+  <img src="assets/readme-alan-sheep/04-console-boundary.png" width="820" alt="Web Console 工作区和管理后台权限边界插图">
+</p>
+
+<p align="center"><em>日常工作区默认只看当前账号的数据；跨用户审计、处置和全局健康检查集中在管理后台。</em></p>
+
 ## API 自动化
 
 API 自动化使用 `X-API-Key` 请求头。当前稳定面向脚本和 AI 的接口主要是：可用域名、生成邮箱、邮箱列表、邮件读取、邮件删除、统计。完整契约以运行中服务导出的文档为准。
@@ -241,6 +265,12 @@ API 自动化使用 `X-API-Key` 请求头。当前稳定面向脚本和 AI 的�
 API Key 与所属账号绑定；普通 API 自动化只读取和操作该账号有权访问的数据，不提供跨用户管理能力。
 
 HLOOL Mail 是开源项目，可以部署在你自己的域名或内网环境中。示例里的 `BASE_URL` 不是固定官方 API 地址，请替换为你的 HLOOL Mail 实例地址，例如 `https://your-hlool-mail.example`。
+
+<p align="center">
+  <img src="assets/readme-alan-sheep/05-automation-delivery.png" width="820" alt="API Key 自动化读取邮件和事件投递插图">
+</p>
+
+<p align="center"><em>脚本、CI 或 AI 助手可以用 API Key 生成邮箱、读取邮件；新邮件也可以通过 Webhook 进入你的自动化流程。</em></p>
 
 完整接口不要复制到 README，请直接查看运行中服务：
 
