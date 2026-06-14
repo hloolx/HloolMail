@@ -2,7 +2,7 @@
   "openapi": "3.0.3",
   "info": {
     "title": "HLOOL Mail API",
-    "version": "0.8.2",
+    "version": "0.8.3",
     "description": "由内部 apispec 注册表生成的机器可读 API 元数据。"
   },
   "servers": [
