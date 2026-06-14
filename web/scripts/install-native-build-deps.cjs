@@ -7,14 +7,38 @@ if (process.platform !== 'linux' || !arch) {
 }
 
 const libc = process.report.getReport().header.glibcVersionRuntime ? 'gnu' : 'musl';
-const rollupVersion = require('../node_modules/rollup/package.json').version;
-const lightningVersion = require('../node_modules/lightningcss/package.json').version;
-const tailwindOxideVersion = require('../node_modules/@tailwindcss/oxide/package.json').version;
-const packages = [
-  `@rollup/rollup-linux-${arch}-${libc}@${rollupVersion}`,
-  `lightningcss-linux-${arch}-${libc}@${lightningVersion}`,
-  `@tailwindcss/oxide-linux-${arch}-${libc}@${tailwindOxideVersion}`,
-];
+const packages = [];
+
+const getPackageVersion = (name) => {
+  try {
+    return require(`../node_modules/${name}/package.json`).version;
+  } catch (error) {
+    if (error?.code === 'MODULE_NOT_FOUND') {
+      return null;
+    }
+    throw error;
+  }
+};
+
+const rollupVersion = getPackageVersion('rollup');
+if (rollupVersion) {
+  packages.push(`@rollup/rollup-linux-${arch}-${libc}@${rollupVersion}`);
+}
+
+const rolldownVersion = getPackageVersion('rolldown');
+if (rolldownVersion) {
+  packages.push(`@rolldown/binding-linux-${arch}-${libc}@${rolldownVersion}`);
+}
+
+const lightningVersion = getPackageVersion('lightningcss');
+if (lightningVersion) {
+  packages.push(`lightningcss-linux-${arch}-${libc}@${lightningVersion}`);
+}
+
+const tailwindOxideVersion = getPackageVersion('@tailwindcss/oxide');
+if (tailwindOxideVersion) {
+  packages.push(`@tailwindcss/oxide-linux-${arch}-${libc}@${tailwindOxideVersion}`);
+}
 
 const missing = packages.filter((pkg) => {
   const name = pkg.slice(0, pkg.lastIndexOf('@'));
