@@ -16,19 +16,13 @@ export const brandPresenceTransition: Transition = {
 
 export const pageTransitionVariants: Variants = {
   initial: {
-    opacity: 0,
-    y: 8,
-    filter: 'blur(4px)'
+    opacity: 0
   },
   animate: {
-    opacity: 1,
-    y: 0,
-    filter: 'blur(0px)'
+    opacity: 1
   },
   exit: {
-    opacity: 0,
-    y: -6,
-    filter: 'blur(3px)'
+    opacity: 0
   }
 };
 

@@ -11,6 +11,7 @@ import { notifySuccess } from '../lib/feedback';
 import { queryKeys } from '../lib/queryKeys';
 import { useDirtyNavigationGuard } from '../hooks/useDirtyNavigationGuard';
 import { useText } from '../locales';
+import '../styles/admin.css';
 
 type OAuthForm = {
   client_id: string;

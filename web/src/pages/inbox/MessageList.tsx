@@ -43,13 +43,23 @@ export const MessageList = forwardRef<HTMLDivElement, MessageListProps>(function
   onSelectMessage,
   onPageChange
 }, ref) {
+  const showInitialSkeleton = Boolean(email && !error && (isLoading || isFetching) && items.length === 0);
+
   return (
     <div className="inbox-list-section inbox-message-list-section">
       <div className="inbox-section-heading">
         <p>{text.inbox.messages}</p>
         <span>{formatCount(text.inbox.messageCount, total)}</span>
       </div>
-      <motion.div ref={ref} className="mail-list inbox-scroll-list" variants={mailListVariants(shouldReduceMotion, items.length)} initial="hidden" animate="show" role="list">
+      <motion.div
+        ref={ref}
+        className="mail-list inbox-scroll-list"
+        variants={mailListVariants(shouldReduceMotion, items.length)}
+        initial="hidden"
+        animate="show"
+        role="list"
+        aria-busy={showInitialSkeleton || undefined}
+      >
         {items.map((message) => (
           <MessageRow
             key={message.id}
@@ -62,7 +72,7 @@ export const MessageList = forwardRef<HTMLDivElement, MessageListProps>(function
           />
         ))}
         {email && Boolean(error) && <InboxListError label={readErrorMessage(error)} actionLabel={text.common.refresh} onRetry={onRetry} />}
-        {email && !error && (isLoading || isFetching) && items.length === 0 && <EmptyState label={text.common.loading} />}
+        {showInitialSkeleton && <MessageListSkeleton label={text.common.loading} />}
         {email && !error && !isLoading && !isFetching && items.length === 0 && <EmptyState label={text.inbox.empty} />}
         {!email && <EmptyState label={text.inbox.start} />}
       </motion.div>
@@ -76,6 +86,42 @@ export const MessageList = forwardRef<HTMLDivElement, MessageListProps>(function
     </div>
   );
 });
+
+const MESSAGE_LIST_SKELETON_ROWS = [
+  { title: '68%', sender: '46%', time: '3.7rem' },
+  { title: '78%', sender: '58%', time: '3.1rem' },
+  { title: '52%', sender: '40%', time: '4.2rem' },
+  { title: '72%', sender: '50%', time: '3.4rem' },
+  { title: '60%', sender: '44%', time: '3.9rem' },
+  { title: '82%', sender: '56%', time: '3.2rem' }
+] as const;
+
+function MessageListSkeleton({ label }: { label: string }) {
+  return (
+    <div className="mail-list-skeleton">
+      <span className="sr-only" role="status" aria-live="polite">{label}</span>
+      <div className="mail-list-skeleton-rows" aria-hidden="true">
+        {MESSAGE_LIST_SKELETON_ROWS.map((row, index) => (
+          <div className="mail-row-card mail-row-skeleton-card" key={`mail-row-skeleton-${index}`}>
+            <div className="mail-row mail-row-skeleton">
+              <div className="mail-row-summary">
+                <span className="mail-skeleton-line mail-skeleton-avatar" />
+                <span className="mail-skeleton-stack">
+                  <span className="mail-skeleton-line mail-skeleton-title" style={{ width: row.title }} />
+                  <span className="mail-skeleton-line mail-skeleton-subtitle" style={{ width: row.sender }} />
+                </span>
+              </div>
+              <div className="mail-row-side mail-row-skeleton-side">
+                <span className="mail-skeleton-line mail-skeleton-time" style={{ width: row.time }} />
+                <span className="mail-skeleton-line mail-skeleton-icon" />
+              </div>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
 
 type MessageRowProps = {
   text: InboxText;

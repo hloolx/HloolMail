@@ -10,6 +10,7 @@ import { queryKeys } from '../lib/queryKeys';
 import { useText } from '../locales';
 import { ConfirmModal, DataTable, InfoTip } from '../components/shared';
 import { simpleMarkdownToHTML } from '../lib/markdown';
+import '../styles/admin.css';
 
 export function AnnouncementsPage() {
   const queryClient = useQueryClient();

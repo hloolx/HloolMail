@@ -23,6 +23,7 @@ import { useMailboxGeneration } from './inbox/useMailboxGeneration';
 import { useMailboxSelection } from './inbox/useMailboxSelection';
 import { domainAvailabilityGroups } from './inbox/utils';
 import { OneTimeLinkCard } from './ShareLinksPage';
+import '../styles/inbox.css';
 
 export function InboxPage() {
   const queryClient = useQueryClient();

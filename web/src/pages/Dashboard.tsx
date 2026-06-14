@@ -11,6 +11,7 @@ import type { DataTableColumn, DataTableRow } from '../components/shared';
 import { LineChart } from '../components/charts/LineChart';
 import { displayName } from '../lib/userDisplay';
 import { getAvailableDomains, getStats } from '../lib/openapiClient';
+import '../styles/dashboard.css';
 
 export function Dashboard({ user }: { user: User }) {
   const setPage = useAppStore((s) => s.setPage);

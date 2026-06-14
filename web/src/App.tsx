@@ -7,7 +7,6 @@ import type { MeResponse } from './types';
 import { useText } from './locales';
 import { useAppStore } from './store';
 import { CenteredState, ErrorBoundary, PageTransition } from './components/shared';
-import { Console } from './components/layout/Console';
 import { notifySuccess } from './lib/feedback';
 import { setMonitoringTag, setMonitoringUser } from './lib/monitoring';
 import { expireUserSession } from './lib/queryClient';
@@ -17,6 +16,7 @@ const LandingPage = lazy(() => import('./pages/LandingPage').then(m => ({ defaul
 const LoginPage = lazy(() => import('./pages/LoginPage').then(m => ({ default: m.LoginPage })));
 const LegalPage = lazy(() => import('./pages/LegalPage').then(m => ({ default: m.LegalPage })));
 const SharedMessagePage = lazy(() => import('./pages/SharedMessagePage').then(m => ({ default: m.SharedMessagePage })));
+const Console = lazy(() => import('./components/layout/Console').then(m => ({ default: m.Console })));
 
 export default function App() {
   return (

@@ -33,6 +33,7 @@ import { InfoTip, ConfirmModal } from '../components/shared';
 import { ApiDocsHero } from './ApiDocsHero';
 import { ApiDocsHistory } from './ApiDocsHistory';
 import { ApiDocsMarkdownPreview } from './ApiDocsMarkdownPreview';
+import '../styles/api-docs.css';
 
 function endpointKey(endpoint: DocEndpoint) {
   return `${endpoint.method} ${endpoint.path}`;

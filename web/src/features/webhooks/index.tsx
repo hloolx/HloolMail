@@ -19,6 +19,7 @@ import { useText } from '../../locales';
 import { useTableUrlState } from '../../hooks/useTableUrlState';
 import { ConfirmModal, EmptyState, PaginationControls } from '../../components/shared';
 import { Button, PageHeader, Panel } from '../../components/ui';
+import '../../styles/automation.css';
 
 const WEBHOOK_ROWS_PER_PAGE_OPTIONS = [10, 20, 50, 100];
 

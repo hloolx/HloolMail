@@ -1,13 +1,34 @@
-import { BookOpen, Globe2, Inbox, KeyRound, LayoutDashboard, LogIn, Megaphone, Share2, UserCog, Webhook } from 'lucide-react';
+import {
+  Activity,
+  BookOpen,
+  Globe2,
+  Inbox,
+  KeyRound,
+  LayoutDashboard,
+  LogIn,
+  Megaphone,
+  Network,
+  Settings,
+  Share2,
+  UserCog,
+  Webhook,
+  type LucideIcon
+} from 'lucide-react';
 import type { User } from '../../api';
 import { currentText } from '../../locales';
 import type { Page } from '../../store';
-import { adminNavItems } from '../../features/admin/sectionRegistry';
+import { adminNavSectionItems } from '../../features/admin/sectionRegistry';
 
-export type NavItem = { page: Page; label: string; icon: typeof Inbox };
+export type NavLeafItem = { page: Page; label: string; icon: LucideIcon };
+export type NavBranchItem = { label: string; icon: LucideIcon; items: NavLeafItem[]; defaultOpen?: boolean };
+export type NavItem = NavLeafItem | NavBranchItem;
+
+export function isNavBranch(item: NavItem): item is NavBranchItem {
+  return 'items' in item;
+}
 
 export function navGroups(user: User, text = currentText()): { title: string; items: NavItem[] }[] {
-  const groups = [
+  const groups: { title: string; items: NavItem[] }[] = [
     {
       title: text.nav.mail,
       items: [
@@ -32,13 +53,47 @@ export function navGroups(user: User, text = currentText()): { title: string; it
     }
   ];
   if (user.role === 'admin') {
+    const adminSections = adminNavSectionItems(text);
     groups.push({
       title: text.nav.admin,
       items: [
-        { page: 'users' as Page, label: text.page.users, icon: UserCog },
-        ...adminNavItems(text),
-        { page: 'admin-oauth' as Page, label: text.page['admin-oauth'], icon: LogIn },
-        { page: 'announcements' as Page, label: text.page.announcements, icon: Megaphone }
+        adminSections.overview,
+        {
+          label: text.nav.adminAccounts,
+          icon: UserCog,
+          defaultOpen: true,
+          items: [
+            { page: 'users' as Page, label: text.page.users, icon: UserCog },
+            adminSections.quotaAlerts
+          ]
+        },
+        {
+          label: text.nav.adminOperations,
+          icon: Activity,
+          defaultOpen: true,
+          items: [
+            adminSections.dns,
+            adminSections.domains,
+            adminSections.audit
+          ]
+        },
+        {
+          label: text.nav.adminGovernance,
+          icon: Network,
+          items: [
+            adminSections.apiInterfaces,
+            adminSections.shareLinks,
+            adminSections.webhooks
+          ]
+        },
+        {
+          label: text.nav.adminSettings,
+          icon: Settings,
+          items: [
+            { page: 'admin-oauth' as Page, label: text.page['admin-oauth'], icon: LogIn },
+            { page: 'announcements' as Page, label: text.page.announcements, icon: Megaphone }
+          ]
+        }
       ]
     });
   }

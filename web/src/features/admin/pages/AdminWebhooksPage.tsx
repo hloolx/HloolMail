@@ -18,6 +18,7 @@ import type { DataTableColumn } from '../../../components/shared';
 import { Badge } from '../../../components/ui';
 import { AdminPageFrame } from '../components/AdminPageFrame';
 import { queryErrorMessage } from '../utils/adminFormatting';
+import '../../../styles/automation.css';
 
 const ADMIN_WEBHOOK_PAGE_SIZE_OPTIONS = [10, 20, 50, 100] as const;
 const ADMIN_WEBHOOK_STATUS_OPTIONS = ['all', 'enabled', 'disabled'] as const;

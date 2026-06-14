@@ -30,6 +30,10 @@ const zhCN = {
     domains: '域名',
     automation: '自动化',
     admin: '管理员',
+    adminAccounts: '账户与额度',
+    adminOperations: '运营监测',
+    adminGovernance: '治理工具',
+    adminSettings: '系统设置',
     subtitle: '邮件控制台',
     expandSidebar: '展开侧边栏',
     collapseSidebar: '收起侧边栏'

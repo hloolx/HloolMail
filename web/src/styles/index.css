@@ -1,22 +1,9 @@
 @import "tailwindcss";
-@import "./landing.css";
-@import "./auth.css";
-@import "./layout.css";
 @import "./base-components.css";
-@import "./app-frame.css";
 @import "./ui.css";
 @import "./data-table.css";
 @import "./form-controls.css";
-@import "./admin.css";
-@import "./users.css";
-@import "./notification.css";
 @import "./shared-utils.css";
-@import "./settings.css";
-@import "./dashboard.css";
-@import "./domains.css";
-@import "./inbox.css";
-@import "./api-docs.css";
-@import "./automation.css";
 @import "./animations.css";
 
 :root {

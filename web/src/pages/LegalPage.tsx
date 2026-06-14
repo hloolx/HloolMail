@@ -1,5 +1,6 @@
 import { ArrowLeft } from 'lucide-react';
 import { simpleMarkdownToHTML } from '../lib/markdown';
+import '../styles/auth.css';
 
 type LegalPageProps = {
   type: 'terms' | 'privacy';

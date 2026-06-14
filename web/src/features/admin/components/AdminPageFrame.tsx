@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react';
 import { AlertCircle, Loader2 } from 'lucide-react';
 import { useText } from '../../../locales';
+import '../../../styles/admin.css';
 
 export interface Breadcrumb {
   label: string;

@@ -15,6 +15,8 @@ import { DataTable, DataTableToolbar, DataTableViewOptions, EmptyState, IconButt
 import type { DataTableColumn, DataTableSortState } from '../components/shared';
 import { AddDomainDialog } from './AddDomainDialog';
 import { formatRelativeTime, invalidateDomainQueries, isCheckReady, pendingDeleteAt } from './domainPageUtils';
+import '../styles/admin.css';
+import '../styles/domains.css';
 
 export function DomainManagementPage({ user }: { user: User }) {
   const queryClient = useQueryClient();

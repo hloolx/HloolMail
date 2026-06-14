@@ -32,6 +32,10 @@ const enUS: typeof zhCN = {
     domains: 'Domains',
     automation: 'Automation',
     admin: 'Admin',
+    adminAccounts: 'Accounts & Quotas',
+    adminOperations: 'Operations',
+    adminGovernance: 'Governance',
+    adminSettings: 'System Settings',
     subtitle: 'Mail Console',
     expandSidebar: 'Expand sidebar',
     collapseSidebar: 'Collapse sidebar'

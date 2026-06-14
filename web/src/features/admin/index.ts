@@ -9,6 +9,7 @@ export { AdminAuditPage, AdminAuditLog } from './pages/AdminAuditPage';
 export {
   adminLegacyTabAliases,
   adminNavItems,
+  adminNavSectionItems,
   adminPageSet,
   adminSections,
   getAdminPageElement,

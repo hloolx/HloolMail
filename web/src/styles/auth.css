@@ -56,11 +56,58 @@
 }
 
 .auth-loading-state {
-  display: flex;
-  min-height: 9rem;
-  align-items: center;
-  justify-content: center;
+  min-height: 17.25rem;
   color: var(--muted);
+}
+
+.auth-form-skeleton {
+  display: grid;
+  gap: 0.65rem;
+}
+
+.auth-skeleton-line,
+.auth-skeleton-input,
+.auth-skeleton-button,
+.auth-skeleton-divider {
+  display: block;
+  overflow: hidden;
+  border-radius: 0.65rem;
+  background:
+    linear-gradient(90deg, transparent, color-mix(in srgb, var(--background) 72%, transparent), transparent),
+    color-mix(in srgb, var(--soft) 74%, var(--border));
+  background-size: 220% 100%;
+  animation: loading-state-sheen 1.8s ease-in-out infinite;
+}
+
+.auth-skeleton-line {
+  width: 58%;
+  height: 0.8rem;
+  margin: 0.12rem 0.25rem;
+  border-radius: 999px;
+}
+
+.auth-skeleton-line-wide {
+  width: 76%;
+}
+
+.auth-skeleton-input {
+  height: 2.55rem;
+}
+
+.auth-skeleton-button {
+  height: 2.55rem;
+  background-color: color-mix(in srgb, var(--foreground) 9%, var(--soft));
+}
+
+.auth-skeleton-button-muted {
+  background-color: color-mix(in srgb, var(--soft) 86%, var(--border));
+}
+
+.auth-skeleton-divider {
+  width: 100%;
+  height: 1px;
+  margin: 0.35rem 0;
+  border-radius: 999px;
 }
 
 .auth-submit {

@@ -12,6 +12,7 @@ import { ConfirmModal, DataTable, DataTableToolbar, DataTableViewOptions, Dialog
 import type { DataTableColumn } from '../../../components/shared';
 import { AdminPageFrame } from '../components/AdminPageFrame';
 import { queryErrorMessage } from '../utils/adminFormatting';
+import '../../../styles/automation.css';
 
 const ADMIN_SHARE_PAGE_SIZE_OPTIONS = [10, 20, 50, 100] as const;
 const ADMIN_SHARE_STATUS_OPTIONS = ['all', 'active', 'revoked', 'expired'] as const;

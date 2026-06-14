@@ -27,6 +27,10 @@ import { Main } from './Main';
 import { OnboardingGuide } from './OnboardingGuide';
 import { Sidebar } from './Sidebar';
 import { Topbar } from './Topbar';
+import '../../styles/app-frame.css';
+import '../../styles/layout.css';
+import '../../styles/notification.css';
+import '../../styles/settings.css';
 
 export function Console({ user }: { user: User }) {
   const { page, setPage, sidebarCollapsed, toggleSidebar } = useAppStore(

@@ -1,5 +1,5 @@
-import { useState, useRef, useEffect, useCallback } from 'react';
-import type { FormEvent, KeyboardEvent } from 'react';
+import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
+import type { FormEvent, KeyboardEvent, MouseEvent as ReactMouseEvent } from 'react';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { ArrowRight, Bot, Check, CircleAlert, CircleUserRound, Code2, Copy as CopyIcon, Fingerprint, Github, Globe2, Home, Inbox, KeyRound, LockKeyhole, MailCheck, MailPlus, Network, PackageCheck, RefreshCcw, Share2, Sparkles, Terminal, Users, Zap, type LucideIcon } from 'lucide-react';
 import { toast } from 'sonner';
@@ -18,6 +18,10 @@ import { notifySuccess } from '../lib/feedback';
 import { queryKeys } from '../lib/queryKeys';
 import { loginWithPasskey } from '../lib/passkeys';
 import { normalizeNicknameInput, validateNicknameInput } from '../lib/userDisplay';
+import '../styles/auth.css';
+import '../styles/layout.css';
+import '../styles/landing.css';
+import '../styles/settings.css';
 
 declare global {
   interface Window {
@@ -30,6 +34,8 @@ declare global {
 }
 
 const TURNSTILE_SCRIPT_SRC = 'https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit';
+const LANDING_SECTION_IDS = ['how', 'features', 'use-cases', 'deploy'] as const;
+type LandingSectionId = typeof LANDING_SECTION_IDS[number];
 
 type AuthFieldErrors = Partial<Record<'nickname' | 'email' | 'password' | 'confirmPassword' | 'captchaAnswer' | 'verificationCode', string>>;
 
@@ -61,6 +67,9 @@ export function LandingPage({ status, onDone, authMode = 'home', initialMode = '
   const loginTabRef = useRef<HTMLButtonElement>(null);
   const registerTabRef = useRef<HTMLButtonElement>(null);
   const pageRef = useRef<HTMLDivElement>(null);
+  const headerRef = useRef<HTMLElement>(null);
+  const landingScrollTargetRef = useRef<LandingSectionId | null>(null);
+  const landingScrollUnlockTimerRef = useRef<number | null>(null);
   const completedVerificationDeliveryRef = useRef('');
   const [mode, setMode] = useState<'login' | 'register'>(initialMode);
   const [mxCopied, markMxCopied] = useCopyState();
@@ -72,6 +81,7 @@ export function LandingPage({ status, onDone, authMode = 'home', initialMode = '
   const [verificationCode, setVerificationCode] = useState('');
   const [captchaAnswer, setCaptchaAnswer] = useState('');
   const [authFieldErrors, setAuthFieldErrors] = useState<AuthFieldErrors>({});
+  const [activeLandingSection, setActiveLandingSection] = useState<LandingSectionId>('how');
   const loginSettings = useQuery({
     queryKey: queryKeys.loginSettings,
     queryFn: () => api<PublicLoginSettings>('/api/auth/login-settings'),
@@ -152,10 +162,132 @@ export function LandingPage({ status, onDone, authMode = 'home', initialMode = '
 
     revealTargets.forEach((element) => observer.observe(element));
 
+    // Feature-card spotlight: track the pointer so the radial glow follows the cursor.
+    const featureCards = Array.from(page.querySelectorAll<HTMLElement>('.landing-features-grid article'));
+    const finePointer = window.matchMedia('(hover: hover) and (pointer: fine)').matches;
+    const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    let spotlightBound = false;
+    const handleFeatureMove = (event: MouseEvent) => {
+      const card = event.currentTarget as HTMLElement;
+      const rect = card.getBoundingClientRect();
+      card.style.setProperty('--feature-mx', `${event.clientX - rect.left}px`);
+      card.style.setProperty('--feature-my', `${event.clientY - rect.top}px`);
+    };
+    if (finePointer && !reducedMotion) {
+      featureCards.forEach((card) => {
+        card.addEventListener('mousemove', handleFeatureMove);
+      });
+      spotlightBound = true;
+    }
+
     return () => {
       observer.disconnect();
       settleTimers.forEach((timer) => window.clearTimeout(timer));
+      if (spotlightBound) {
+        featureCards.forEach((card) => card.removeEventListener('mousemove', handleFeatureMove));
+      }
     };
+  }, [isAuthPage]);
+
+  const scrollToLandingSection = useCallback((event: ReactMouseEvent<HTMLAnchorElement>, sectionId: LandingSectionId) => {
+    if (isAuthPage) return;
+    event.preventDefault();
+
+    const target = document.getElementById(sectionId);
+    if (!target) return;
+
+    landingScrollTargetRef.current = sectionId;
+    if (landingScrollUnlockTimerRef.current) {
+      window.clearTimeout(landingScrollUnlockTimerRef.current);
+    }
+    setActiveLandingSection(sectionId);
+    const headerHeight = headerRef.current?.getBoundingClientRect().height ?? 0;
+    const top = Math.max(0, target.getBoundingClientRect().top + window.scrollY - headerHeight - 24);
+    const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    window.history.pushState(null, '', `#${sectionId}`);
+    window.scrollTo({ top, behavior: reduceMotion ? 'auto' : 'smooth' });
+    landingScrollUnlockTimerRef.current = window.setTimeout(() => {
+      if (landingScrollTargetRef.current === sectionId) {
+        landingScrollTargetRef.current = null;
+      }
+      landingScrollUnlockTimerRef.current = null;
+    }, reduceMotion ? 0 : 1100);
+  }, [isAuthPage]);
+
+  // Scrollspy: highlight the top-nav link whose section is closest to the fixed header.
+  useEffect(() => {
+    if (isAuthPage) return;
+    const sections = LANDING_SECTION_IDS
+      .map((id) => document.getElementById(id))
+      .filter((el): el is HTMLElement => Boolean(el));
+    if (!sections.length) return;
+
+    let ticking = false;
+    const updateActiveSection = () => {
+      if (landingScrollTargetRef.current) {
+        setActiveLandingSection(landingScrollTargetRef.current);
+        ticking = false;
+        return;
+      }
+
+      const headerHeight = headerRef.current?.getBoundingClientRect().height ?? 0;
+      const offsetY = window.scrollY + headerHeight + 32;
+      const atPageBottom = window.scrollY + window.innerHeight >= document.documentElement.scrollHeight - 2;
+      let current = sections[0].id as LandingSectionId;
+
+      for (const section of sections) {
+        const sectionTop = section.getBoundingClientRect().top + window.scrollY;
+        if (offsetY >= sectionTop || atPageBottom) {
+          current = section.id as LandingSectionId;
+        } else {
+          break;
+        }
+      }
+
+      setActiveLandingSection(current);
+      ticking = false;
+    };
+
+    const scheduleUpdate = () => {
+      if (ticking) return;
+      ticking = true;
+      window.requestAnimationFrame(updateActiveSection);
+    };
+
+    updateActiveSection();
+    window.addEventListener('scroll', scheduleUpdate, { passive: true });
+    window.addEventListener('resize', scheduleUpdate);
+    window.addEventListener('popstate', scheduleUpdate);
+    return () => {
+      window.removeEventListener('scroll', scheduleUpdate);
+      window.removeEventListener('resize', scheduleUpdate);
+      window.removeEventListener('popstate', scheduleUpdate);
+      if (landingScrollUnlockTimerRef.current) {
+        window.clearTimeout(landingScrollUnlockTimerRef.current);
+        landingScrollUnlockTimerRef.current = null;
+      }
+    };
+  }, [isAuthPage]);
+
+  // Condense the floating header once the user scrolls past the hero fold.
+  useEffect(() => {
+    if (isAuthPage) return;
+    const header = headerRef.current;
+    if (!header) return;
+
+    let ticking = false;
+    const onScroll = () => {
+      if (ticking) return;
+      ticking = true;
+      window.requestAnimationFrame(() => {
+        header.classList.toggle('landing-header-scrolled', window.scrollY > 80);
+        ticking = false;
+      });
+    };
+
+    onScroll();
+    window.addEventListener('scroll', onScroll, { passive: true });
+    return () => window.removeEventListener('scroll', onScroll);
   }, [isAuthPage]);
 
   const refreshCaptcha = useCallback(() => {
@@ -535,7 +667,7 @@ export function LandingPage({ status, onDone, authMode = 'home', initialMode = '
       <a href={isAuthPage ? '#auth-panel' : '#home-main'} className="skip-to-content">
         {text.login.skipToContent ?? '跳到主要内容'}
       </a>
-      <header className="landing-header">
+      <header ref={headerRef} className="landing-header">
         <div className="landing-brand">
           <span className="app-header-brand-mark">
             <AppLogo />
@@ -545,10 +677,10 @@ export function LandingPage({ status, onDone, authMode = 'home', initialMode = '
         <nav className="landing-nav">
           {!isAuthPage && (
             <div className="landing-nav-sections" aria-label={text.login.featuresSectionTitle}>
-              <a href="#how">{text.login.howTitle}</a>
-              <a href="#features">{text.login.featuresSectionTitle}</a>
-              <a href="#use-cases">{text.login.useCasesTitle}</a>
-              <a href="#deploy">{text.login.deployNav}</a>
+              <a href="#how" className={activeLandingSection === 'how' ? 'landing-nav-active' : undefined} aria-current={activeLandingSection === 'how' ? 'page' : undefined} onClick={(event) => scrollToLandingSection(event, 'how')}>{text.login.howTitle}</a>
+              <a href="#features" className={activeLandingSection === 'features' ? 'landing-nav-active' : undefined} aria-current={activeLandingSection === 'features' ? 'page' : undefined} onClick={(event) => scrollToLandingSection(event, 'features')}>{text.login.featuresSectionTitle}</a>
+              <a href="#use-cases" className={activeLandingSection === 'use-cases' ? 'landing-nav-active' : undefined} aria-current={activeLandingSection === 'use-cases' ? 'page' : undefined} onClick={(event) => scrollToLandingSection(event, 'use-cases')}>{text.login.useCasesTitle}</a>
+              <a href="#deploy" className={activeLandingSection === 'deploy' ? 'landing-nav-active' : undefined} aria-current={activeLandingSection === 'deploy' ? 'page' : undefined} onClick={(event) => scrollToLandingSection(event, 'deploy')}>{text.login.deployNav}</a>
             </div>
           )}
           {isAuthPage ? (
@@ -576,11 +708,8 @@ export function LandingPage({ status, onDone, authMode = 'home', initialMode = '
                 <Sparkles size={14} />
                 {text.login.homeBadge}
               </div>
-              <h1>
-                {text.login.homeTitle}
-              </h1>
-              <p className="landing-hero-lead">{text.login.homeSlogan}</p>
-              <p className="landing-hero-desc">{text.login.homeDesc}</p>
+              <h1>HLOOL Mail</h1>
+              <p className="landing-hero-lead">{text.login.homeTitle}</p>
               <div className="landing-actions">
                 {registrationAvailable && (
                   <button className="btn-primary" type="button" onClick={() => { window.location.hash = '#/register'; }}>
@@ -701,9 +830,7 @@ export function LandingPage({ status, onDone, authMode = 'home', initialMode = '
             </div>
           )}
           {registrationSettingsPending ? (
-            <div className="auth-loading-state">
-              <LoadingIndicator label={text.common.loading} size={18} />
-            </div>
+            <AuthPanelSkeleton label={text.common.loading} />
           ) : (!isRegister || emailRegistrationAvailable) && (
           <form className="auth-form" onSubmit={submit}>
             {isRegister && (
@@ -1067,20 +1194,32 @@ export function LandingPage({ status, onDone, authMode = 'home', initialMode = '
           <p>{text.login.overviewDesc}</p>
         </div>
         <div className="landing-overview-api landing-reveal-panel" data-landing-reveal aria-hidden>
-          <div className="landing-api-line">
-            <b>POST</b>
-            <code>/api/generate-email</code>
-            <span>{text.login.apiLineCreate}</span>
+          <div className="landing-api-window-bar">
+            <i />
+            <i />
+            <i />
+            <b>hlool-mail - bash</b>
           </div>
-          <div className="landing-api-line">
-            <b>GET</b>
-            <code>/api/emails</code>
-            <span>{text.login.apiLineReceive}</span>
-          </div>
-          <div className="landing-api-line">
-            <b>GET</b>
-            <code>/api/emails/:id</code>
-            <span>{text.login.apiLineDetail}</span>
+          <div className="landing-api-window-body">
+            <div className="landing-api-line">
+              <b>POST</b>
+              <code>/api/generate-email</code>
+              <span>{text.login.apiLineCreate}</span>
+            </div>
+            <div className="landing-api-line">
+              <b>GET</b>
+              <code>/api/emails</code>
+              <span>{text.login.apiLineReceive}</span>
+            </div>
+            <div className="landing-api-line">
+              <b>GET</b>
+              <code>/api/emails/:id</code>
+              <span>{text.login.apiLineDetail}</span>
+            </div>
+            <div className="landing-api-prompt">
+              <span>$</span>
+              <span className="landing-api-prompt-cursor" />
+            </div>
           </div>
         </div>
       </section>
@@ -1116,23 +1255,25 @@ export function LandingPage({ status, onDone, authMode = 'home', initialMode = '
 
       <footer className="landing-footer">
         <div className="landing-footer-inner">
-          <div className="landing-footer-brand">
-            <span className="app-header-brand-mark">
-              <AppLogo />
-            </span>
-            <span>HLOOL Mail</span>
+          <div className="landing-footer-brandcol">
+            <div className="landing-footer-brand">
+              <span className="app-header-brand-mark">
+                <AppLogo />
+              </span>
+              <span>HLOOL Mail</span>
+            </div>
+            <p className="landing-footer-tagline">{text.login.footerCopy}</p>
           </div>
-          <nav className="landing-footer-links">
-            <a href="#how">{text.login.howTitle}</a>
-            <a href="#features">{text.login.featuresSectionTitle}</a>
-            <a href="#use-cases">{text.login.useCasesTitle}</a>
-            <a href="#deploy">{text.login.deployNav}</a>
-            <a href="https://github.com/hloolx/HloolMail" target="_blank" rel="noopener noreferrer">
-              <Github size={14} />
-              hloolx/HloolMail
+          <nav className="landing-footer-links" aria-label={text.login.deployGithub}>
+            <a className="landing-footer-repo" href="https://github.com/hloolx/HloolMail" target="_blank" rel="noopener noreferrer">
+              <Github size={16} />
+              <span>hloolx/HloolMail</span>
+              <ArrowRight size={14} />
             </a>
           </nav>
-          <p className="landing-footer-copy">{text.login.footerCopy}</p>
+        </div>
+        <div className="landing-footer-bottom">
+          <span>&copy; {new Date().getFullYear()} HLOOL Mail</span>
         </div>
       </footer>
       </>
@@ -1179,9 +1320,29 @@ type LandingStatProps = {
   loading: boolean;
 };
 
+const LANDING_STAT_BARS = 11;
+
+function landingStatBars(seedKey: string): number[] {
+  // Deterministic pseudo-random heights so the bars are stable across renders,
+  // but distinct per stat. Purely decorative, no real data.
+  let seed = 0;
+  for (let i = 0; i < seedKey.length; i += 1) seed = (seed * 31 + seedKey.charCodeAt(i)) >>> 0;
+  const bars: number[] = [];
+  let prev = 0.5;
+  for (let i = 0; i < LANDING_STAT_BARS; i += 1) {
+    seed = (seed * 1103515245 + 12345) & 0x7fffffff;
+    const next = 0.32 + ((seed % 1000) / 1000) * 0.5;
+    // smooth the series so the sparkline reads as an upward trend
+    prev = Math.min(1, Math.max(0.22, prev * 0.45 + next * 0.55 + i * 0.022));
+    bars.push(prev);
+  }
+  return bars;
+}
+
 function LandingStat({ icon: Icon, value, label, loading }: LandingStatProps) {
   const animatedValue = useCountUp(loading ? 0 : value);
   const displayValue = loading ? 0 : animatedValue;
+  const bars = useMemo(() => landingStatBars(label), [label]);
 
   return (
     <div className={`landing-stat ${loading ? 'landing-stat-loading' : 'landing-stat-ready'}`}>
@@ -1190,6 +1351,28 @@ function LandingStat({ icon: Icon, value, label, loading }: LandingStatProps) {
         {displayValue.toLocaleString()}
       </b>
       <span>{label}</span>
+      <div className="landing-stat-spark" aria-hidden="true">
+        {bars.map((height, index) => (
+          <span key={index} style={{ height: `${Math.round(height * 100)}%` }} />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function AuthPanelSkeleton({ label }: { label: string }) {
+  return (
+    <div className="auth-loading-state" role="status" aria-live="polite" aria-busy="true">
+      <span className="sr-only">{label}</span>
+      <div className="auth-form-skeleton" aria-hidden="true">
+        <span className="auth-skeleton-line auth-skeleton-line-wide" />
+        <span className="auth-skeleton-input" />
+        <span className="auth-skeleton-input" />
+        <span className="auth-skeleton-line" />
+        <span className="auth-skeleton-button" />
+        <span className="auth-skeleton-divider" />
+        <span className="auth-skeleton-button auth-skeleton-button-muted" />
+      </div>
     </div>
   );
 }

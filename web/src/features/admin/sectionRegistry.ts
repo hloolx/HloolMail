@@ -74,6 +74,21 @@ export function adminNavItems(text: LocaleText) {
   }));
 }
 
+export function adminNavSectionItems(text: LocaleText) {
+  const [overview, dns, domains, quotaAlerts, apiInterfaces, shareLinks, webhooks, audit] = adminNavItems(text);
+
+  return {
+    overview,
+    dns,
+    domains,
+    quotaAlerts,
+    apiInterfaces,
+    shareLinks,
+    webhooks,
+    audit
+  };
+}
+
 export function getAdminSection(page: string): AdminSection | undefined {
   return adminSectionByPage.get(page as AdminPageId);
 }

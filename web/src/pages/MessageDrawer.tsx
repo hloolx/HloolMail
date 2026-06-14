@@ -4,7 +4,7 @@ import { extractCode } from '../lib/display';
 import { VerificationCodeCopyButton } from '../lib/VerificationCodeCopyButton';
 import { buildEmailSrcDoc } from '../lib/emailHtml';
 import { useText } from '../locales';
-import { EmptyState, LoadingState, SenderBrandAvatar } from '../components/shared';
+import { EmptyState, SenderBrandAvatar } from '../components/shared';
 
 export function MessageDrawer({
   message,
@@ -21,7 +21,7 @@ export function MessageDrawer({
 }) {
   const text = useText();
 
-  if (loading) return <aside className="panel mail-detail-panel"><LoadingState label={text.common.loading} /></aside>;
+  if (loading) return <MessageDetailSkeleton label={text.common.loading} />;
   if (error) return <MessageDetailError label={readErrorMessage(error)} actionLabel={text.common.retry} onRetry={onRetry} />;
   if (!message) return <aside className="panel mail-detail-panel mail-detail-empty text-sm text-[var(--muted)]">{text.inbox.selectMessage}</aside>;
   const code = extractCode(message);
@@ -62,6 +62,36 @@ export function MessageDrawer({
       ) : (
         <EmptyState label={text.inbox.empty} />
       )}
+    </aside>
+  );
+}
+
+function MessageDetailSkeleton({ label }: { label: string }) {
+  return (
+    <aside className="panel mail-detail-panel min-h-96" aria-busy="true">
+      <span className="sr-only" role="status" aria-live="polite">{label}</span>
+      <div className="mail-detail-skeleton" aria-hidden="true">
+        <div className="panel-header mail-detail-skeleton-header">
+          <div className="mail-detail-title-row">
+            <span className="mail-skeleton-line mail-detail-skeleton-avatar" />
+            <span className="mail-skeleton-stack mail-detail-skeleton-title-stack">
+              <span className="mail-skeleton-line mail-detail-skeleton-subject" />
+              <span className="mail-skeleton-line mail-detail-skeleton-from" />
+            </span>
+          </div>
+        </div>
+        <div className="mail-detail-skeleton-meta">
+          <span className="mail-skeleton-line mail-detail-skeleton-meta-line" />
+          <span className="mail-skeleton-line mail-detail-skeleton-meta-line mail-detail-skeleton-meta-line-short" />
+        </div>
+        <div className="mail-detail-skeleton-body">
+          <span className="mail-skeleton-line mail-detail-skeleton-body-line" />
+          <span className="mail-skeleton-line mail-detail-skeleton-body-line mail-detail-skeleton-body-line-wide" />
+          <span className="mail-skeleton-line mail-detail-skeleton-body-line mail-detail-skeleton-body-line-medium" />
+          <span className="mail-skeleton-line mail-detail-skeleton-body-line" />
+          <span className="mail-skeleton-line mail-detail-skeleton-body-line mail-detail-skeleton-body-line-short" />
+        </div>
+      </div>
     </aside>
   );
 }

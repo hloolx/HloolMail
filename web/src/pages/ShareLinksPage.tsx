@@ -14,6 +14,9 @@ import { ConfirmModal, DataTable, DataTableToolbar, DataTableViewOptions, Dialog
 import type { DataTableColumn } from '../components/shared';
 import { MailboxList } from './inbox/MailboxList';
 import { MAILBOX_PAGE_SIZE } from './inbox/utils';
+import '../styles/admin.css';
+import '../styles/automation.css';
+import '../styles/inbox.css';
 
 const SHARE_PAGE_SIZE_OPTIONS = [10, 20, 50, 100];
 

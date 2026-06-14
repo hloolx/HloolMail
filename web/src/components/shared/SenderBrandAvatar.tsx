@@ -91,6 +91,8 @@ export function SenderBrandAvatar({ fromAddress, fromName, className = '', size 
           alt=""
           className="sender-brand-avatar-image"
           src={fallbackURL}
+          loading="lazy"
+          decoding="async"
           onError={() => setFailedFallbackURL(fallbackURL)}
         />
       ) : (

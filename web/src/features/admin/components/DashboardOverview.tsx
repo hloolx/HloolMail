@@ -16,6 +16,7 @@ import { currentText, useText } from '../../../locales';
 import type { Page } from '../../../store';
 import type { AdminGrowthCounts, AdminStats, TimeseriesStats } from '../../../types';
 import { InfoTip, SegmentedTabs } from '../../../components/shared';
+import '../../../styles/dashboard.css';
 import {
   formatNumber,
   type ConfigRisk

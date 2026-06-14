@@ -16,6 +16,8 @@ import type { DataTableColumn } from '../components/shared';
 import { CreateUserDialog } from './CreateUserDialog';
 import { EditUserDialog } from './EditUserDialog';
 import { type UserForm, buildCreatePayload, buildUpdatePayload } from './userFormHelpers';
+import '../styles/admin.css';
+import '../styles/users.css';
 
 const USER_PAGE_SIZE_OPTIONS = [10, 20, 50, 100];
 const USER_API_KEY_PAGE_SIZE_OPTIONS = [5, 10, 20];
