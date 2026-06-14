@@ -7,6 +7,7 @@ import type { Page } from '../../store';
 import { useAppStore } from '../../store';
 import { useShallow } from 'zustand/react/shallow';
 import { adminPageSet, getAdminPageElement } from '../../features/admin/sectionRegistry';
+import { isMobileNavigationViewport } from '../../lib/navigationBreakpoint';
 import { normalizeNicknameInput } from '../../lib/userDisplay';
 import { LoadingState, PageTransition } from '../shared';
 import { ErrorBoundary } from '../shared/ErrorBoundary';
@@ -69,7 +70,7 @@ export function Console({ user }: { user: User }) {
       ) {
         return;
       }
-      if (window.innerWidth < 1024) return;
+      if (isMobileNavigationViewport()) return;
       event.preventDefault();
       toggleSidebar();
     };

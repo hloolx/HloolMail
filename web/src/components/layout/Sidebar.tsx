@@ -8,6 +8,7 @@ import { useAppStore } from '../../store';
 import { useShallow } from 'zustand/react/shallow';
 import { clearUserSession } from '../../lib/queryClient';
 import { displayName, displaySubtitle } from '../../lib/userDisplay';
+import { isMobileNavigationViewport } from '../../lib/navigationBreakpoint';
 import { UserAvatar } from '../shared';
 import { UserProfileDialog } from '../../pages/UserProfileDialog';
 import { navGroups } from './navGroups';
@@ -71,7 +72,7 @@ export function Sidebar({ user }: { user: User }) {
                       type="button"
                       onClick={() => {
                         setPage(item.page);
-                        if (window.innerWidth < 1024) closeMobileSidebar();
+                        if (isMobileNavigationViewport()) closeMobileSidebar();
                       }}
                       title={sidebarCollapsed ? item.label : undefined}
                       aria-current={active ? 'page' : undefined}

@@ -9,6 +9,7 @@ import { useAppStore } from '../../store';
 import { useShallow } from 'zustand/react/shallow';
 import { useBrowserNotification } from '../../hooks/useBrowserNotification';
 import { useVisibilityChange } from '../../hooks/useVisibilityChange';
+import { MOBILE_NAVIGATION_QUERY, isMobileNavigationViewport } from '../../lib/navigationBreakpoint';
 import { sseStream } from '../../lib/sse';
 import { AppLogo } from '../shared/AppLogo';
 import { HeaderSettings } from './HeaderSettings';
@@ -36,9 +37,7 @@ export function Topbar({ user, onReplayTutorial }: TopbarProps) {
   const awayAnnouncementCount = useAppStore((s) => s.awayAnnouncementCount);
   const queryClient = useQueryClient();
   const text = useText();
-  const [isMobileNavigation, setIsMobileNavigation] = useState(() => (
-    typeof window !== 'undefined' ? window.innerWidth < 1024 : false
-  ));
+  const [isMobileNavigation, setIsMobileNavigation] = useState(isMobileNavigationViewport);
   const navigationClosed = isMobileNavigation ? !mobileSidebarOpen : sidebarCollapsed;
   const sidebarTitle = navigationClosed ? text.nav.expandSidebar : text.nav.collapseSidebar;
   const toggleNavigation = () => {
@@ -64,7 +63,7 @@ export function Topbar({ user, onReplayTutorial }: TopbarProps) {
   const showTutorialReplay = Boolean(onReplayTutorial && user.role === 'user' && onboarding.data?.enabled);
 
   useEffect(() => {
-    const media = window.matchMedia('(max-width: 1023px)');
+    const media = window.matchMedia(MOBILE_NAVIGATION_QUERY);
     const syncNavigationMode = () => setIsMobileNavigation(media.matches);
     syncNavigationMode();
     media.addEventListener('change', syncNavigationMode);
