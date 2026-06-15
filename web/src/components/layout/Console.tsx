@@ -1,5 +1,5 @@
 import { AnimatePresence, useReducedMotion } from 'framer-motion';
-import { lazy, Suspense, useEffect, useState } from 'react';
+import { lazy, Suspense, useEffect, useLayoutEffect, useState } from 'react';
 import { toast } from 'sonner';
 import type { User } from '../../api';
 import { useText } from '../../locales';
@@ -33,12 +33,13 @@ import '../../styles/notification.css';
 import '../../styles/settings.css';
 
 export function Console({ user }: { user: User }) {
-  const { page, setPage, sidebarCollapsed, toggleSidebar } = useAppStore(
+  const { page, setPage, sidebarCollapsed, toggleSidebar, applySidebarRoleDefault } = useAppStore(
     useShallow((s) => ({
       page: s.page,
       setPage: s.setPage,
       sidebarCollapsed: s.sidebarCollapsed,
-      toggleSidebar: s.toggleSidebar
+      toggleSidebar: s.toggleSidebar,
+      applySidebarRoleDefault: s.applySidebarRoleDefault
     }))
   );
   const [tutorialReplayKey, setTutorialReplayKey] = useState(0);
@@ -46,6 +47,10 @@ export function Console({ user }: { user: User }) {
   const visiblePage: Page = user.role !== 'admin' && adminPages.has(page) ? 'inbox' : page;
   const shouldReduceMotion = useReducedMotion();
   const text = useText();
+
+  useLayoutEffect(() => {
+    applySidebarRoleDefault(user.role);
+  }, [applySidebarRoleDefault, user.role]);
 
   useEffect(() => {
     if (visiblePage !== page) {

@@ -28,16 +28,29 @@ describe('sidebar layout CSS', () => {
   it('uses the compact newapi-style icon rail dimensions', () => {
     expect(indexCSS).toContain('--sidebar-width: 13rem;');
     expect(indexCSS).toContain('--sidebar-width-icon: 2.75rem;');
-    expect(appFrameCSS).toContain('--sidebar-icon-shell-width: calc(var(--sidebar-width-icon) + 1rem + 2px);');
+    expect(appFrameCSS).toContain('--sidebar-icon-shell-width: calc(var(--sidebar-width-icon) + 1.5rem + 2px);');
+    expect(appFrameCSS).not.toContain('margin-left: var(--app-inset-gap);');
   });
 
   it('keeps collapsed nav items stable and centered', () => {
     const collapsedNavItem = compact(cssRule(layoutCSS, '.sidebar-collapsed .nav-item'));
+    const collapsedLabelRule = compact(layoutCSS);
 
-    expect(collapsedNavItem).toContain('width: 2rem;');
+    expect(collapsedNavItem).toContain('width: var(--sidebar-width-icon);');
     expect(collapsedNavItem).toContain('height: 2rem;');
     expect(collapsedNavItem).toContain('justify-content: center;');
     expect(collapsedNavItem).toContain('padding: 0;');
+    expect(collapsedLabelRule).toContain('.sidebar-collapsed .sidebar-label, .sidebar-collapsed .sidebar-group-title { flex: 0 0 0;');
+  });
+
+  it('gives selected navigation items a distinct light surface', () => {
+    const navItem = compact(cssRule(layoutCSS, '.nav-item'));
+    const activeNavItem = compact(cssRule(layoutCSS, '.nav-item-active'));
+
+    expect(navItem).toContain('color: color-mix(in srgb, var(--foreground) 44%, var(--muted));');
+    expect(activeNavItem).toContain('background: color-mix(in srgb, var(--panel) 90%, var(--shell));');
+    expect(activeNavItem).toContain('color: var(--foreground);');
+    expect(activeNavItem).toContain('box-shadow:');
   });
 
   it('keeps long navigation scrollable in the expanded sidebar', () => {

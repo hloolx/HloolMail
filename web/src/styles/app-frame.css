@@ -2,7 +2,7 @@
   --app-inset-gap: 0.5rem;
   --app-inset-radius: 0.75rem;
   --sidebar-drawer-width: min(17rem, calc(100vw - 1.25rem));
-  --sidebar-icon-shell-width: calc(var(--sidebar-width-icon) + 1rem + 2px);
+  --sidebar-icon-shell-width: calc(var(--sidebar-width-icon) + 1.5rem + 2px);
   --sidebar-shell-width: var(--sidebar-width);
   --z-onboarding-scrim: 9000;
   --z-onboarding-target: 9010;
@@ -44,10 +44,6 @@
   box-shadow:
     0 0 0 1px color-mix(in srgb, var(--border) 66%, transparent),
     0 18px 45px rgba(15, 15, 15, 0.03);
-}
-
-.app-frame-collapsed .app-inset {
-  margin-left: var(--app-inset-gap);
 }
 
 .app-inset-content {

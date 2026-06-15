@@ -48,6 +48,7 @@ type AppState = {
   clearMailNotifications: () => void;
   incrementAwayCounts: (summary?: AwaySummary | null) => void;
   resetAwayCounts: () => void;
+  applySidebarRoleDefault: (role: 'user' | 'admin') => void;
   logout: () => void;
 };
 
@@ -140,6 +141,8 @@ const storedSidebarCollapsed = () => {
   return false;
 };
 
+const hasStoredSidebarCollapsed = () => readStorage('sidebarCollapsed') !== null;
+
 const safeAwayIncrement = (value: number | null | undefined) => {
   if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) return 0;
   return Math.floor(value);
@@ -216,6 +219,10 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
   resetAwayCounts: () => {
     set({ awayMailCount: 0, awayAnnouncementCount: 0 });
+  },
+  applySidebarRoleDefault: (role) => {
+    if (hasStoredSidebarCollapsed()) return;
+    set({ sidebarCollapsed: role === 'admin' });
   },
   logout: () => {
     removeStorage('email');
