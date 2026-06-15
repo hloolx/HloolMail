@@ -1,19 +1,23 @@
 import { useEffect, useRef, useState } from 'react';
-import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { CircleHelp, Github, PanelLeftClose, PanelLeftOpen } from 'lucide-react';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { CircleHelp, Github, LogOut, PanelLeftClose, PanelLeftOpen, UserCircle } from 'lucide-react';
 import { toast } from 'sonner';
 import type { InboxSSEEvent, User, UserOnboardingStatus } from '../../api';
-import { api, parseFromAddress } from '../../api';
-import { useText } from '../../locales';
+import { api, parseFromAddress, postJSON } from '../../api';
+import { roleText, useText } from '../../locales';
 import { useAppStore } from '../../store';
 import { useShallow } from 'zustand/react/shallow';
 import { useBrowserNotification } from '../../hooks/useBrowserNotification';
 import { useVisibilityChange } from '../../hooks/useVisibilityChange';
 import { MOBILE_NAVIGATION_QUERY, isMobileNavigationViewport } from '../../lib/navigationBreakpoint';
+import { clearUserSession } from '../../lib/queryClient';
 import { sseStream } from '../../lib/sse';
+import { displayName, displaySubtitle } from '../../lib/userDisplay';
 import { AppLogo } from '../shared/AppLogo';
+import { UserAvatar } from '../shared';
 import { HeaderSettings } from './HeaderSettings';
 import { NotificationBell } from './NotificationBell';
+import { UserProfileDialog } from '../../pages/UserProfileDialog';
 
 type TopbarProps = {
   user: User;
@@ -21,10 +25,11 @@ type TopbarProps = {
 };
 
 export function Topbar({ user, onReplayTutorial }: TopbarProps) {
-  const { toggleSidebar, toggleMobileSidebar, addMailNotification, resetAwayCounts } = useAppStore(
+  const { toggleSidebar, toggleMobileSidebar, closeMobileSidebar, addMailNotification, resetAwayCounts } = useAppStore(
     useShallow((s) => ({
       toggleSidebar: s.toggleSidebar,
       toggleMobileSidebar: s.toggleMobileSidebar,
+      closeMobileSidebar: s.closeMobileSidebar,
       addMailNotification: s.addMailNotification,
       resetAwayCounts: s.resetAwayCounts
     }))
@@ -38,8 +43,14 @@ export function Topbar({ user, onReplayTutorial }: TopbarProps) {
   const queryClient = useQueryClient();
   const text = useText();
   const [isMobileNavigation, setIsMobileNavigation] = useState(isMobileNavigationViewport);
+  const [accountOpen, setAccountOpen] = useState(false);
+  const [profileOpen, setProfileOpen] = useState(false);
+  const accountMenuRef = useRef<HTMLDivElement>(null);
   const navigationClosed = isMobileNavigation ? !mobileSidebarOpen : sidebarCollapsed;
   const sidebarTitle = navigationClosed ? text.nav.expandSidebar : text.nav.collapseSidebar;
+  const userName = displayName(user);
+  const userSubtitle = displaySubtitle(user) || roleText(user.role, text);
+  const accountTitle = `${userName} · ${roleText(user.role, text)}`;
   const toggleNavigation = () => {
     if (isMobileNavigation) {
       toggleMobileSidebar();
@@ -61,14 +72,41 @@ export function Topbar({ user, onReplayTutorial }: TopbarProps) {
     staleTime: 30_000
   });
   const showTutorialReplay = Boolean(onReplayTutorial && user.role === 'user' && onboarding.data?.enabled);
+  const logout = useMutation({
+    mutationFn: () => postJSON('/api/auth/logout', {}),
+    onSuccess: () => {
+      clearUserSession(queryClient);
+      if (window.location.hash) window.location.hash = '';
+    }
+  });
 
   useEffect(() => {
     const media = window.matchMedia(MOBILE_NAVIGATION_QUERY);
-    const syncNavigationMode = () => setIsMobileNavigation(media.matches);
+    const syncNavigationMode = () => {
+      const matches = media.matches;
+      setIsMobileNavigation(matches);
+      if (!matches) closeMobileSidebar();
+    };
     syncNavigationMode();
     media.addEventListener('change', syncNavigationMode);
     return () => media.removeEventListener('change', syncNavigationMode);
-  }, []);
+  }, [closeMobileSidebar]);
+
+  useEffect(() => {
+    if (!accountOpen) return undefined;
+    const close = (event: PointerEvent) => {
+      if (!accountMenuRef.current?.contains(event.target as Node)) setAccountOpen(false);
+    };
+    const closeByKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setAccountOpen(false);
+    };
+    document.addEventListener('pointerdown', close);
+    document.addEventListener('keydown', closeByKey);
+    return () => {
+      document.removeEventListener('pointerdown', close);
+      document.removeEventListener('keydown', closeByKey);
+    };
+  }, [accountOpen]);
 
   // When user returns to the tab, show summary and refetch
   useVisibilityChange(() => {
@@ -156,8 +194,63 @@ export function Topbar({ user, onReplayTutorial }: TopbarProps) {
             </button>
           )}
           <HeaderSettings user={user} />
+          <div className="header-account" ref={accountMenuRef}>
+            <button
+              className={`header-account-btn ${accountOpen ? 'header-account-btn-active' : ''}`}
+              type="button"
+              title={accountTitle}
+              aria-label={text.profile.open}
+              aria-haspopup="menu"
+              aria-expanded={accountOpen}
+              onClick={() => setAccountOpen((value) => !value)}
+            >
+              <UserAvatar user={user} className="header-account-avatar" />
+            </button>
+            {accountOpen && (
+              <div className="header-account-popover" role="menu" aria-label={accountTitle}>
+                <button
+                  className="header-account-card"
+                  type="button"
+                  role="menuitem"
+                  onClick={() => {
+                    setProfileOpen(true);
+                    setAccountOpen(false);
+                  }}
+                >
+                  <UserAvatar user={user} className="header-account-card-avatar" />
+                  <span className="header-account-copy">
+                    <strong>{userName}</strong>
+                    <small>{userSubtitle}</small>
+                  </span>
+                </button>
+                <button
+                  className="header-account-menu-item"
+                  type="button"
+                  role="menuitem"
+                  onClick={() => {
+                    setProfileOpen(true);
+                    setAccountOpen(false);
+                  }}
+                >
+                  <UserCircle size={15} />
+                  <span>{text.profile.open}</span>
+                </button>
+                <button
+                  className="header-account-menu-item header-account-logout"
+                  type="button"
+                  role="menuitem"
+                  disabled={logout.isPending}
+                  onClick={() => logout.mutate()}
+                >
+                  <LogOut size={15} />
+                  <span>{text.settings.logout}</span>
+                </button>
+              </div>
+            )}
+          </div>
         </div>
       </div>
+      <UserProfileDialog open={profileOpen} onClose={() => setProfileOpen(false)} user={user} />
     </header>
   );
 }

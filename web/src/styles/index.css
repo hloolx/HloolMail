@@ -22,10 +22,10 @@
   --focus-soft: rgba(213, 103, 63, 0.14);
   --primary: #2563eb;
   --warn: #a16207;
-  --app-header-height: 3.05rem;
+  --app-header-height: 3rem;
   --app-brand-width: 13rem;
   --sidebar-width: 13rem;
-  --sidebar-width-icon: 3.35rem;
+  --sidebar-width-icon: 2.75rem;
   --good: #177245;
   --bad: #b42318;
 }

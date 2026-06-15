@@ -1,38 +1,53 @@
 :root {
-  --app-inset-gap: 0.45rem;
-  --app-inset-radius: 1rem;
-  --sidebar-drawer-width: min(18rem, calc(100vw - 1.25rem));
+  --app-inset-gap: 0.5rem;
+  --app-inset-radius: 0.75rem;
+  --sidebar-drawer-width: min(17rem, calc(100vw - 1.25rem));
+  --sidebar-icon-shell-width: calc(var(--sidebar-width-icon) + 1rem + 2px);
+  --sidebar-shell-width: var(--sidebar-width);
   --z-onboarding-scrim: 9000;
   --z-onboarding-target: 9010;
   --z-onboarding-panel: 9020;
 }
 
 .app-frame {
+  display: flex;
   min-height: 100vh;
+  flex-direction: column;
   background: var(--shell);
   color: var(--foreground);
   transition: background-color 220ms ease, color 220ms ease;
 }
 
 .app-frame-collapsed {
-  --sidebar-width: var(--sidebar-width-icon);
+  --sidebar-shell-width: var(--sidebar-icon-shell-width);
+}
+
+.app-body {
+  display: flex;
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: calc(100vh - var(--app-header-height));
 }
 
 .app-main {
-  min-height: 100vh;
-  padding-top: var(--app-header-height);
-  transition: padding-left 260ms cubic-bezier(0.22, 1, 0.36, 1);
+  min-width: 0;
+  min-height: calc(100vh - var(--app-header-height));
+  flex: 1 1 auto;
 }
 
 .app-inset {
   min-height: calc(100vh - var(--app-header-height) - var(--app-inset-gap));
-  margin: 0 var(--app-inset-gap) var(--app-inset-gap);
+  margin: 0 var(--app-inset-gap) var(--app-inset-gap) 0;
   overflow: hidden;
   border-radius: var(--app-inset-radius);
   background: var(--background);
   box-shadow:
     0 0 0 1px color-mix(in srgb, var(--border) 66%, transparent),
     0 18px 45px rgba(15, 15, 15, 0.03);
+}
+
+.app-frame-collapsed .app-inset {
+  margin-left: var(--app-inset-gap);
 }
 
 .app-inset-content {
@@ -142,12 +157,21 @@ html[data-onboarding-active='api-docs-explorer'] [data-onboarding-target='api-do
 @media (max-width: 1023px) {
   .app-frame,
   .app-frame-collapsed {
-    --sidebar-width: var(--sidebar-drawer-width);
+    --sidebar-shell-width: 0rem;
+  }
+
+  .app-body {
+    display: block;
   }
 
   .app-main {
     width: 100%;
-    padding-left: 0;
+  }
+
+  .app-inset,
+  .app-frame-collapsed .app-inset {
+    min-height: calc(100vh - var(--app-header-height) - var(--app-inset-gap));
+    margin: 0 var(--app-inset-gap) var(--app-inset-gap);
   }
 }
 
@@ -156,15 +180,5 @@ html[data-onboarding-active='api-docs-explorer'] [data-onboarding-target='api-do
     right: 0.75rem;
     bottom: 0.75rem;
     width: calc(100vw - 1.5rem);
-  }
-}
-
-@media (min-width: 1024px) {
-  .app-main {
-    padding-left: var(--sidebar-width);
-  }
-
-  .app-inset {
-    margin-left: 0;
   }
 }

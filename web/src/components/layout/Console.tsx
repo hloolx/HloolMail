@@ -86,30 +86,32 @@ export function Console({ user }: { user: User }) {
   return (
     <AppFrame collapsed={sidebarCollapsed}>
       <Topbar user={user} onReplayTutorial={() => setTutorialReplayKey((key) => key + 1)} />
-      <Sidebar user={user} />
-      <Main>
-        <AppInset>
-          <ErrorBoundary variant="inline">
-            <Suspense fallback={<div className="page-transition-wrapper"><LoadingState label={text.common.loading} /></div>}>
-              <AnimatePresence mode="wait" initial={!shouldReduceMotion}>
-                <PageTransition className="page-transition-wrapper" key={visiblePage}>
-                  {visiblePage === 'dashboard' && <Dashboard user={user} />}
-                  {visiblePage === 'inbox' && <InboxPage />}
-                  {visiblePage === 'share-links' && <ShareLinksPage />}
-                  {visiblePage === 'domain-management' && <DomainManagementPage user={user} />}
-                  {visiblePage === 'api-keys' && <ApiKeysFeature user={user} />}
-                  {visiblePage === 'webhooks' && <WebhooksFeature />}
-                  {visiblePage === 'api-docs' && <APIDocsPage />}
-                  {visiblePage === 'users' && <UsersPage currentUser={user} />}
-                  {visiblePage === 'admin-oauth' && <LoginSettingsPage />}
-                  {getAdminPageElement(visiblePage)}
-                  {visiblePage === 'announcements' && <AnnouncementsPage />}
-                </PageTransition>
-              </AnimatePresence>
-            </Suspense>
-          </ErrorBoundary>
-        </AppInset>
-      </Main>
+      <div className="app-body">
+        <Sidebar user={user} />
+        <Main>
+          <AppInset>
+            <ErrorBoundary variant="inline">
+              <Suspense fallback={<div className="page-transition-wrapper"><LoadingState label={text.common.loading} /></div>}>
+                <AnimatePresence mode="wait" initial={!shouldReduceMotion}>
+                  <PageTransition className="page-transition-wrapper" key={visiblePage}>
+                    {visiblePage === 'dashboard' && <Dashboard user={user} />}
+                    {visiblePage === 'inbox' && <InboxPage />}
+                    {visiblePage === 'share-links' && <ShareLinksPage />}
+                    {visiblePage === 'domain-management' && <DomainManagementPage user={user} />}
+                    {visiblePage === 'api-keys' && <ApiKeysFeature user={user} />}
+                    {visiblePage === 'webhooks' && <WebhooksFeature />}
+                    {visiblePage === 'api-docs' && <APIDocsPage />}
+                    {visiblePage === 'users' && <UsersPage currentUser={user} />}
+                    {visiblePage === 'admin-oauth' && <LoginSettingsPage />}
+                    {getAdminPageElement(visiblePage)}
+                    {visiblePage === 'announcements' && <AnnouncementsPage />}
+                  </PageTransition>
+                </AnimatePresence>
+              </Suspense>
+            </ErrorBoundary>
+          </AppInset>
+        </Main>
+      </div>
       <OnboardingGuide user={user} replayKey={tutorialReplayKey} />
     </AppFrame>
   );
